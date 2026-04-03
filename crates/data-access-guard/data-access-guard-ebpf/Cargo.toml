@@ -1,0 +1,17 @@
+[package]
+name = "data-access-guard-ebpf"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+data-access-guard-common = { path = "../data-access-guard-common" }
+
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "data-access-guard"
+path = "src/main.rs"

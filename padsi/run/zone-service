@@ -1,0 +1,328 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import asyncio
+import os
+import signal
+import socket
+import sys
+import syslog
+
+from aiohttp import (ClientConnectionError, ClientSession, ClientTimeout,
+                     UnixConnector, web)
+from aiohttp.web_response import json_response
+
+import padsi.config
+from padsi.simple_comm import Client, Message
+
+_debug=False
+_timeout=ClientTimeout(30)
+
+class PadsiZoneService():
+    """Implementation of the zone service's REST API"""
+    def __init__(self, gconf:padsi.config.Configuration, zone_name:str, zone_infra_run_dir:str):
+        self._gconf=gconf
+        self._zone_conf=self._gconf.get_zone(zone_name)
+        self._zone_infra_run_dir=zone_infra_run_dir
+        self._uid=os.geteuid()
+        self._lock = asyncio.Lock()
+
+        self._client=Client()
+        self._client_task:asyncio.Task|None=None
+
+        self._web_app=web.Application()
+        self._web_app.add_routes([
+            web.get("/vms", self._api_vms_get),
+            web.get("/vm", self._api_vm_status),
+            web.post("/vm", self._api_vm_post),
+            web.delete("/vm", self._api_vm_delete),
+            web.post("/vm-display", self._api_vm_display),
+            web.post("/vm-launcher", self._api_launcher_post),
+            web.delete("/vm-launcher", self._api_launcher_delete),
+        ])
+
+        self._signal_handlers_set:bool=False
+        self._event:asyncio.Event=asyncio.Event()
+
+        self._infra_socket_file=os.path.join(self._zone_infra_run_dir, "padsi-zinfra.sock") # clients are expected to be from the ZoneInfra
+        self._user_socket_file=os.path.join(self._zone_infra_run_dir, "padsi-zserv.sock") # clients are expected to be from the ZoneApps
+
+        self._user_service_socket=os.path.join("/run/user", str(self._uid), "padsi-userv.sock")
+        self._connector=UnixConnector(path=self._user_service_socket)
+        self._session=ClientSession(connector=self._connector)
+
+    async def _httpd_start(self):
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"starting http server on socket {self._infra_socket_file=} {self._user_socket_file=}")
+
+        # remove socket if any
+        for socket_file in (self._infra_socket_file, self._user_socket_file):
+            try:
+                os.unlink(socket_file)
+            except OSError as e:
+                if os.path.exists(socket_file):
+                    raise e
+
+        # create new socket files
+        infra_sock=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        infra_sock.bind(self._infra_socket_file)
+        user_sock=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        user_sock.bind(self._user_socket_file)
+
+        runner=web.AppRunner(self._web_app, access_log=None)
+        await runner.setup()
+        site=web.SockSite(runner, infra_sock)
+        await site.start()
+        site=web.SockSite(runner, user_sock)
+        await site.start()
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"Zone service for user is now listening on {self._infra_socket_file=} and {self._user_socket_file=}")
+
+    async def run(self):
+        if not self._signal_handlers_set:
+            # catch TERM and INT signals to properly shut down
+            loop=asyncio.get_event_loop()
+            for s in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(s, lambda s=s:asyncio.create_task(self.shutdown()))
+            self._signal_handlers_set=True
+
+        # finish startup
+        await self._httpd_start()
+        self._client_task=asyncio.create_task(self._client.run())
+
+        # let it run
+        await self._event.wait()
+        syslog.syslog(syslog.LOG_DEBUG, "PadsiZoneService run() terminated")
+
+    async def shutdown(self):
+        self._event.set()
+        async with self._lock:
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, "PadsiZoneService: starting shutdown")
+
+            if self._client_task is not None:
+                self._client_task.cancel()
+                self._client_task=None
+
+            for socket_file in (self._infra_socket_file, self._user_socket_file):
+                try:
+                    os.remove(socket_file)
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_WARNING, f"Failed to clean PadsiZoneService's socket_file '{socket_file}': {str(e)}")
+
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "PadsiZoneService: finished shutdown")
+
+    async def call_user_service(self, request:Message):
+        """Send a request to the system service
+        """
+        return await self._client.call_server(request)
+
+    #
+    # REST API implementation
+    #
+    def _check_request_from_infra(self, request:web.Request):
+        """Ensure that the request is coming from the "infra socket"
+        """
+        if not request.transport or request.transport.get_extra_info("sockname")!=self._infra_socket_file:
+            syslog.syslog(syslog.LOG_ERR, f"Invalid request {request} coming from non infra sockat")
+            raise Exception("invalid request")
+
+    def _check_request_from_user(self, request:web.Request):
+        """Ensure that the request is coming from the "user socket"
+        """
+        if not request.transport or request.transport.get_extra_info("sockname")!=self._user_socket_file:
+            syslog.syslog(syslog.LOG_ERR, f"Invalid request {request} coming from non user sockat")
+            raise Exception("invalid request")
+
+    async def _api_vms_get(self, request:web.Request):
+        try:
+            self._check_request_from_user(request)
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            res:dict[str,str]={}
+            for vmid in self._zone_conf.get_virtual_machine_ids():
+                vm=self._zone_conf.get_virtual_machine(vmid)
+                if vm is not None and vm.is_user_allowed(self._uid):
+                    res[vmid]=vm.description
+            return json_response(res)
+        except Exception as e:
+            return web.Response(text=f"Error: {str(e)}", status=400)
+
+    async def _api_vm_status(self, request:web.Request):
+        try:
+            self._check_request_from_user(request)
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            data={
+                "vm-id": request.rel_url.query.get("vm-id"),
+                "verbose": str(request.rel_url.query.get("verbose")=="True"),
+                "zone": self._zone_conf.name
+            }
+            try:
+                async with self._session.get(url="http://localhost/vm", params=data, timeout=_timeout) as response:
+                    if response.ok:
+                        res=await response.json()
+                        return json_response(res)
+                    raise Exception(await response.text())
+            except ClientConnectionError:
+                raise Exception("PADSI user service connection failed")
+        except Exception as e:
+            return web.Response(text=f"Error: {str(e)}", status=400)
+
+    async def _api_vm_post(self, request:web.Request):
+        """Forward the request to the PADSI user service
+        """
+        try:
+            self._check_request_from_user(request)
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            data=await request.json()
+            data["zone"]=self._zone_conf.name
+            try:
+                async with self._session.post(url="http://localhost/vm", json=data, timeout=_timeout) as response:
+                    if response.ok:
+                        res=await response.json()
+                        return json_response(res)
+                    raise Exception(await response.text())
+            except ClientConnectionError:
+                raise Exception("PADSI user service connection failed")
+        except Exception as e:
+            return web.Response(text=f"Error: {str(e)}", status=400)
+
+    async def _api_vm_delete(self, request:web.Request):
+        """Forward the request to the PADSI user service
+        """
+        try:
+            self._check_request_from_user(request)
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            data=await request.json()
+            data["zone"]=self._zone_conf.name
+            try:
+                async with self._session.delete(url="http://localhost/vm", json=data, timeout=_timeout) as response:
+                    if response.ok:
+                        res=await response.json()
+                        return json_response(res)
+                    raise Exception(await response.text())
+            except ClientConnectionError:
+                raise Exception("PADSI user service connection failed")
+        except Exception as e:
+            return web.Response(text=f"Error: {str(e)}", status=400)
+
+    async def _api_vm_display(self, request:web.Request):
+        """Forward the request to the PADSI user service
+        """
+        try:
+            self._check_request_from_user(request)
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            data=await request.json()
+            data["zone"]=self._zone_conf.name
+            try:
+                async with self._session.post(url="http://localhost/vm-display", json=data, timeout=_timeout) as response:
+                    if response.ok:
+                        res=await response.json()
+                        return json_response(res)
+                    raise Exception(await response.text())
+            except ClientConnectionError:
+                raise Exception("PADSI user service connection failed")
+        except Exception as e:
+            return web.Response(text=f"Error: {str(e)}", status=400)
+
+    async def _api_launcher_post(self, request:web.Request):
+        """Forward the request to the PADSI user service
+        """
+        try:
+            self._check_request_from_user(request)
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            data=await request.json()
+            data["zone"]=self._zone_conf.name
+            try:
+                async with self._session.post(url="http://localhost/vm-launcher", json=data, timeout=_timeout) as response:
+                    if response.ok:
+                        res=await response.json()
+                        return json_response(res)
+                    raise Exception(await response.text())
+            except ClientConnectionError:
+                raise Exception("PADSI user service connection failed")
+        except Exception as e:
+            return web.Response(text=f"Error: {str(e)}", status=400)
+
+    async def _api_launcher_delete(self, request:web.Request):
+        """Forward the request to the PADSI user service
+        """
+        try:
+            self._check_request_from_user(request)
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            data=await request.json()
+            data["zone"]=self._zone_conf.name
+            try:
+                async with self._session.delete(url="http://localhost/vm-launcher", json=data, timeout=_timeout) as response:
+                    if response.ok:
+                        res=await response.json()
+                        return json_response(res)
+                    raise Exception(await response.text())
+            except ClientConnectionError:
+                raise Exception("PADSI user service connection failed")
+        except Exception as e:
+            return web.Response(text=f"Error: {str(e)}", status=400)
+
+async def main(config_dir:str, zone_name:str, zone_infra_run_dir:str):
+    try:
+        gconf=padsi.config.Configuration(config_dir)
+        zoneservice=PadsiZoneService(gconf, zone_name, zone_infra_run_dir)
+        await zoneservice.run()
+    except Exception as e:
+        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {str(e)}")
+
+if __name__=="__main__":
+    def usage():
+        msg=f"{sys.argv[0]} <configuration directory> <zone name> <zone infra's run dir> "
+        syslog.syslog(syslog.LOG_ERR, msg)
+        sys.exit(1)
+    if len(sys.argv)!=4:
+        usage()
+
+    config_dir=sys.argv[1]
+    zone_name=sys.argv[2]
+    zone_infra_run_dir=sys.argv[3]
+    syslog.syslog(syslog.LOG_INFO, f"Zone name {zone_name}, PID: {os.getpid()}, UID {os.getuid()} in {zone_infra_run_dir}, Using configuration in '{config_dir}'")
+
+    asyncio.run(main(config_dir, zone_name, zone_infra_run_dir))

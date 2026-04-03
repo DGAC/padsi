@@ -1,0 +1,11 @@
+[Unit]
+Description=PADSI VM agent service
+
+[Service]
+Type=simple
+Environment="PYTHONPATH=/usr/share/padsi"
+ExecStart=/usr/share/padsi/padsi-agent.py
+Restart=always
+
+[Install]
+WantedBy=default.target

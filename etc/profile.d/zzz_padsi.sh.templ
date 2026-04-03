@@ -1,0 +1,33 @@
+# this script is executed last to ensure PADSI's configuration comes first in XDG_DATA_DIRS
+# to give priority to PADSI generated Desktop Entry files
+
+padsi_vars="{padsi_vars}"
+
+combine() {	
+	IFS=":" read -a padsi_array <<< "$padsi_vars"
+	IFS=":" read -a xdg_array <<< "$XDG_DATA_DIRS"
+
+	combined_array=()
+	all_items=( "${padsi_array[@]}" "${xdg_array[@]}" )
+	for item in "${all_items[@]}" "$HOME/.local/share/applications"
+	do
+	    found=0
+	    for i in "${combined_array[@]}"
+	    do
+	    	[ "$i" == "$item" ] && {
+	    	    found=1
+	    	    break
+	    	}
+	    done
+	    [ "$found" == 0 ] && {
+	    	combined_array+=("$item")
+	    }
+	done
+	combined=$(IFS=":" ; echo "${combined_array[*]}")
+	echo "$combined"
+}
+
+command -v padsi-cli > /dev/null && {
+    XDG_DATA_DIRS=$(combine)
+    export XDG_DATA_DIRS
+}

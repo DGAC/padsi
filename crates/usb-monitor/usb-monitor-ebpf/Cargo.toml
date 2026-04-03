@@ -1,0 +1,20 @@
+[package]
+name = "usb-monitor-ebpf"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+usb-monitor-common = { path = "../usb-monitor-common" }
+
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "usb-monitor"
+path = "src/main.rs"
+
+[profile.dev]
+opt-level = 0

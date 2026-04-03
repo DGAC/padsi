@@ -1,0 +1,370 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+
+#
+# This is the PADSI program which modifies the FW based on the DNS resolutions
+#
+
+import datetime
+import ipaddress
+import json
+import os
+import re
+import select
+import socket
+import subprocess
+import sys
+import syslog
+import time
+
+import firewall
+
+_debug=True
+
+
+def _get_default_route_interface():
+    counter=0
+    while True:
+        p=subprocess.run(["ip", "-j", "route", "show", "default"], capture_output=True)
+        if p.returncode!=0:
+            raise Exception(f"Could not determine default route's interface: {p.stderr.decode()}")
+        data=json.loads(p.stdout.decode())
+        if len(data)!=1:
+            counter+=1
+            if counter>=100:
+                raise Exception(f"Could not determine default route's interface: {len(data)} default route(s), exactly 1 needed")
+            time.sleep(0.2)
+        else:
+            return data[0]["dev"]
+
+def _get_timestamp():
+    """Get the current Unix timestamp as UTC"""
+    now=datetime.datetime.now(datetime.timezone.utc)
+    return int(datetime.datetime.timestamp(now))
+
+_grace_period=1800 # grace period for non well coded programs which don't check for TTL
+
+class AllowedIp:
+    def __init__(self, end_ttl:int, output_allowed:bool):
+        self._end_ttl=end_ttl
+        self._output_allowed=output_allowed
+        self._flows:list[firewall.NetFlow]=[]
+
+    def add_netflow(self, nflow:firewall.NetFlow):
+        self._flows.append(nflow)
+
+    @property
+    def flows(self)->list[firewall.NetFlow]:
+        return self._flows
+
+    @property
+    def end_ttl(self) -> int:
+        return self._end_ttl
+
+    @end_ttl.setter
+    def end_ttl(self, ttl:int):
+        self._end_ttl=ttl
+
+    @property
+    def output_allowed(self) -> bool:
+        return self._output_allowed
+
+class Firewall(firewall.Firewall):
+    """Object which modifies the netfilter based firewall to allow access to IPs (and potentially more restricted protocols and ports)
+    based on resolution rules (the same ones used by the DNS server part)
+    """
+    def __init__(self, socket_file:str, resolv_rules_file:str|None=None, log_denied_spec:firewall.LogSpec|None=None, output_allowed_names:list[str]|None=None):
+        self._socket_file=socket_file
+        try:
+            os.remove(self._socket_file)
+        except OSError as e:
+            if os.path.exists(self._socket_file):
+                raise e
+        self._out_iface=_get_default_route_interface()
+
+        # Unix socket interface
+        server=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(self._socket_file)
+        self._server=server
+
+        # initialize actual FW object before loading any rule
+        super().__init__(log_denied_spec=log_denied_spec)
+        self._output_allowed_regex=[re.compile(firewall.netflow.domain_to_regex(n)) for n in output_allowed_names] if output_allowed_names is not None else []
+
+        # set FW policies
+        self.set_default_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.DENY)
+        self.set_related_connections_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.ALLOW)
+
+        self.set_default_policy(firewall.FlowType.FILTER_OUTPUT, firewall.Policy.DENY)
+        self.set_related_connections_policy(firewall.FlowType.FILTER_OUTPUT, firewall.Policy.ALLOW)
+
+        # extra rules after resolution
+        self._resolv_rules:dict[re.Pattern[str],list[str]]={}
+        self._load_resolv_rules("/etc/resolv-rules.json" if resolv_rules_file is None else resolv_rules_file)
+
+        # resolved (and thus allowed) IPs
+        self._allowed_ips:dict[ipaddress.IPv4Address,AllowedIp]={}
+
+        # localy resolved IP addresses which are always allowed
+        self._local_resolved:list[firewall.NetFlow]=[]
+
+    def _load_resolv_rules(self, resolv_rules_file:str):
+        """Load allowed netflow specification from the resolv-rules.json file
+        and add output rules for locally resolved names which match the output allowed regex
+        """
+        with open(resolv_rules_file, "r") as fd:
+            rules=json.load(fd)
+            for rule in rules:
+                if rule["action"]=="allow":
+                    spec_repr=rule.get("spec")
+                    query=rule.get("query")
+                    reply=rule.get("reply")
+                    if spec_repr:
+                        try:
+                            firewall.Endpoint.from_repr(f"* ^ {spec_repr}")
+                            if query is None or query[-1]!=".":
+                                raise Exception(f"invalid query part '{query}'")
+                            query_regex=re.compile(firewall.netflow.domain_to_regex(query))
+                            if query_regex not in self._resolv_rules:
+                                self._resolv_rules[query_regex]=[spec_repr]
+                            else:
+                                self._resolv_rules[query_regex].append(spec_repr)
+                        except Exception as e:
+                            syslog.syslog(syslog.LOG_WARNING, f"Could not load rule '{spec_repr}': {str(e)}")
+
+                    # if necessary, add a FW rule to allow OUTPUT flows to the specified resolved IP address
+                    if reply is not None:
+                        output_allowed=False
+                        for regex in self._output_allowed_regex:
+                            if re.match(regex, query):
+                                output_allowed=True
+                                break
+
+                        if output_allowed:
+                            for rspec in reply:
+                                try:
+                                    (_typ, _ttl, ip)=rspec.split("/")
+                                    if spec_repr:
+                                        dest=firewall.Endpoint.from_repr(f"{ip}^{spec_repr}")
+                                    else:
+                                        dest=firewall.Endpoint.from_repr(f"{ip}")
+                                    nflow=firewall.NetFlow(firewall.Endpoint(), dest)
+                                    nflow.dest.add_address(ip)
+                                    self.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, nflow=nflow, policy=firewall.Policy.ALLOW)
+                                    syslog.syslog(syslog.LOG_INFO, f"Allowed OUTPUT for {query} NetFlow '{nflow}'")
+                                except Exception as e:
+                                    syslog.syslog(syslog.LOG_WARNING, f"Could not allow infra's OUTPUT for '{query}' and reply part '{rspec}': {str(e)}")
+
+    def _handle_recv_data(self, data:str) -> str:
+        # received data should be like:
+        # {
+        #     "query": "the.queried.name.",
+        #     "resolv": [
+        #         {
+        #              "TTL": 97,
+        #              "A": "123.234.156.11"
+        #              "AAAA": None
+        #         }
+        #     ]
+        # }
+        # where 97 is the TTL associated to the resolved IP address
+        #
+        # or
+        # {
+        #      "del-resolver": "1.1.1.1:53"
+        # }
+        # and the same with add-resolver
+        #
+        # or, for IP addresses which are resolved localy, as a dict where keys are IP addresses and values are a (potentially empty) list flow spec
+        # {
+        #      "local-resolved": {
+        #           "10.1.2.3": ["tcp^443"],
+        #           "10.1.2.4": []
+        #      }
+        # }
+        try:
+            command=json.loads(data)
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"Got command: {command}")
+
+            if "query" in command:
+                query=command["query"]
+                resolv_l:list[dict]=command["resolv"]
+
+                dest_endpoints_expr:list[str]=[]
+                for query_regex, specslist in self._resolv_rules.items():
+                    if query_regex.match(query) is not None:
+                        for spec in specslist:
+                            dest_endpoints_expr.append(f"#{self._out_iface} ^ {spec}")
+                        break
+                if len(dest_endpoints_expr)==0:
+                    dest_endpoints_expr=[f"#{self._out_iface}"]
+
+                now=_get_timestamp()
+                for resolv in resolv_l:
+                    ttl=int(resolv.get("TTL", 0))
+                    if ttl<0:
+                        raise Exception(f"Invalid TTL of {ttl}")
+                    if ttl>86400:
+                        ttl=86400
+                    end_ttl=now+ttl+_grace_period
+
+                    record=resolv.get("A")
+                    ip=None
+                    if record is not None:
+                        ip=ipaddress.IPv4Address(record)
+                    # NB: we ignore IPv6 for now
+
+                    if ip is not None:
+                        allowed_ip=self._allowed_ips.get(ip)
+                        if allowed_ip is None:
+                            output_allowed=False
+                            for regex in self._output_allowed_regex:
+                                if re.match(regex, query):
+                                    output_allowed=True
+                                    break
+                            allowed_ip=AllowedIp(end_ttl, output_allowed)
+                            self._allowed_ips[ip]=allowed_ip
+                            for spec in dest_endpoints_expr:
+                                nflow=firewall.NetFlow(firewall.Endpoint(), firewall.Endpoint.from_repr(spec))
+                                nflow.dest.add_address(ip)
+                                allowed_ip.add_netflow(nflow)
+
+                                self.flow_set_policy(firewall.FlowType.FILTER_FORWARD, nflow=nflow, policy=firewall.Policy.ALLOW)
+                                syslog.syslog(syslog.LOG_INFO, f"Allowed FORWARD for {query} with TTL {ttl}, NetFlow '{nflow}'")
+                                if output_allowed:
+                                    self.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, nflow=nflow, policy=firewall.Policy.ALLOW)
+                                    syslog.syslog(syslog.LOG_INFO, f"Allowed OUTPUT for {query} with TTL {ttl}, NetFlow '{nflow}'")
+                        else:
+                            syslog.syslog(syslog.LOG_INFO, f"Updated TTL for {query} and allowed IP '{ip}'")
+                            allowed_ip.end_ttl=end_ttl
+            elif "add-resolver" in command:
+                (ip, port)=command["add-resolver"].split(":")
+                nflow=firewall.NetFlow(firewall.Endpoint(), firewall.Endpoint.from_repr(f"{ip} ^ tcp,udp ^ {port}"))
+                self.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, nflow=nflow, policy=firewall.Policy.ALLOW)
+
+            elif "del-resolver" in command:
+                (ip, port)=command["del-resolver"].split(":")
+                nflow=firewall.NetFlow(firewall.Endpoint(), firewall.Endpoint.from_repr(f"{ip} ^ tcp,udp ^ {port}"))
+                self.flow_delete_policy(firewall.FlowType.FILTER_OUTPUT, nflow=nflow)
+
+            elif "local-resolved" in command:
+                new_resolv:list[firewall.NetFlow]=[]
+                for (ipstr, spec_repr_list) in command["local-resolved"].items():
+                    try:
+                        ip=ipaddress.IPv4Address(ipstr)
+                        for spec_repr in spec_repr_list:
+                            flrepr=f"{ip} ^ {spec_repr}" if spec_repr is not None else str(ip)
+                            nflow=firewall.NetFlow(firewall.Endpoint(), firewall.Endpoint.from_repr(flrepr))
+                            new_resolv.append(nflow)
+                    except Exception:
+                        syslog.syslog(syslog.LOG_WARNING, f"Invalid IP address received as localy resolved: '{ipstr}', ignored")
+
+                # add new allowed network flows
+                for nflow in [f for f in new_resolv if f not in self._local_resolved]:
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"Allowed local resolv.: {nflow}")
+                    self.flow_set_policy(firewall.FlowType.FILTER_FORWARD, nflow=nflow, policy=firewall.Policy.ALLOW)
+
+                # remove old network flows
+                for nflow in [f for f in self._local_resolved if f not in new_resolv]:
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"Removed local resolv.: {nflow}")
+                    self.flow_delete_policy(firewall.FlowType.FILTER_FORWARD, nflow=nflow)
+
+                self._local_resolved=new_resolv
+            else:
+                raise Exception("unknown command")
+
+            return "Ok"
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Failed to process command '{data}': {str(e)}")
+            return f"Error: {str(e)}"
+
+    def _handle_expired(self):
+        now=_get_timestamp()
+        kept={}
+        for ip, allowed_ip in self._allowed_ips.items():
+            if allowed_ip.end_ttl<=now: # pyright: ignore
+                syslog.syslog(syslog.LOG_INFO, f"Deleting expired allowed IP '{allowed_ip}' for IP {ip}")
+                for nflow in allowed_ip.flows:
+                    try:
+                        self.flow_delete_policy(firewall.FlowType.FILTER_FORWARD, nflow)
+                        syslog.syslog(syslog.LOG_INFO, f"Removed allowed FORWARD for {allowed_ip}, NetFlow '{nflow}'")
+                        if allowed_ip.output_allowed:
+                            self.flow_delete_policy(firewall.FlowType.FILTER_OUTPUT, nflow)
+                            syslog.syslog(syslog.LOG_INFO, f"Removed allowed OUTPUT for {allowed_ip}, NetFlow '{nflow}'")
+                    except Exception as e:
+                        syslog.syslog(syslog.LOG_INFO, f"Error deleting NetFlow {nflow} for IP {ip}: {str(e)}")
+            else:
+                kept[ip]=allowed_ip
+        self._allowed_ips=kept
+
+    def run(self):
+        self._server.listen(5)
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "FW server listening")
+        selectors=[self._server]
+        while True:
+            (rlist, _wlist, _errlist)=select.select(selectors, [], [], 1)
+            for s in rlist:
+                if s is self._server:
+                    # new connection
+                    (conn, _client_addr)=self._server.accept()
+                    selectors.append(conn)
+                else:
+                    # existing connexion
+                    prev_data=None
+                    data=s.recv(32768)
+                    if data:
+                        if prev_data is not None:
+                            data=prev_data+data
+                            prev_data=None
+                        try:
+                            resp=self._handle_recv_data(data.decode())
+                            s.sendall(resp.encode())
+                        except json.decoder.JSONDecodeError:
+                            prev_data=data
+                        except Exception as e:
+                            syslog.syslog(syslog.LOG_WARNING, f"Received invalid (ignored) data '{data}': {str(e)}")
+                    else:
+                        # connection closed
+                        s.close()
+                        selectors.remove(s)
+
+            self._handle_expired()
+
+if __name__=="__main__":
+    try:
+        conf_file=sys.argv[1] if len(sys.argv)>1 else None
+        if conf_file is None or not os.path.exists(conf_file):
+            raise Exception(f"Configuration file non specified or inexistant (argv: '{sys.argv}')")
+        with open(conf_file, "rt") as fd:
+            conf=json.load(fd)
+        if conf.get("log-denied-spec") is not None:
+            lspec=firewall.LogSpec.from_str(conf.get("log-denied-spec"))
+        else:
+            lspec=None
+        f=Firewall("/tmp/dns-fw.sock", log_denied_spec=lspec, output_allowed_names=conf["output-allow"])
+        f.run()
+    except Exception as e:
+        syslog.syslog(syslog.LOG_ERR, f"Fatal error: {str(e)}")

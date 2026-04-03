@@ -1,0 +1,10 @@
+{
+    "testing": {
+        "descr": "Connectivity testing",
+        "endpoints": [
+            "www.ipinfo.io. ^ tcp ^ 443,80",
+            "www.webrtc-experiment.com. ^ tcp ^ 443",
+            "webrtc.github.io. ^ tcp ^ 443"
+        ]
+    }
+}

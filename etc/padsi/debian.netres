@@ -1,0 +1,17 @@
+{
+    "debian-install": {
+        "descr": "Debian OS install and update",
+        "endpoints": [
+            "**deb.debian.org. ^ tcp ^ 443,80",
+            "**security.debian.org. ^ tcp ^ 443,80",
+            "**debian.pool.ntp.org. ^ udp ^ 123"
+        ]
+    },
+    "debian-usage": {
+        "endpoints": [
+            "appstream.debian.org. ^ tcp ^ 443",
+            "**debian.pool.ntp.org. ^ udp ^ 123"
+        ],
+        "descr": "Debian OS normal usage"
+    }
+}

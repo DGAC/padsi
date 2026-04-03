@@ -1,0 +1,22 @@
+[package]
+name = "wayland-proxy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+asyncfd = "0.1.3"
+tokio =  { version = "1.47.1", features = ["full"] }
+padsi = { path = "../padsi" }
+
+[[bin]]
+name = "wayland-proxy"
+path = "src/proxy.rs"
+
+[[bin]]
+name = "mock-server"
+path = "src/mock-server.rs"
+
+[[bin]]
+name = "fd-sender"
+path = "src/fd_sender.rs"

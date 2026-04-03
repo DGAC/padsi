@@ -1,0 +1,87 @@
+
+{
+    "friendly-name": "Development",
+    "start-mode": "on-demand",
+    "color": "#8e10ad",
+    "options": {
+        "NET-LOG-ONLY": false,
+        "X11": true
+    },
+    "web-proxy": null,
+    "network": {
+        "traffic-shaper": null,
+        "dns-resolvers": [
+            "9.9.9.9@853", "1.1.1.1@853"
+        ],
+        "out-rules": [
+            {
+                "action": "deny",
+                "netres": "private"
+            },
+            {
+                "action": "allow",
+                "netres": "dev-repos"
+            },
+            {
+                "action": "allow",
+                "netres": "codium"
+            },
+            {
+                "action": "allow",
+                "netres": "testing"
+            },
+            {
+                "action": "allow",
+                "netres": "debian-install"
+            },
+            {
+                "action": "allow",
+                "netres": "debian-usage"
+            }
+        ]
+    },
+    "mounts": {
+        "{TEMPLATES}": {
+            "source": "{TEMPLATES}",
+            "mode": "ro"
+        },
+        "{DOCUMENTS}": {
+            "source": "{DOCUMENTS}"
+        },
+        "{VIDEOS}": {
+            "source": "{VIDEOS}"
+        },
+        "{DOWNLOAD}/Internet": {
+            "source": "{internet_DOWNLOAD}",
+            "mode": "ro"
+        }
+    },
+    "apps": [
+        "chromium",
+        "com.jgraph.drawio",
+        "firefox-esr",
+        "gimp.desktop",
+        "org.gnome.Terminal",
+        "org.gnome.TextEditor",
+        "org.gnome.Nautilus",
+        "org.keepassxc.KeePassXC"
+    ],
+    "virtual-machines": {
+        "debian": {
+            "specs": {
+                "read-only": true,
+                "show-ui": true
+            },
+            "network": {}
+        },
+        "debian-noui": {
+            "specs": {
+                "read-only": false,
+                "show-ui": true
+            },
+            "network": {
+                "out-rules": []
+            }
+        }
+    }
+}

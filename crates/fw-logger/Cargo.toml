@@ -1,0 +1,12 @@
+[package]
+name = "fw-logger"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+base64 = "0.22.1"
+libc = "0.2.180"
+netdev = "0.40.0"
+nflog = { path = "../nflog-rs" }
+padsi = { path = "../padsi" }

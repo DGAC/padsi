@@ -1,0 +1,63 @@
+{
+    "Dhcp4": {
+        "interfaces-config": {
+            "interfaces": ["to-be-replaced"],
+            "service-sockets-max-retries": 5,
+            "service-sockets-retry-wait-time": 1000
+        },
+        
+        "authoritative": true,
+        
+        "ddns-send-updates" : false,
+
+        "lease-database": {
+            "type": "memfile",
+            "persist": true,
+            "name": "/var/lib/kea/leases4.csv",
+            "lfc-interval": 3600
+        },
+
+        "renew-timer": 14400,
+        "rebind-timer": 27720,
+        "valid-lifetime": 28800,
+
+        "option-data": [
+            {
+                "name": "domain-name-servers",
+                "data": "to-be-replaced"
+            }
+        ],
+
+        "subnet4": [
+            {
+                "id": 1,
+                "subnet": "to-be-replaced",
+                "pools": [
+                    {
+                        "pool": "to-be-replaced"
+                    }
+                ],
+                "option-data": [
+                    {
+                        "name": "routers",
+                        "data": "to-be-replaced"
+                    }
+                ]
+            }
+        ],
+
+        "loggers": [
+            {
+            "name": "kea-dhcp4",
+            "output_options": [
+                {
+                "output": "/var/log/kea/dhcp4.log",
+                "pattern": "%D{%Y-%m-%d %H:%M:%S.%q} %-5p %m\n"
+                }
+            ],
+            "severity": "DEBUG",
+            "debuglevel": 0
+            }
+      ]
+    }
+}

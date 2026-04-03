@@ -1,0 +1,28 @@
+#!/bin/bash
+
+if [ "$1" == "purge" ]; then
+    # remove executions leftovers
+    while true
+    do
+        mount | grep -q /run/padsi && {
+            mount | grep /run/padsi | awk '{print $3}' | xargs umount > /dev/null 2>&1
+            true
+        } || {
+            break
+        }
+    done
+
+    rm -rf /run/padsi
+    rm -f "/etc/profile.d/zzz_padsi.sh"
+
+    # remove the GNOME shell extension
+    gnome_extention_uid="padsi@dgac"
+    extensiondir="/usr/share/gnome-shell/extensions/$gnome_extention_uid"
+    rm -rf "$extensiondir"
+
+    # remove padsi user
+    userdel padsi
+
+    # reload systemd so it takes into account the override of the GNOME Shell
+    systemctl daemon-reload
+fi

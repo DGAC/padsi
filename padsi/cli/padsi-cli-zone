@@ -1,0 +1,177 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+
+#
+# This is the PADSI CLI tool, intended to be used from within a zone
+#
+
+import argparse
+import json
+import sys
+
+from padsi.cli.client import print_vm_status
+from padsi.cli.client_zone import Client
+
+parser=argparse.ArgumentParser(description="PADSI CLI tool")
+subparsers=parser.add_subparsers()
+parser.add_argument("-v", "--verbose", action="store_true", help="show more information")
+parser.add_argument("-j", "--json", help="Output JSON", action="store_true")
+
+#
+# VM
+#
+subparser=subparsers.add_parser("vms", help="List all the declared virtual machines")
+subparser.set_defaults(cmde="vms")
+
+subparser=subparsers.add_parser("vm-status", help="List the status of a VM (files, ...)")
+subparser.set_defaults(cmde="vm-status")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to filter")
+
+subparser=subparsers.add_parser("vm-start", help="Run a new or existing virtual machine. If the VM is already running, it will be shown")
+subparser.set_defaults(cmde="vm-start")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to run")
+subparser.add_argument("vm-name", type=str, nargs="?", default="default", help="Optional: VM version in the form 'snapshot.[version]' or nickname")
+
+subparser=subparsers.add_parser("vm-display", help="Display the viewer of a running virtual machine")
+subparser.set_defaults(cmde="vm-display")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to filter")
+subparser.add_argument("vm-name", type=str, nargs="?", default="default", help="VM version in the form 'snapshot.[version]' or nickname")
+
+subparser=subparsers.add_parser("vm-discard", help="Discard a VM version")
+subparser.set_defaults(cmde="vm-discard")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to discard")
+subparser.add_argument("vm-name", type=str, nargs=argparse.REMAINDER,
+                       help="VM name(s)/version(s) in the form '[<user ID>/]<base|user|snapshot>.[version]' or '[<user ID>/]staged' or a nickname")
+subparser.add_argument("--force", action="store_true", help="Force the removal")
+
+subparser=subparsers.add_parser("vm-create-launcher", help="Create a desktop entry launcher for a specific virtual machine")
+subparser.set_defaults(cmde="vm-create-launcher")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine")
+subparser.add_argument("vm-name", type=str, nargs="?", default="default", help="VM version in the form 'snapshot.[version]' or nickname")
+
+subparser=subparsers.add_parser("vm-delete-launcher", help="Delete a desktop entry launcher for a virtual machine")
+subparser.set_defaults(cmde="vm-delete-launcher")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine")
+subparser.add_argument("vm-name", type=str, nargs="?", default="default", help="VM version in the form 'snapshot.[version]' or nickname")
+
+args=vars(parser.parse_args())
+#print("PARSED ARGS: %s"%args)
+if "cmde" not in args:
+    parser.print_help()
+    sys.exit(1) # pyright: ignore
+
+_indent="    "
+
+class PadsiServiceNotRunning(Exception):
+    pass
+
+# test if the PADSI service is running
+try:
+    client_exception=None
+    client=Client()
+except Exception as e:
+    client_exception=PadsiServiceNotRunning(str(e))
+    client=None
+
+def require_zone_service():
+    if client is None:
+        raise client_exception # pyright: ignore
+
+#
+# Main
+#
+try:
+    verbose=args.get("verbose")
+    use_json=args.get("json")
+    cmde=args["cmde"]
+    require_zone_service()
+    match cmde:
+        case "vms":
+            data=client.vms() # pyright: ignore
+            if use_json:
+                print(f"{json.dumps(data, indent=4)}")
+            else:
+                for (vmid, descr) in data.items(): # pyright: ignore
+                    print(f"virtual machine '{vmid}' ({descr})")
+
+        case "vm-discard":
+            versions:list[str]=[]
+            for vm_name in args["vm-name"]:
+                data=client.vm_discard(args["vm-id"], vm_name, force=args["force"]) # pyright: ignore
+                versions+=data # pyright: ignore
+            if use_json:
+                print(f"{json.dumps(versions, indent=4)}")
+            else:
+                if len(versions)>0:
+                    for vmversion in versions:
+                        print(f"{vmversion}")
+                else:
+                    print("No VM version specified")
+
+        case "vm-status":
+            print_vm_status(client.get_vm_status(args["vm-id"], verbose), verbose, use_json, _indent, zone_filtered=True) # pyright: ignore
+
+        case "vm-start":
+            data=client.vm_start(args["vm-id"], args.get("vm-name")) # pyright: ignore
+            if data is not None:
+                if use_json:
+                    print(f"{json.dumps(data, indent=4)}")
+                else:
+                    print(f"{json.dumps(data, indent=4)}") # TODO
+
+        case "vm-display":
+            if len(args)==0:
+                raise Exception("Invalid arguments")
+            client.vm_display(args["vm-id"], args.get("vm-name")) # pyright: ignore
+
+        case "vm-create-launcher":
+            if len(args)==0:
+                raise Exception("Invalid arguments")
+            client.vm_launcher_create(args["vm-id"], args.get("vm-name")) # pyright: ignore
+
+        case "vm-delete-launcher":
+            if len(args)==0:
+                raise Exception("Invalid arguments")
+            client.vm_launcher_delete(args["vm-id"], args.get("vm-name")) # pyright: ignore
+
+        case _:
+            raise Exception(f"Unhandled command '{cmde}'")
+except KeyboardInterrupt:
+    pass
+except PadsiServiceNotRunning as e:
+    print(f"Error: {str(e)}", file=sys.stderr)
+    sys.exit(2) # pyright: ignore
+except Exception as e:
+    if False:
+        print("========== DEBUG ==========")
+        raise e
+
+    try:
+        import gi
+        gi.require_version("Notify", "0.7")
+        from gi.repository import Notify  # pyright: ignore
+        Notify.init("PADSI")
+        n=Notify.Notification.new("Error", str(e), "dialog-error")
+        n.show()
+    except Exception:
+        print(f"Error: {str(e)}", file=sys.stderr)
+        sys.exit(1) # pyright: ignore

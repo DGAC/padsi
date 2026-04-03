@@ -1,0 +1,294 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+
+#
+# This is the PADSI local DNS server
+#
+
+import ipaddress
+import json
+import os
+import signal
+import socket
+import subprocess
+import sys
+import syslog
+import time
+from dataclasses import dataclass
+
+import pyinotify
+
+fw_socket_file="/tmp/dns-fw.sock"
+_debug=False
+
+@dataclass
+class DNSEndpoint:
+    ip_address: ipaddress.IPv4Address
+    port: int
+    protocol: str
+
+    def __str__(self) -> str:
+        return f"{str(self.ip_address)}@{self.port}@{self.protocol}"
+
+    def __hash__(self) -> int:
+        return hash(str(self))
+
+def get_nameservers() -> set[DNSEndpoint]:
+    res:set[DNSEndpoint]=set()
+    if os.path.exists("/etc/resolv-conf.json"):
+        try:
+            with open("/etc/resolv-conf.json", "rt") as fd:
+                data=json.load(fd)
+            for item in data:
+                res.add(DNSEndpoint(ip_address=ipaddress.IPv4Address(item["ip"]), port=item["port"], protocol=item["proto"]))
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Invalid '/etc/resolv-conf.json' file: {str(e)}")
+    elif os.path.exists("/etc/resolv.conf"):
+        # load the /etc/resolv.conf file if any
+        with open("/etc/resolv.conf", "r") as fd:
+            for line in fd.readlines():
+                if line.startswith("nameserver "):
+                    (_, ipstr)=line.split()
+                    try:
+                        res.add(DNSEndpoint(ip_address=ipaddress.IPv4Address(ipstr), port=53, protocol="DEFAULT"))
+                    except Exception:
+                        # ignore IPv6 for now
+                        pass
+    return res
+
+class ListenEventHandler(pyinotify.ProcessEvent):
+    resolv_rules="/etc/resolv-rules.json"
+    unbound_confdir="/etc/unbound/conf.d"
+
+    def __init__(self, fw_sock:socket.socket):
+        pyinotify.ProcessEvent.__init__(self)
+        self._fw_socket=fw_sock
+        self._process=None
+
+        self._current_ns:set[DNSEndpoint]=set() # current NS used
+
+    def reconfigure_server(self):
+        """Reconfigure the unbound server and (re-)start it
+        based on the contents of the self._current_ns
+        """
+        syslog.syslog(syslog.LOG_INFO, "Reconfiguring server")
+        # (re)create the forward.conf file
+        ns_list=self._current_ns.copy()
+        self._current_ns=get_nameservers()
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"New NS list: {self._current_ns}")
+
+        if ns_list!=self._current_ns:
+            # ask the FW to accept connections to the new nameservers and remove permission
+            # from the old (unused anymore) nameservers
+            for dnsep in ns_list-self._current_ns:
+                data={
+                    "del-resolver": f"{str(dnsep.ip_address)}:{dnsep.port}"
+                }
+                syslog.syslog(syslog.LOG_INFO, f"Asking the FW to de-authorize communications to DNS server {str(dnsep)}")
+                try:
+                    self._fw_socket.sendall(json.dumps(data).encode())
+                    resp=self._fw_socket.recv(1024)
+                    if resp!=b"Ok":
+                        raise Exception(resp)
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Error asking the FW to de-authorize {str(dnsep)}: {str(e)}")
+            for dnsep in self._current_ns-ns_list:
+                data={
+                    "add-resolver": f"{str(dnsep.ip_address)}:{dnsep.port}"
+                }
+                syslog.syslog(syslog.LOG_INFO, f"Asking the FW to authorize communications to DNS server {str(dnsep)}")
+                try:
+                    self._fw_socket.sendall(json.dumps(data).encode())
+                    resp=self._fw_socket.recv(1024)
+                    if resp!=b"Ok":
+                        raise Exception(resp)
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Error asking the FW to authorize {str(dnsep)}: {str(e)}")
+            self._declared_ns=self._current_ns
+
+            # NB: to have unbound use DOT, see for example https://www.dsfc.net/infra/reseau/des-requetes-dns-chiffrees-en-tls-avec-unbound/
+            # or https://www.jwillikers.com/dns-over-tls-with-unbound
+            # Basically: add the "forward-tls-upstream: yes" option and add the "@853" to the NS's IP, like forward-addr: 80.67.188.188@853
+            # Cf. also: https://diyisp.org/dokuwiki/doku.php?id=technical:dnsresolver
+            # The "forward-first: no" is more like belt and suspenders as it is the default value
+            conf_filename="%s/forward.conf"%self.unbound_confdir
+            if os.path.exists(conf_filename):
+                os.remove(conf_filename)
+            config="""server:
+forward-zone:
+    name: "."
+    forward-first: no
+"""
+            for dnsep in self._current_ns:
+                if dnsep.protocol=="DOT":
+                    config+="    forward-tls-upstream: yes\n"
+                    break
+            for dnsep in self._current_ns:
+                config+=f"    forward-addr: {str(dnsep.ip_address)}@{dnsep.port}\n"
+
+            # write file
+            f=open(conf_filename, "w")
+            f.write(config)
+            f.close()
+
+        # (re)create the local.conf file
+        conf_filename="%s/local.conf"%self.unbound_confdir
+        if os.path.exists(conf_filename):
+            os.remove(conf_filename)
+        local_zones:dict[str,list]={} # key: zone name, value: list of [name, response. type, response. parts which may depend on resp. type]
+        local_resolv:dict[str,list[str]]={} # key: ip resolution, value: list of network flow spec
+        with open(ListenEventHandler.resolv_rules, "r") as fd:
+            try:
+                rules=json.load(fd) # may fail for example if file is again modified
+                for rule in rules:
+                    query=rule["query"] # may or may not be FQDN
+                    if query[-1]!=".":
+                        syslog.syslog(syslog.LOG_ERR, f"Invalid non FQDN query '{query}")
+                    else:
+                        (_, *zone_parts)=query[:-1].split(".")
+                        zone=".".join(zone_parts)+"."
+                        reply:list[str]=rule["reply"]
+                        if reply is not None:
+                            spec_repr=rule["spec"]
+                            for entry in reply:
+                                try:
+                                    (typ, *resp)=entry.split("/")
+                                    if typ=="A":
+                                        if len(resp)!=2:
+                                            raise Exception("expected <response-validity>/<response as IPv4>")
+                                        dnsep=ipaddress.IPv4Address(resp[1])
+                                        if zone not in local_zones:
+                                            local_zones[zone]=[]
+                                        sdnsep=str(dnsep)
+                                        local_zones[zone].append([query, resp[0], "IN", typ, sdnsep])
+                                        if sdnsep not in local_resolv:
+                                            local_resolv[sdnsep]=[]
+                                        if spec_repr is not None:
+                                            local_resolv[sdnsep].append(spec_repr)
+                                    else:
+                                        raise Exception(f"unknown reply type '{typ}'")
+                                except Exception as e:
+                                    syslog.syslog(syslog.LOG_ERR, f"Invalid configured reply '{entry}' for query '{rule['query']}': {str(e)}")
+            except Exception as e:
+                syslog.syslog(syslog.LOG_WARNING, f"Could not load {ListenEventHandler.resolv_rules} file, skipping: {str(e)}")
+
+        # write new config file if necessary
+        if len(local_zones)>0:
+            with open(conf_filename, "w") as fd:
+                fd.write("server:\n")
+                for zone, zone_data in local_zones.items():
+                    data=f'  local-zone: "{zone}" transparent\n'
+                    fd.write(data)
+
+                    for resp in zone_data:
+                        data=f"{' '.join(resp)}"
+                        data=f'    local-data: "{data}"\n'
+                        fd.write(data)
+
+        # inform FW part to allow the network flows if necessary
+        if len(local_resolv)>0:
+            try:
+                data={
+                    "local-resolved": local_resolv
+                }
+                self._fw_socket.sendall(json.dumps(data).encode())
+                resp=self._fw_socket.recv(1024)
+                if resp!=b"Ok":
+                    raise Exception(resp)
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Failed ro send local resolv. IPs to FW server: {str(e)}")
+
+        # start the service or make it reload its configuration
+        if self._process is None:
+            # start the unbound process
+            syslog.syslog(syslog.LOG_INFO, "Starting unbound service")
+            cenv=os.environ.copy()
+            cenv["PYTHONPATH"]="/usr/lib/python3/dist-packages"
+            cenv["LOG_ONLY"]=os.environ.get("LOG_ONLY", "no")
+            self._process=subprocess.Popen(["/tmp/unbound", "-d", "-p"], env=cenv)
+            time.sleep(1)
+            if self._process.returncode is not None:
+                syslog.syslog(syslog.LOG_ERR, f"unbound process has failed to start, retcode={self._process.returncode}")
+        else:
+            # ask the unbound process to reload its configuration
+            syslog.syslog(syslog.LOG_INFO, "Asking unbound service to reload its configuration")
+            self._process.send_signal(signal.SIGHUP)
+            time.sleep(3)
+            if self._process.returncode is not None:
+                syslog.syslog(syslog.LOG_ERR, f"unbound process has died, retcode={self._process.returncode}")
+
+    def process_IN_MOVED_TO(self, event):
+        print("MOVE_TO event for %s"% event.pathname)
+        if event.pathname in ("/etc/resolv.conf", self.resolv_rules):
+            try:
+                self.reconfigure_server()
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Error reconfiguring server: {str(e)}")
+
+    def process_IN_CLOSE_WRITE(self, event):
+        print("CLOSE_WRITE event for %s"% event.pathname)
+        if event.pathname in ("/etc/resolv.conf", self.resolv_rules):
+            try:
+                self.reconfigure_server()
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Error reconfiguring server: {str(e)}")
+
+if __name__=="__main__":
+    # open the socket to talk to the FW management component (fw_socket_file)
+    try:
+        fw_socket=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    except Exception as e:
+        syslog.syslog(syslog.LOG_ERR, f"Could not create Unix socket: {str(e)}")
+        sys.exit(2)
+
+    counter=0
+    while True:
+        try:
+            fw_socket.connect(fw_socket_file)
+            if _debug:
+                syslog.syslog(syslog.LOG_INFO, "Connected to the FW socket")
+            break
+        except (FileNotFoundError, ConnectionRefusedError):
+            syslog.syslog(syslog.LOG_INFO, f"Socket to talk to the FW '{fw_socket_file}' is not present yet or FW refusing the connection, waiting a bit")
+            counter+=1
+            if counter>=10:
+                sys.exit(2)
+            time.sleep(1)
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Could not connect the Unix socket to '{fw_socket_file}': {str(e)}")
+            sys.exit(3)
+
+    # set up notifications
+    wm=pyinotify.WatchManager()
+    handler=ListenEventHandler(fw_socket)
+    notifier=pyinotify.Notifier(wm, handler)
+    wdd=wm.add_watch("/etc/resolv.conf", pyinotify.IN_CLOSE_WRITE) # pyright: ignore
+    wdd=wm.add_watch(handler.resolv_rules, pyinotify.IN_CLOSE_WRITE) # pyright: ignore
+    wdd=wm.add_watch("/etc", pyinotify.IN_MOVED_TO) # pyright: ignore
+
+    # start the server and wait for notifications
+    try:
+        handler.reconfigure_server()
+        notifier.loop()
+    except Exception as e:
+        syslog.syslog(syslog.LOG_ERR, f"Error on initial server configuration: {str(e)}")

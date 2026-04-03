@@ -1,0 +1,9 @@
+#!/bin/bash
+
+if [ "$1" == "remove" ]; then
+    # stop the PADSI service
+    systemctl stop padsi
+
+    # disable the GNOME shell extension
+    gnome-extensions disable padsi@dgac
+fi

@@ -1,0 +1,15 @@
+[Unit]
+Description=PADSI system service
+
+[Service]
+Type=simple
+Environment="PYTHONPATH=/usr/share/padsi"
+ExecStart=/usr/share/padsi/bin/padsi-system-service /etc/padsi
+Restart=always
+KeyringMode=private
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=default.target

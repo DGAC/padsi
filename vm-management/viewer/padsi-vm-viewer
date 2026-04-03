@@ -1,0 +1,376 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+# Copyright (c) 2024 Vivien Malerba <vmalerba@gmail.com>
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import argparse
+import os
+import queue
+import signal
+import syslog
+import threading
+import time
+
+import gi
+import requests
+from console import VMConsoleWidget
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("GLib", "2.0")
+from gi.repository import GLib, GObject, Gtk  # noqa: E402 # pyright: ignore
+from startup import VMStartupWidget  # noqa: E402 # pyright: ignore
+
+admin_port=12
+vm_ip_address="192.168.244.2"
+
+# command line "arguments"
+parser=argparse.ArgumentParser()
+parser.add_argument("spice_socket", type=str, help="Unix socket absolute path where QEMu's Spice is listening")
+parser.add_argument("vm_descr", type=str, help="Description of the virtual machine configuration")
+parser.add_argument("vm_usage", type=str, help="Usage of the virtual machine")
+parser.add_argument("os_info", type=str, help="VM's OS information, as a '/' separated list of values, like 'windows/11' or 'linux/debian/12'")
+parser.add_argument("--nickname", type=str, help="Nickname of the VM, if any")
+parser.add_argument("--hide", action="store_true", help="Start with all windows hidden")
+parser.add_argument("--discard", action="store_true", help="The VM will alwayd be discarded")
+parser.add_argument("--appid", type=str, help="App ID to report")
+
+args=parser.parse_args()
+
+class InstallUpdateApplicationWindow(Gtk.ApplicationWindow):
+    """Class to override the default application window which is that it's destroyed when the use clicks on the cross icon in the bar (or ALT+F4)
+    to be able to ask confirmation before cancelling an installation or update
+    """
+    def do_delete_event(self, event):
+        dialog=Gtk.MessageDialog(transient_for=self, flags=0,
+                                 message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO,
+                                 text="Discard the virtual machine?")
+        dialog.format_secondary_text("This will cancel any installation or update processus.")
+        response=dialog.run()
+        dialog.destroy()
+
+        if response==Gtk.ResponseType.YES:
+            return False # let the default behaviour which closes the window
+        return True # disable the default behaviour
+
+class RunApplicationWindow(Gtk.ApplicationWindow):
+    """Class to override the default application window which is that it's destroyed when the use clicks on the cross icon in the bar (or ALT+F4)
+    to be able to ask what to do: hide window, discard VM or cancel
+    """
+    __gsignals__ = {
+        "vm-discard": (GObject.SignalFlags.RUN_FIRST, None, ())
+    }
+    def do_delete_event(self, event):
+        dialog=Gtk.MessageDialog(transient_for=self, flags=0,
+                                 message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.NONE,
+                                 text="Choose what to do")
+        dialog.format_secondary_text("Hiding this window will let the virtual machine run in the background, it can be shown again.\nDiscard the virtual machine only it you do not intend to reuse it (also note that any unsaved data will be lost).")
+        dialog.add_button("Hide window", Gtk.ResponseType.YES)
+        dialog.add_button("Discard virtual machine", Gtk.ResponseType.NO)
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        response=dialog.run()
+        dialog.destroy()
+
+        if response==Gtk.ResponseType.YES:
+            return False # let the default behaviour which closes the window
+        elif response==Gtk.ResponseType.NO:
+            self.emit("vm-discard")
+            return False # let the default behaviour which closes the window
+        return True # disable the default behaviour
+
+class VMViewerApplication(Gtk.Application):
+    """Application to display a VM
+    It features 2 windows where only one is shown a a time:
+    - a simple synthetic window which shows the VM is starting with a spinner:
+        - closing tha window will only hide it
+        - clicking on the "show screen" button will display the other window (below)
+        - clicking on the "cancel" button will close the application and thus the VM (refer to PADSI's VM monitor)
+    - a window to show the VM's console (text or graphical) via a Spice display. Clicking the window close button will
+      only hide the window.
+
+    If the USR1 signal is received, then show the console window if it exists or the startup window otherwise
+    """
+    def __init__(self, vm_nickname:str, vm_descr:str, vm_usage:str, icon_path:str, spice_socket:str, start_hidden:bool, always_discard:bool,
+                 app_id:str|None, *args, **kwargs):
+        super().__init__(*args, application_id=app_id if app_id is not None else "padsi-vm-viewer", **kwargs) # it should idealy be org.padsi.VMViewer WM_CLASS is still "padsi-vm-viewer"
+        self._vm_nickname:str|None=vm_nickname if vm_nickname else None
+        self._vm_usage=vm_usage
+        self._vm_descr=vm_descr
+        self._icon_path=icon_path
+        self._spice_socket=spice_socket
+        self._windows_can_be_shown=not start_hidden
+        self._vm_always_discarded=always_discard
+
+        self._startup_win=None
+        self._console_win=None
+        self._actions_widget=None
+
+        self._switched_to_console:bool=False # True if the console window was ever displayed
+        self._http_thread:threading.Thread|None=None
+        self._queue_from_thread=queue.Queue()
+        self._queue_to_thread=queue.Queue()
+
+    @property
+    def window_title(self) -> str:
+        match self._vm_usage:
+            case "run":
+                if self._vm_nickname:
+                    if self._vm_nickname=="default":
+                        return f"{self._vm_descr}"
+                    return f"{self._vm_descr} ({self._vm_nickname})"
+                return f"{self._vm_descr} (first usage preparations)"
+            case "update":
+                return f"{self._vm_descr} (OS update)"
+            case "install":
+                return f"{self._vm_descr} (OS install)"
+            case _:
+                return f"{self._vm_descr} (unknown usage)"
+        return "???"
+
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        self.hold()  # don't close the application when the user closes the top window (user self.release() to actually quit)
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self.handle_usr1_signal)
+
+        self._http_thread=threading.Thread(target=self._check_vm_session_opened)
+        self._http_thread.start()
+
+        GLib.timeout_add_seconds(1, self._check_queue_cb)
+        delay=60 if self._vm_usage=="run" else 180
+        GLib.timeout_add_seconds(delay, self._show_console_timout_cb) # after that delay, something probably went wrong so we show the console anyway
+
+    def _check_queue_cb(self):
+        try:
+            self._queue_from_thread.get_nowait()
+            if self._http_thread is not None:
+                self._http_thread.join()
+                self._http_thread=None
+            self._show_console_cb()
+            return False # terminate the timer
+        except queue.Empty:
+            pass
+        except Exception as e:
+            syslog.syslog(syslog.LOG_WARNING, f"Failed to check on Queue: {str(e)}")
+        return True # keep the timer
+
+    def _show_console_timout_cb(self):
+        if not self._switched_to_console:
+            self._show_console_cb()
+        return False # stop the timer
+
+    def _check_vm_session_opened(self):
+        counter=0
+        while True:
+            counter+=1
+            time.sleep(0.25)
+            # check if the thread must be stopped now
+            try:
+                data=self._queue_to_thread.get_nowait()
+                self._queue_from_thread.put_nowait("DONE")
+                return # therminate the thread
+            except queue.Empty:
+                pass
+
+            if self._switched_to_console:
+                self._queue_from_thread.put_nowait("DONE")
+                return # therminate the thread, not needed anymore
+
+            if counter==15:
+                counter=0
+                # ask the padsi agent if the user's session is ready
+                try:
+                    response=requests.get(f"http://{vm_ip_address}:{admin_port}/status?context=user-session-opened", timeout=3) # Windows is very slow
+                    response.raise_for_status()
+                    data=response.json()
+                    if data.get("user-session-opened"):
+                        self._queue_from_thread.put_nowait("DONE")
+                        return # end of thread
+                except requests.exceptions.HTTPError:
+                    syslog.syslog(syslog.LOG_WARNING, "Wrong PADSI agent version!")
+                except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError):
+                    pass # the PADSI agent may not be listening yet
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_WARNING, f"Failed to interogate the VM's PADSI agent to know if the user session is opened: {str(e)}")
+
+    def do_activate(self):
+        if not self._windows_can_be_shown:
+            return
+
+        if self._vm_usage!="run":
+            # directly show the console
+            self._show_console_cb()
+            self._actions_widget.set_vm_usage_is_run(False) # pyright: ignore
+        else:
+            # show the startup window
+            if self._startup_win is None:
+                win=Gtk.ApplicationWindow(application=self, title=self.window_title)
+                #win.set_startup_id("org.padsi.VMViewer")
+                win.connect("destroy", self._startup_window_destroy_cb)
+                win.set_border_width(10)
+                win.set_resizable(False)
+
+                wid=VMStartupWidget(self._vm_nickname, self._vm_descr, self._vm_usage, self._icon_path, self._spice_socket)
+                wid.connect("show-console-requested", self._show_console_cb)
+                wid.connect("cancel-requested", self._discard_cb)
+                win.add(wid)
+                win.show_all()
+                self._startup_win=win
+            self._startup_win.present()
+
+    def handle_usr1_signal(self):
+        """Show the console window to the user if it exists, or the startup window
+        """
+        self._windows_can_be_shown=True
+        if self._switched_to_console:
+            if self._console_win is not None:
+                self._console_win.present()
+            else:
+                self._show_console_cb()
+        else:
+            if self._startup_win is None:
+                self.do_activate()
+            else:
+                self._startup_win.present()
+        return True
+
+    def _startup_window_destroy_cb(self, _):
+        self._startup_win=None
+
+    def _console_window_destroy_cb(self, _):
+        self._console_win=None
+        self._actions_widget=None
+
+    def _show_console_cb(self, *args):
+        self._switched_to_console=True
+        if not self._windows_can_be_shown:
+            return
+
+        if self._console_win is None:
+            if self._vm_usage=="run":
+                win=RunApplicationWindow(application=self, title=self.window_title)
+                win.connect("destroy", self._console_window_destroy_cb)
+                win.connect("vm-discard", self._real_quit)
+            else:
+                win=InstallUpdateApplicationWindow(application=self, title=self.window_title)
+                win.connect("destroy", self._real_quit)
+            (w,h)=VMConsoleWidget.get_sane_default_size()
+            win.resize(w, h)
+            self._console_win=win
+
+            wid=VMConsoleWidget(unix_socket=self._spice_socket)
+            win.add(wid)
+            wid.session_connect()
+            self._actions_widget=wid.actions
+
+            wid.actions.connect("fullscreen", self._fullscreen_cb)
+            wid.actions.connect("console-hide", self._hide_cb)
+            wid.actions.connect("discard", self._discard_cb)
+            wid.actions.connect("shutdown", self._shutdown_cb)
+            wid.actions.connect("error", self._error_cb)
+            win.show_all()
+            wid.actions.set_vm_always_discard(self._vm_always_discarded)
+
+            self._switched_to_console=True
+
+        self._console_win.present()
+        if self._startup_win is not None:
+            self._startup_win.destroy()
+
+    def _fullscreen_cb(self, widget, fullscreen):
+        if self._console_win is not None:
+            if fullscreen:
+                self._console_win.fullscreen()
+            else:
+                self._console_win.unfullscreen()
+
+    def _hide_cb(self, _):
+        if self._console_win is not None:
+            self._console_win.destroy()
+
+    def _real_quit(self, _):
+        if self._http_thread is not None:
+            self._queue_to_thread.put("QUIT")
+        if self._actions_widget is not None:
+            self._actions_widget.set_sensitive(False)
+        GLib.idle_add(self.quit)
+
+    def _discard_cb(self, _):
+        # ask for confirmation
+        dialog=Gtk.MessageDialog(transient_for=self._console_win, flags=0,
+                                 message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO,
+                                 text="Discard the virtual machine?")
+        if self._vm_usage=="run":
+            msg="Discard the virtual machine only it you do not intend\rto reuse it. Also note that any unsaved data will be lost."
+        else:
+            msg="This will cancel any installation or update processus."
+        dialog.format_secondary_text(msg)
+        response=dialog.run()
+        dialog.destroy()
+
+        if response==Gtk.ResponseType.YES:
+            self._real_quit(None)
+
+    def _shutdown_cb(self, _):
+        # ask for confirmation
+        dialog=Gtk.MessageDialog(transient_for=self._console_win, flags=0,
+                                 message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO,
+                                 text="Proceed with the virtual machine's shutdown?")
+        dialog.format_secondary_text("You will be able to reuse later that virtual machine\nbut any unsaved data will be lost.")
+        response=dialog.run()
+        dialog.destroy()
+
+        if response==Gtk.ResponseType.YES:
+            try:
+                response=requests.post(f"http://{vm_ip_address}:{admin_port}/shutdown", timeout=0.5)
+                response.raise_for_status()
+                if self._actions_widget is not None:
+                    self._actions_widget.set_sensitive(False)
+            except Exception:
+                # display error info
+                dialog=Gtk.MessageDialog(transient_for=self._console_win, flags=0,
+                                         message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.CANCEL,
+                                         text="Failed to contact virtual machine")
+                dialog.format_secondary_text("Virtual machine was not shut down, it can still be done from\nwithin the virtual machine")
+                dialog.run()
+                dialog.destroy()
+
+    def _error_cb(self, widget, context:str, error:str):
+        dialog=Gtk.MessageDialog(transient_for=self._console_win, flags=0,
+                                 message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.CLOSE,
+                                 text=context)
+        dialog.format_secondary_text(error)
+        dialog.run()
+        dialog.destroy()
+
+if __name__=="__main__":
+    # find the correct icon to display
+    base_icon_path="/usr/share/padsi/vm-management/viewer/icons"
+    icon_path=None
+    parts=args.os_info.split("/")
+    while len(parts)>0:
+        path=os.path.join(base_icon_path, "_".join(parts)+".png")
+        if os.path.exists(path):
+            icon_path=path
+            break
+        parts=parts[:-1]
+    if icon_path is None:
+        icon_path=os.path.join(base_icon_path, "generic.png")
+
+    app=VMViewerApplication(args.nickname, args.vm_descr, args.vm_usage, icon_path, args.spice_socket, args.hide, args.discard, args.appid)
+    app.run()

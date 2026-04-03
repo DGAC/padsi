@@ -1,0 +1,782 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+
+#
+# PADSI's system interaction tool
+#
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import os
+import pwd
+import re
+import subprocess
+import sys
+from urllib import parse
+
+import colorama  # import Fore, Style
+import psutil
+import requests.exceptions
+import requests_unixsocket
+
+try:
+    import padsi.config
+except ModuleNotFoundError:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+    import padsi.config
+
+import padsi.netmap
+import padsi.network
+from padsi.config import ResolvRule, TrafficShaper
+from padsi.config.adminns import AdminNS
+from padsi.config.network import FWRule
+from padsi.run.admin_infra import AdminInfra
+
+# Adapt console coloring to the output type
+if os.isatty(sys.stdout.fileno()):
+    Fore = colorama.Fore  # pyright: ignore
+    Style = colorama.Style  # pyright: ignore
+else:
+    class Fore:
+        BLACK = ""
+        RED = ""
+        GREEN = ""
+        YELLOW = ""
+        BLUE = ""
+        MAGENTA = ""
+        CYAN = ""
+        WHITE = ""
+        RESET = ""
+
+    class Style:
+        BRIGHT = ""
+        DIM = ""
+        NORMAL = ""
+        RESET_ALL = ""
+
+
+parser = argparse.ArgumentParser(description="PADSI system tool")
+subparsers = parser.add_subparsers()
+parser.add_argument("-U", "--user", type=int, help="UID of the user to use instead of current one")
+parser.add_argument("--config-dir", help="Configuration directory (defaults to /etc/padsi)", type=str, default="/etc/padsi")
+
+subparser = subparsers.add_parser("adm-list", help="List all the running administration namespaces (must be root)")
+subparser.set_defaults(cmde="adm-list")
+
+subparser = subparsers.add_parser("adm-exec", help="Execute a command in the INFRA part of an admin. namespace (must be root)")
+subparser.set_defaults(cmde="adm-exec")
+subparser.add_argument("adminns", type=str, help="Administration namespace, refer to the adm-ns command")
+subparser.add_argument("args", type=str, nargs=argparse.REMAINDER, help="Optional command to execute and its arguments")
+
+subparser=subparsers.add_parser("config-test", help="Report any error in the configuration")
+subparser.set_defaults(cmde="config-test")
+
+subparser = subparsers.add_parser("dump", help="Print the complete system's status (must be root)")
+subparser.set_defaults(cmde="dump")
+
+subparser = subparsers.add_parser("network", help="Print the complete system's network setup (must be root)")
+subparser.set_defaults(cmde="network")
+
+subparser = subparsers.add_parser("pstree", help="List all PADSI's running processes")
+subparser.set_defaults(cmde="pstree")
+
+subparser = subparsers.add_parser("zone-exec", help="Execute a command in the specified part of a zone (must be root)")
+subparser.set_defaults(cmde="zone-exec")
+subparser.add_argument("-i", "--interactive", action="store_true", help="Run command interactively")
+subparser.add_argument("--as-user", action="store_true", default=False, help="Run command as user and not as root")
+subparser.add_argument("zone", type=str, help="Zone")
+subparser.add_argument("part", type=str, help="Actual zone part to enter, as 'INFRA', 'VM'[':'<PID>|<NICKNAME>], 'APP'[':'<PID>] or 'DBUS'[':'<PID>], refer to the zone-parts command")
+subparser.add_argument("args", type=str, nargs=argparse.REMAINDER, help="Optional command to execute and its arguments")
+
+subparser = subparsers.add_parser("zone-network", help="Print the network configuration of a zone (must be root)")
+subparser.set_defaults(cmde="zone-network")
+subparser.add_argument("zone", type=str, help="Zone")
+
+subparser = subparsers.add_parser("zone-parts", help="List all the running parts for a zone (must be root)")
+subparser.set_defaults(cmde="zone-parts")
+subparser.add_argument("zone", type=str, help="Zone")
+
+args = vars(parser.parse_args())
+# print("PARSED ARGS: %s"%args)
+
+
+_indent = "    "
+
+
+#
+# Misc.
+#
+def load_config() -> padsi.config.Configuration:
+    conf = padsi.config.Configuration(args["config_dir"])
+    return conf
+
+
+def vm_name(data: dict) -> str:
+    return f"{data.get('vm-snap')}/{data.get('vm-nickname')} ({data.get('vm-conf')})"
+
+#
+# actual processes handling
+#
+def get_padsi_system_service_pid() -> int:
+    proc = subprocess.run(
+        ["systemctl", "show", "--property", "MainPID", "--value", "padsi"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise Exception(f"Could not determine PADSI service's main process: {proc.stderr}")
+    main_pid = int(proc.stdout)
+    if main_pid == 0:
+        raise Exception("PADSI service is not running")
+    return main_pid
+
+
+def get_padsi_user_service_pid(sysem_service_pid: int) -> int:
+    system_service = psutil.Process(sysem_service_pid)
+    user_service: psutil.Process | None = None
+    for child in system_service.children():
+        if child.uids()[0] == uid:
+            user_service = child
+            break
+    if user_service is None:
+        raise Exception(f"Could not find user service process for UID {uid}")
+    return user_service.pid
+
+
+#
+# execution and parsing of processes in bubbles
+#
+def execute_command_in_process_ns(pid: int, args: list[str]) -> str:
+    try:
+        prog = subprocess.run(
+            ["nsenter", "-m", "-p", "-n", "-t", str(pid)] + args,
+            capture_output=True,
+            text=True,
+        )
+        if prog.returncode != 0:
+            raise Exception(prog.stderr if prog.stderr else prog.stdout)
+        return prog.stdout
+    except KeyboardInterrupt:
+        return ""
+
+def parse_ip_list_output(data: str) -> dict[str, ipaddress.IPv4Interface]:
+    res = {}
+    ifname: str | None = None
+    for line in data.splitlines():
+        if re.match(r"^[1-9][0-9]*:", line):
+            (_, ifname, *_) = line.split()
+            if ifname == "lo:":
+                ifname = None
+            else:
+                ifname = ifname[:-1]
+        elif "inet " in line and ifname is not None:
+            line = line.strip()
+            (_, addr, *_) = line.split()
+            res[ifname] = ipaddress.IPv4Interface(addr)
+            ifname = None
+    return res
+
+
+def get_status_from_user_service(uid: int | None) -> dict | None:
+    if uid is None:
+        proc = subprocess.run(["padsi-cli", "-j", "-v", "status"], capture_output=True, text=True)
+    else:
+        proc = subprocess.run(["padsi-cli", "-U", str(uid), "-j", "-v", "status"], capture_output=True, text=True)
+    if proc.returncode == 2:  # PADSI service not running
+        return None
+    if proc.returncode != 0:
+        raise Exception(f"Could not get output from padsi user service: {proc.stderr}")
+    return json.loads(proc.stdout)
+
+
+#
+# filtering
+#
+def get_infra(zdata) -> dict:
+    for znode in zdata:
+        if znode.get("type") == "INFRA":
+            return znode
+    raise Exception("No infra. support found!")
+
+
+def get_virtual_machines(zdata) -> list[dict]:
+    res = []
+    for znode in zdata:
+        if znode.get("type") == "VM":
+            res.append(znode)
+    return res
+
+
+def get_apps(zdata, pid_filter: int | None = None) -> list[dict]:
+    res = []
+    for znode in zdata:
+        if znode.get("type") == "APPS":
+            if pid_filter is None:
+                res.append(znode)
+            elif znode.get("init-pid") == pid_filter:
+                res = [znode]
+                break
+            elif pid_filter == 0:
+                if len(res) > 0:
+                    raise Exception("More than one APP zone exists")
+                res = [znode]
+    return res
+
+
+def get_dbus_routers(zdata, pid_filter: int | None = None) -> list[dict]:
+    res = []
+    for znode in zdata:
+        if znode.get("type") == "DBUS-ROUTER":
+            if pid_filter is None:
+                res.append(znode)
+            elif znode.get("init-pid") == pid_filter:
+                res = [znode]
+                break
+            elif pid_filter == 0:
+                if len(res) > 0:
+                    raise Exception("More than one DBUS-ROUTER zone exists")
+                res = [znode]
+    return res
+
+
+def root_required():
+    """Ensure we are root"""
+    if os.getuid() != 0:
+        raise Exception("Must be run as root")
+
+
+#
+# commands
+#
+def command_pstree():
+    """List all PADSI's processes"""
+    pid = get_padsi_system_service_pid()
+    proc = subprocess.run(["pstree", "-TpsuS", f"{pid}"])
+    if proc.returncode != 0:
+        raise Exception(f"Failed to execute 'pstree' for PADSI's main PID {pid}")
+
+
+def command_dump(uid: int | None):
+    """Show the whole system's networking structure"""
+    # get the list of users on the system
+    root_required()
+    uids: list[int] = []
+    for entry in pwd.getpwall():
+        if (entry.pw_uid >= 1000 and entry.pw_name != "nobody"):  # real users except "nobody"
+            uids.append(entry.pw_uid)
+
+    # prepare structure for the diagram
+    nmap = padsi.netmap.NetworkMap()
+
+    # analyse PADSI's zones to get the PID of bubblewrap processes
+    data={}
+    for uid in uids:
+        status = get_status_from_user_service(uid)
+        if status is None:
+            continue
+
+        # enrich data with network interfaces
+        for zone, bubbles in status.get("active-zones", {}).items():
+            for bubble in bubbles:
+                if "processes" in bubble:
+                    del bubble["processes"]
+                pid = bubble.get("init-pid")
+                if pid is not None:
+                    bubble["network"] = {}
+                    for iface in nmap.get_ns_interfaces(pid):
+                        if iface.name != "lo":
+                            bubble["network"][iface.name] = {
+                                "type": iface.iface_type.value if iface.iface_type is not None else None,
+                                "addresses": [str(ip) for ip in iface.addresses] if iface.addresses is not None else None,
+                            }
+        data[uid]=status
+    print(f"{json.dumps(data, indent=4)}")
+
+
+def command_zone_parts(zdata: dict):
+    """List all the bubbles and their type"""
+    root_required()
+    for znode in zdata:
+        pid = znode.get("init-pid")
+        t = znode.get("type")
+        if pid is None:
+            print(f"{Style.BRIGHT}{t}{Style.RESET_ALL}")
+        else:
+            if t == "VM":
+                print(f"{Style.BRIGHT}{t} {vm_name(znode)}:{Style.RESET_ALL} init PID {pid}")
+            else:
+                print(f"{Style.BRIGHT}{t}{Style.RESET_ALL}: init PID {pid}")
+
+def _show_traffic_shaper_info(tshaper: TrafficShaper):
+    print(f"{Style.BRIGHT}Traffic shaper: {tshaper.name}{Style.RESET_ALL}")
+    print(f"{_indent}type: {tshaper.ts_type}")
+    print(f"{_indent}net namespace: {tshaper.net_ns}")
+    if not tshaper.net_ns_exists:
+        print(Fore.MAGENTA + f"{_indent}does not exist" + Fore.RESET)
+    else:
+        match tshaper.functionnal:
+            case True:
+                print(f"{_indent}is functionnal")
+            case False:
+                print(Fore.RED + f"{_indent}is not functionnal" + Fore.RESET)
+            case _:
+                print(Fore.RED + f"{_indent}could not determine if it is functionnal" + Fore.RESET)
+
+        try:
+            ifaces = padsi.network.list_interfaces(tshaper.net_ns)
+            if len(ifaces) > 0:
+                print(f"{_indent}network interfaces (in namespace):")
+                for nsiface, ip in ifaces.items():
+                    print(f"{_indent * 2}- {nsiface}: {str(ip)}")
+        except Exception as e:
+            print(Fore.MAGENTA + f"{_indent}cannot list network interfaces in namespace ({str(e)})" + Fore.RESET)
+
+def _show_admin_ns_info(adminns:AdminNS):
+    print(f"{Style.BRIGHT}Administration namespace: {adminns.name}{Style.RESET_ALL}")
+    nsname=AdminInfra.get_admin_ns_name(adminns)
+    print(f"{_indent}net namespace: {nsname}")
+
+    proc=subprocess.run(["ip", "netns", "exec", nsname, "ss", "-atupn"], capture_output=True, text=True)
+    if proc.returncode!=0:
+        print(f"{_indent}{Fore.RED}Could not list processes in NS: {str(proc.stderr)}{Fore.RESET}")
+    else:
+        for line in proc.stdout.splitlines()[1:]:
+            # ex.:
+            # Netid State  Recv-Q  Send-Q  Local Address:Port   Peer Address:Port  Process
+            # tcp   LISTEN 0       128     0.0.0.0:22           0.0.0.0:*          users:(("sshd",pid=1051379,fd=6))
+            # tcp   TIME-WAIT 0      0     192.168.12.2:50058 192.168.13.1:2354
+            try:
+                (proto, state, _, _, local, peer, *proc)=line.split(maxsplit=6)
+                (a, b)=local[::-1].split(":", maxsplit=1)
+                laddr=b[::-1]
+                lport=a[::-1]
+                try:
+                    ipaddress.IPv4Address(laddr)
+                except ipaddress.AddressValueError:
+                    ipaddress.IPv6Address(laddr[1:-1])
+                    proto=proto+"6"
+                match state:
+                    case "LISTEN":
+                        pid:str|None=None
+                        if len(proc)==1:
+                            for part in  proc[0].split(","):
+                                if part.startswith("pid="):
+                                    pid=part[4:]
+                                    break
+                        print(f"{_indent*2}- LISTEN {proto}:{lport} (PID: {pid if pid is not None else '???'})")
+                    case "ESTAB"|"TIME-WAIT":
+                        (a, b)=peer[::-1].split(":", maxsplit=1)
+                        paddr=b[::-1]
+                        pport=a[::-1]
+                        print(f"{_indent*2}- {state} {proto}:{lport} {paddr}:{pport}")
+                    case _:
+                        print(f"{_indent*2}- {state} {proto}:{lport}")
+            except Exception as e:
+                print(f"{_indent*2}{Fore.RED}Invalid 'ss' output: {line.strip()}{Fore.RESET}: {str(e)}")
+
+    if adminns.traffic_shaper is None:
+        print(f"{_indent}direct network access")
+    else:
+        print(f"{_indent}via traffic shaper: {adminns.traffic_shaper.name}")
+    if len(adminns.web_proxies)>0:
+        print(f"{_indent}Web proxy: {', '.join([p.descr for p in adminns.web_proxies])}")
+    else:
+        print(f"{_indent}no Web proxy")
+
+def command_network(args: dict, zdata: dict | None):
+    """Print the system's network configuration"""
+    root_required()
+
+    # system's network settings
+    ifaces=padsi.network.list_interfaces()
+    if len(ifaces)>0:
+        print(f"{Style.BRIGHT}Network interfaces in the 'init' namespace:{Style.RESET_ALL}")
+        for (iface,addr) in ifaces.items():
+            print(f"{_indent}{iface}: {addr}")
+
+    # admin NS
+    conf = load_config()
+    if len(conf.admin_ns_list)==0:
+        print("No administration namespace configured")
+    else:
+        for adminns in conf.admin_ns_list:
+            _show_admin_ns_info(adminns)
+
+    # traffic shapers
+    for tshaper in conf.traffic_shapers:
+        _show_traffic_shaper_info(tshaper)
+
+
+def command_zone_network(args: dict, zdata: dict | None):
+    """Print the network information (interfaces and IP addresses)"""
+    root_required()
+    conf = load_config()
+    zone = args.get("zone")
+    if zone is None:
+        raise Exception("No zone specified")
+    zone_conf = conf.get_zone(zone)
+
+    tshaper = zone_conf.traffic_shaper
+    if tshaper is not None:
+        _show_traffic_shaper_info(tshaper)
+
+    if zdata is not None:
+        data = get_infra(zdata)
+        if tshaper is None:
+            iface = data.get("lower-iface")
+            if iface is None:
+                raise Exception("Lower interface is None???")
+            print(f"Network interface (in host): {iface}")
+            if padsi.network.interface_exists(iface):
+                addr = padsi.network.addr_get(iface)
+                print(f"{_indent}IP: {addr}")
+            else:
+                print(Fore.RED + f"{_indent}Does not exist" + Fore.RESET)
+
+        pid = data.get("init-pid")
+        if pid is None:
+            raise Exception("Init PID is None???")
+        print(f"{Style.BRIGHT}INFRA: init PID: {pid}{Style.RESET_ALL}")
+        try:
+            data = execute_command_in_process_ns(pid, ["ip", "a"])
+            for iface, addr in parse_ip_list_output(data).items():
+                print(f"{_indent}- {iface}: {addr}")
+        except Exception as e:
+            print(Fore.MAGENTA + f"{_indent * 2}{str(e)}" + Fore.RESET)
+
+        for data in get_virtual_machines(zdata):
+            print(f"{Style.BRIGHT}VM bubble {vm_name(data)}: init PID {pid}{Style.RESET_ALL}")
+            try:
+                data = execute_command_in_process_ns(pid, ["ip", "a"])
+                for iface, addr in parse_ip_list_output(data).items():
+                    print(f"{_indent}- {iface}: {addr}")
+            except Exception as e:
+                print(Fore.MAGENTA + f"{_indent}{str(e)}" + Fore.RESET)
+
+        for data in get_apps(zdata, args.get("app")):
+            pid=data.get("init-pid")
+            print(f"{Style.BRIGHT}APPS: init PID {pid}{Style.RESET_ALL}")
+            try:
+                data = execute_command_in_process_ns(pid, ["ip", "a"])
+                for iface, addr in parse_ip_list_output(data).items():
+                    print(f"{_indent}- {iface}: {addr}")
+            except Exception as e:
+                print(Fore.MAGENTA + f"{_indent}{str(e)}" + Fore.RESET)
+    else:
+        print("Zone is not started")
+
+
+def command_exec(zdata: dict, args: list[str]):
+    """Execute a command (as root) and print its result"""
+    root_required()
+    for znode in zdata:
+        pid = znode.get("init-pid")
+        if pid is not None:
+            try:
+                data = execute_command_in_process_ns(pid, args)
+                print(data, end="")
+            except Exception as e:
+                print(Fore.MAGENTA + f"{_indent}{str(e)}" + Fore.RESET)
+
+
+def command_exec_interactive(pid: int, args: list[str], uid:int|None):
+    """Execute an interactive command (bash by default) in the namespaces of the specified process"""
+    root_required()
+    if args is None or len(args) == 0:
+        args = ["/bin/bash"]
+    nsargs = ["nsenter", "-m", "-p", "-n"]
+    if uid is not None:
+        nsargs+=["-S", str(uid)]
+    nsargs+=["-t", str(pid)] + args
+    os.execvp(nsargs[0], nsargs)
+
+def get_admin_ns_list() -> list[str]:
+    proc=subprocess.run(["ip", "netns"], capture_output=True, text=True)
+    if proc.returncode!=0:
+        raise Exception(f"Could not execute 'ip netns': {proc.stderr}")
+    res:list[str]=[]
+    for line in proc.stdout.splitlines():
+        (ns, *_)=line.split(maxsplit=1)
+        if ns.startswith("admns"):
+            (_, ns, _)=ns.split("-")
+            res.append(ns)
+    return res
+
+def get_admin_ns_infos(admns:str) -> dict:
+    socket="/run/padsi/padsi/padsi-sserv.sock"
+    if not os.path.exists(socket):
+        raise Exception("The PADSI system service does not appear to be running")
+    socket=parse.quote_plus(socket)
+    session=requests_unixsocket.Session()
+    try:
+        resp=session.get(f"http+unix://{socket}/status", timeout=30)
+    except requests.exceptions.ConnectionError:
+        raise Exception("PADSI service connection refused")
+    if resp.ok:
+        data=resp.json()
+        if admns in data:
+            return data[admns]
+        else:
+            if len(data)==0:
+                raise Exception(f"Could not get information about the '{admns}' admin. namespace (service may still be starting)")
+            raise Exception(f"Admin. service did not return information about the '{admns}' admin. namespace")
+    raise Exception(resp.text)
+
+
+def _get_traffic_shaper_descr(tsp: TrafficShaper|None) -> str:
+    if tsp is None:
+        return "direct network access"
+    else:
+        match tsp.functionnal:
+            case True:
+                return f"VPN {tsp.name} ({tsp.ts_type}, functionnal)"
+            case False:
+                return f"VPN {tsp.name} ({tsp.ts_type}, not functionnal)"
+            case _:
+                return f"VPN {tsp.name} ({tsp.ts_type})"
+
+def _format_rule(rule:FWRule|ResolvRule) -> str:
+    if rule.action=="allow":
+        return f"{Fore.GREEN}allowed{Fore.RESET} {rule.endpoint} {Style.DIM}({rule.descr}){Style.RESET_ALL}"
+    else:
+        return f"{Fore.MAGENTA}denied{Fore.RESET} {rule.endpoint} {Style.DIM}({rule.descr}){Style.RESET_ALL}"
+
+#
+# main
+#
+if __name__ == "__main__":
+    try:
+        uid = args.get("user")
+        if uid is None:
+            if "SUDO_UID" in os.environ:
+                uid = int(os.environ.get("SUDO_UID", -1))
+            else:
+                # use the UID of the logged user if there is only one logger
+                proc = subprocess.run(["loginctl", "list-sessions", "-j"], capture_output=True, text=True)
+                if proc.returncode == 0:
+                    data = json.loads(proc.stdout)
+                    for item in data:
+                        if item.get("seat") is not None:
+                            if uid:
+                                uid = None
+                                break
+                            else:
+                                uid = item.get("uid")
+        elif isinstance(uid, str):
+            # convert name to UID
+            try:
+                uid=pwd.getpwnam(uid).pw_uid
+            except Exception:
+                raise Exception(f"Unknown user '{uid}'")
+
+        cmde = args.get("cmde")
+        if cmde is None:
+            parser.print_help()
+            sys.exit(1)
+
+        zdata = None
+        if cmde not in ("dump", "network", "pstree", "config-test", "adm-list", "adm-exec"):
+            status = get_status_from_user_service(uid)
+            if status is None:
+                if uid is None:
+                    raise Exception("Could not reach PADSI service, you need to specify a user (via the -U flag)")
+                raise Exception("PADSI service not running?")
+            # print(f"status: {json.dumps(status, indent=4)}")
+
+            zone_name = args.get("zone")
+            if not zone_name:
+                raise Exception("No zone specified")
+            if zone_name not in status.get("zones-available"):
+                raise Exception(f"Zone '{zone_name}' is not available")
+
+            if zone_name not in status.get("active-zones", []):
+                if cmde not in ("network"):
+                    raise Exception(f"Zone '{zone_name}' is not yet started")
+
+            zdata = status.get("active-zones", []).get(zone_name)
+            if zdata is None:
+                raise Exception(f"Zone '{zone_name}' is not active")
+            # print(f"ALL zdata: {json.dumps(zdata, indent=4)}")
+
+        # actual handling
+        match cmde:
+            case "config-test":
+                conf=load_config()
+                # TODO:
+                    # check that VM's RUN network requirements are met by the zone in which they are supposed to run
+                    # check that there is a zone meeting the VM's INSTALL and UPDATE network requirements
+                    # check that no zone and adminns have the same name (bad practice and breaks the "network-usage" command)
+
+            case "pstree":
+                command_pstree()
+            case "dump":
+                command_dump(args.get("user"))
+            case "network":
+                command_network(args, zdata)
+            case "zone-parts":
+                command_zone_parts(zdata)  # pyright: ignore
+            case "zone-network":
+                command_zone_network(args, zdata)
+            case "zone-exec":
+                interactive = args["interactive"]
+                as_user = args["as_user"]
+                cmdargs = args["args"]
+                part = args["part"]
+                (_, *extra) = part.split(":")
+                filter = extra[0] if extra else None
+
+                if part == "INFRA":
+                    zdata = [get_infra(zdata)]
+                elif part.startswith("DBUS"):
+                    zdata = get_dbus_routers(zdata, filter)
+                elif part.startswith("APPS"):
+                    zdata = get_apps(zdata, filter)
+                elif part.startswith("VM"):
+                    found = False
+                    vms = get_virtual_machines(zdata)
+                    for nzone in vms:
+                        if (
+                            str(nzone.get("init-pid")) == filter
+                            or nzone.get("vm-snap") == filter
+                            or nzone.get("vm-nickname") == filter
+                        ):
+                            zdata = [nzone]
+                            found = True
+                            break
+                    if not found:
+                        zdata = vms if len(vms) == 1 else []
+                else:
+                    raise Exception(f"Invalid zone part specification '{part}'")
+
+                assert(zdata is not None)
+                if interactive or len(cmdargs) == 0:
+                    if len(zdata) == 0:
+                        raise Exception("No bubble to execute command into")
+                    elif len(zdata) > 1:
+                        raise Exception("More than one bubble to execute command into")
+                    znode = zdata[0]
+                    pid = znode.get("init-pid")
+                    if pid is None:
+                        raise Exception("Part to execute command into has no init process")
+                    command_exec_interactive(pid, cmdargs, uid if as_user else None)  # pyright: ignore
+                else:
+                    command_exec(zdata, cmdargs)  # pyright: ignore
+
+            case "adm-list":
+                conf=load_config()
+                conf_admns=conf.get_admin_ns_names()
+                exist_admns=get_admin_ns_list()
+                for ns in exist_admns:
+                    adminns:AdminNS|None=None
+                    try:
+                        adminns=conf.get_admin_ns(ns)
+                        s=adminns.name if adminns.friendly_name==adminns.name else f"{adminns.name} ({adminns.friendly_name})"
+                        print(f"{Style.BRIGHT}{s}{Style.RESET_ALL}")
+                        print(f"{_indent}Network through {_get_traffic_shaper_descr(adminns.traffic_shaper)}")
+                        # DNS
+                        if adminns.has_dns_resolution:
+                            if adminns.dns_resolvers is not None:
+                                if len(adminns.dns_resolvers)==0:
+                                    print(f"{_indent}DNS resolution provided by the host (NOT YET IMPLEMENTED)")
+                                else:
+                                    print(f"{_indent}DNS resolvers:")
+                                    for item in adminns.dns_resolvers:
+                                        print(f"{_indent*2}{str(item.ip_address)}:{item.port} ({item.protocol.value})")
+                                if adminns.out_resolv_rules is None or len(adminns.out_resolv_rules)==0:
+                                    print(f"{_indent}No resolution rules")
+                                else:
+                                    print(f"{_indent}Domain resolution rules:")
+                                    for rule in adminns.out_resolv_rules:
+                                        print(f"{_indent*2}{_format_rule(rule)}")
+                            else:
+                                print(f"{_indent}No DNS resolution")
+                        else:
+                            print(f"{_indent}Does not offer DNS resolution service")
+
+                        # input access
+                        if adminns.in_fw_rules is None or len(adminns.in_fw_rules)==0:
+                            print(f"{_indent}No network input access allowed")
+                        else:
+                            print(f"{_indent}Network input access:")
+                            if adminns.in_fw_rules is not None:
+                                for rule in adminns.in_fw_rules:
+                                    print(f"{_indent*2}{_format_rule(rule)}")
+
+                        # output direct access
+                        if (adminns.out_fw_rules is None or len(adminns.out_fw_rules)==0) and (adminns.out_resolv_rules is None or len(adminns.out_resolv_rules)==0):
+                            print(f"{_indent}No direct network output access allowed")
+                        else:
+                            print(f"{_indent}Direct network output access:")
+                            if adminns.out_fw_rules is not None:
+                                for rule in adminns.out_fw_rules:
+                                    print(f"{_indent*2}{_format_rule(rule)}")
+                            if adminns.out_resolv_rules is not None:
+                                for rule in adminns.out_resolv_rules:
+                                    print(f"{_indent*2}{_format_rule(rule)}")
+
+                        # Web access via proxies
+                        if len(adminns.web_proxies)==0:
+                            print(f"{_indent}No Web access via proxy configured")
+                        else:
+                            for proxy in adminns.web_proxies:
+                                print(f"{_indent}Web access via proxy '{proxy.descr}' ({proxy.host}:{proxy.port}):")
+                                if proxy.fw_rules is not None:
+                                    for rule in proxy.fw_rules:
+                                        print(f"{_indent*2}{_format_rule(rule)}")
+                                if proxy.resolv_rules is not None:
+                                    for rule in proxy.resolv_rules:
+                                        print(f"{_indent*2}{_format_rule(rule)}")
+                    except Exception as e:
+                        if adminns is None:
+                            print(f"{Style.BRIGHT}{ns}{Style.RESET_ALL} {Fore.RED}not defined in the current configuration{Style.RESET_ALL}")
+                        else:
+                            print(f"{_indent}{Fore.RED}Error: {str(e)}{Style.RESET_ALL}")
+
+                    data=get_admin_ns_infos(ns)
+                    pid = data.get("init-pid")
+                    if pid is None:
+                        print(f"{_indent}{Fore.MAGENTA}no associated PID{Style.RESET_ALL}")
+                    else:
+                        print(f"{_indent}init PID: {pid}")
+
+
+            case "adm-exec":
+                exist_admns=get_admin_ns_list()
+                cmdargs = args["args"]
+                ns=args["adminns"]
+                if ns in exist_admns:
+                    data=get_admin_ns_infos(ns)
+                    pid = data.get("init-pid")
+                    if pid is None:
+                        raise Exception("Admin. namespace to execute command into has no init process")
+                    command_exec_interactive(pid, cmdargs, None)
+                else:
+                    raise Exception(f"Unknown admin. NS '{ns}'")
+            case _:
+                raise Exception(f"Unknown command '{cmde}'")
+
+    except Exception as e:
+        print(f"Error: {str(e)}", file=sys.stderr)
+        sys.exit(1)

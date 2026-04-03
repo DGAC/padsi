@@ -1,0 +1,61 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import argparse
+import asyncio
+import logging
+import sys
+import time
+
+from dbus_min import DBusRouter, Selector
+
+parser=argparse.ArgumentParser()
+parser.add_argument("host_dbus_socket", type=str, help="Path to the host's DBus socket, like '/run/user/1000/bus'")
+parser.add_argument("zone_dbus_socket", type=str, help="Path to the DBus socket of the zone's DBus service")
+parser.add_argument("router_dbus_socket", type=str, help="Path of the socket to be created by the program")
+parser.add_argument("--logfile", type=str, help="File to log to, defaults to /tmp/dbus-router.log")
+parser.add_argument("--screenshare", action="store_true", help="Forward screen share calls to host DBus")
+parser.add_argument("--notifications", action="store_true", help="Forward desktop notifications calls to host DBus")
+
+args=parser.parse_args()
+
+if __name__=="__main__":
+    try:
+        logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s",
+                            datefmt="%Y%m%d-%H:%M:%S", filename=args.logfile if args.logfile is not None else "/tmp/dbus-router.log")
+        logging.Formatter.converter=time.gmtime # set the converter to use UTC
+        router=DBusRouter(args.router_dbus_socket, args.zone_dbus_socket)
+
+        if args.screenshare:
+            router.add_selector(Selector(args.host_dbus_socket,
+                                service="org.freedesktop.portal.Desktop",
+                                object_path="/org/freedesktop/portal/desktop/",
+                                interfaces=["org.freedesktop.portal.ScreenCast", "org.freedesktop.portal.Camera"]))
+            router.set_connection_name_allocating_server(args.host_dbus_socket)
+
+        if args.notifications:
+            router.add_selector(Selector(args.host_dbus_socket,
+                                service="org.freedesktop.Notifications",
+                                interfaces=["org.freedesktop.Notifications"]))
+
+        asyncio.run(router.run())
+    except Exception as e:
+        print(f"Startup error: {e}", file=sys.stderr)

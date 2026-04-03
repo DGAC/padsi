@@ -1,0 +1,7 @@
+#!/bin/bash
+
+if [ "$1" == "configure" ]; then
+    systemctl daemon-reload
+    systemctl enable padsi-agent
+    systemctl start padsi-agent
+fi

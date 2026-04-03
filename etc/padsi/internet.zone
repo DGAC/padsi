@@ -1,0 +1,46 @@
+{
+    "web-proxy": null,
+    "apps": [
+        "chromium",
+        "firefox-esr",
+        "org.gnome.Nautilus",
+        "org.gnome.SoundRecorder",
+        "org.keepassxc.KeePassXC"
+    ],
+    "start-mode": "on-demand",
+    "mounts": {
+        "{DOCUMENTS}/exports": {
+            "source": "{DOCUMENTS}/exports",
+            "mode": "ro"
+        }
+    },
+    "network": {
+        "traffic-shaper": null,
+        "dns-resolvers": [
+            "86.54.11.213@853",
+            "86.54.11.13@853"
+        ],
+        "out-rules": [
+            {
+                "action": "deny",
+                "netres": "private"
+            },
+            {
+                "action": "allow",
+                "endpoint": "0.0.0.0/0 ^ tcp ^ 443,8443,80,8080",
+                "descr": "Internet access"
+            },
+            {
+                "descr": "NTP sync.",
+                "endpoint": "**.pool.ntp.org. ^ udp ^ 123",
+                "action": "allow"
+            }
+        ]
+    },
+    "friendly-name": "Internet Web access",
+    "options": {
+        "X11": false,
+        "DNS-BLOCKLIST": "blocklist.conf"
+    },
+    "color": "#c75218"
+}

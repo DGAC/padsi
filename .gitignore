@@ -1,0 +1,9 @@
+.zed
+.$setup*
+.bash*
+*.bkp
+__pycache__
+*.deb
+*~
+packages
+*#

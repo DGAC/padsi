@@ -1,0 +1,160 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+
+#
+# This is the PADSI CLI tool to convert MS365 JSON to a .netres file
+# The JSON file can be downloaded from:
+#   https://learn.microsoft.com/en-us/microsoft-365/enterprise/urls-and-ip-address-ranges?view=o365-worldwide
+# refer to http://aka.ms/ipurlws
+#
+#
+# From the Web page:
+# - ID: The ID number of the row, also known as an endpoint set. This ID is the same as is returned by the web service for the endpoint set.
+# - Category: Shows whether the endpoint set is categorized as Optimize, Allow, or Default. This column also lists which endpoint sets are required to have network connectivity. For endpoint sets that aren't required to have network connectivity, we provide notes in this field to indicate what functionality would be missing if the endpoint set is blocked.
+#   You can read about these categories and guidance for their management in Optimizing connectivity to Microsoft 365 services.
+# - ER: This is Yes if the endpoint set is supported over Azure ExpressRoute with Microsoft 365 route prefixes. The BGP community that includes the route prefixes shown aligns with the service area listed. When ER is No, this means that ExpressRoute is not supported for this endpoint set.
+#   Some routes may be advertised in more than one BGP community, making it possible for endpoints within a given IP range to traverse the ER circuit, but still be unsupported. In all cases, the value of a given endpoint set's ER column should be respected.
+# - Addresses: Lists the FQDNs or wildcard domain names and IP address ranges for the endpoint set. Note that an IP address range is in CIDR format and may include many individual IP addresses in the specified network.
+# - Ports: Lists the TCP or UDP ports that are combined with listed IP addresses to form the network endpoint. You may notice some duplication in IP address ranges where there are different ports listed.
+#
+
+import argparse
+import ipaddress
+import json
+import os
+import sys
+
+try:
+    from firewall import Endpoint
+except ModuleNotFoundError:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+    from firewall import Endpoint
+
+parser=argparse.ArgumentParser(description="PADSI tool to convert MS365 endpoint requirements to a netres file, refer to https://learn.microsoft.com/en-us/microsoft-365/enterprise/urls-and-ip-address-ranges?view=o365-worldwide to download the resources as a JSON file")
+subparsers=parser.add_subparsers()
+
+subparser=subparsers.add_parser("services", help="List all MS services covered")
+subparser.set_defaults(cmde="services")
+subparser.add_argument("json-file", type=str, help="JSON file")
+
+subparser=subparsers.add_parser("create", help="Create a netres file")
+subparser.set_defaults(cmde="create")
+subparser.add_argument("json-file", type=str, help="JSON file")
+subparser.add_argument("-s", "--service", type=str, help="Include data specific to an MS365 service", action="append")
+
+
+args=vars(parser.parse_args())
+#print("PARSED ARGS: %s"%args)
+if "cmde" not in args:
+    parser.print_help()
+    exit(1)
+
+def _handle_endpoints(endpoints:list[str]|None, protocols:str, ports:str|None, append_to:list[Endpoint]):
+    if endpoints and ports:
+        for epstr in endpoints:
+            # IPv4?
+            try:
+                ipaddress.IPv4Network(epstr)
+                append_to.append(Endpoint(epstr, protocols, ports))
+                continue
+            except Exception:
+                pass
+
+            # IPv6?
+            try:
+                ipaddress.IPv6Network(epstr)
+                continue
+            except Exception:
+                pass
+
+            # domain
+            try:
+                if epstr[-1]!=".":
+                    epstr=epstr+"."
+                if epstr.startswith("*."):
+                    epstr="*"+epstr # Microsoft seems to require as many sub levels as imaginable
+                append_to.append(Endpoint(epstr, protocols, ports))
+            except Exception:
+                print(f"Failed to handle '{epstr}'", file=sys.stderr)
+
+def load_ms365_data(jsonfile:str) -> tuple[dict[str,list[Endpoint]], dict[str,str]]:
+    with open(jsonfile, "r") as fd:
+        data:list[dict]=json.load(fd)
+        services:dict[str,list[Endpoint]]={} # key=MS365 service name
+        names:dict[str,str]={} # key=MS365 service name, value=display name
+        for entry in data:
+            svce=entry.get("serviceArea", "unknown")
+            if svce not in names:
+                display=entry.get("serviceAreaDisplayName")
+                if display is None:
+                    raise Exception(f"Unhandled case where serviceAreaDisplayName is null for service {svce}")
+                names[svce]=display
+            tcp_ports:str|None=entry.get("tcpPorts")
+            udp_ports:str|None=entry.get("udpPorts")
+
+            ips:list[str]|None=entry.get("ips")
+            urls:list[str]|None=entry.get("urls")
+
+            slist:list[Endpoint]=[]
+            if tcp_ports==udp_ports:
+                _handle_endpoints(ips, "tcp,udp", tcp_ports, slist)
+                _handle_endpoints(urls, "tcp,udp", tcp_ports, slist)
+            else:
+                _handle_endpoints(ips, "tcp", tcp_ports, slist)
+                _handle_endpoints(urls, "tcp", tcp_ports, slist)
+                _handle_endpoints(ips, "udp", udp_ports, slist)
+                _handle_endpoints(urls, "udp", udp_ports, slist)
+
+            if svce not in services:
+                services[svce]=slist
+            else:
+                services[svce]+=slist
+        return (services, names)
+
+try:
+    (services, servicenames)=load_ms365_data(args["json-file"])
+    cmde=args["cmde"]
+    match cmde:
+        case "services":
+            for svce in services:
+                print(f"{svce}: {servicenames[svce]}")
+
+        case "create":
+            res={}
+            msserv=args["service"] if args["service"] else list(services.keys())
+            for svce in msserv:
+                if svce not in services:
+                    raise Exception(f"Unknown MS365 service '{svce}'")
+                res[f"ms365-{svce.lower()}"]={
+                    "descr": servicenames[svce],
+                    "endpoints": [str(item) for item in services[svce]]
+                }
+            print(f"{json.dumps(res, indent=4)}")
+
+        case _:
+            raise Exception(f"Unhandled command '{cmde}'")
+except KeyboardInterrupt:
+    pass
+except Exception as e:
+    print(f"Error: {str(e)}", file=sys.stderr)
+    print("========== DEBUG ==========")
+    raise e

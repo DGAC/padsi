@@ -1,0 +1,323 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import asyncio
+import logging
+import os
+import sys
+import syslog
+import time
+from typing import Any
+
+import aionotify
+
+from padsi.config import Configuration
+from padsi.run import ZoneUserFiles
+
+_debug=True
+
+class UserZonesMonitor:
+    """Object to monitor the creation of directories which signal that a zone has been started, and to start watch for
+    user modified desktop entry files in that zone.
+    Note: we watch the zone's userfiles where a directory is "assembled" prior to starting a zone instead of the
+          zone's "at rest" HOME directories because the user does not have permissions to access these directories
+    """
+    def __init__(self, gconf:Configuration, userfiles_zones_dir:str):
+        self._gconf=gconf
+        self._watch_dir=userfiles_zones_dir
+        self._watcher:aionotify.Watcher|None=None
+        self._tasks:dict[str,asyncio.Task]={} # key = zone name, value = Task in which a DesktopEntriesDirectoryMonitor is running
+
+    async def _watch_zone(self, zone_name:str):
+        """Start watching a zone's desktop entry files"""
+        zone_dir=os.path.join(self._watch_dir, zone_name)
+        if os.path.isdir(zone_dir):
+            if zone_name in self._tasks:
+                return
+
+            counter=0
+            xdg_apps_dir=os.path.join(zone_dir, ".local", "share", "applications")
+            while True:
+                try:
+                    os.makedirs(xdg_apps_dir, exist_ok=True)
+                    break
+                except PermissionError as e:
+                    counter+=1
+                    if counter==10:
+                        raise e
+                    await asyncio.sleep(10)
+
+            monit=DesktopEntriesDirectoryMonitor(self._gconf, xdg_apps_dir, zone_name=zone_name)
+            await monit.catchup()
+            self._tasks[zone_name]=asyncio.create_task(monit.run())
+
+    async def catchup(self):
+        if not os.path.isdir(self._watch_dir):
+            # nothing to do, the directory does not yet exist
+            return
+
+        for zone_name in self._gconf.get_zones_names():
+            try:
+                await self._watch_zone(zone_name)
+            except Exception as e:
+                msg=f"Can't watch desktop entries in zone {zone_name}: {str(e)}"
+                syslog.syslog(syslog.LOG_WARNING, msg)
+                logging.warning(msg)
+
+    async def run(self):
+        # wait for the directory to be present
+        dir_existed=True
+        while not os.path.isdir(self._watch_dir):
+            dir_existed=False
+            await asyncio.sleep(5)
+
+        # watch for zones which are started and create a directory in userfiles_zones_dir
+        self._watcher=aionotify.Watcher()
+        self._watcher.watch(path=self._watch_dir, flags=aionotify.Flags.CREATE)
+
+        # roll...
+        loop=asyncio.get_event_loop()
+        await self._watcher.setup(loop)
+
+        if not dir_existed:
+            await self.catchup()
+
+        while True:
+            try:
+                event=await self._watcher.get_event()
+                if event is None:
+                    msg="CODEBUG: self._watcher.get_event() returned None"
+                    syslog.syslog(syslog.LOG_ERR, msg)
+                    logging.warning(msg)
+                else:
+                    try:
+                        if event.flags & aionotify.Flags.CREATE:
+                            if os.path.isdir(os.path.join(self._watch_dir, event.name)): # event.name in self._gconf.get_zones_names() and
+                                try:
+                                    await self._watch_zone(event.name)
+                                except Exception as e:
+                                    syslog.syslog(syslog.LOG_WARNING, f"Can't watch desktop entries in '{self._watch_dir}': {str(e)}")
+                        else:
+                            if event.flags!=aionotify.Flags.IGNORED:
+                                raise Exception(f"Unhandled event flags {event.flags}")
+                    except Exception as e:
+                        msg=f"Error handling user zones monitor event '{event.flags}' on '{event.name}': {str(e)}"
+                        syslog.syslog(syslog.LOG_ERR, msg)
+                        logging.warning(msg)
+            except asyncio.exceptions.IncompleteReadError:
+                break
+        try:
+            self._watcher.close()
+        except Exception:
+            pass
+        finally:
+            self._watcher=None
+
+class DesktopEntriesDirectoryMonitor:
+    """Object to monitor the creation or removal of desktop entry files in the specified directory.
+
+    Notes:
+    - if the zone_name is None, then we are monitoring a system wide directory like /usr/share/applications, not specific to any user
+    - otherwise we are monitoring a zone's $HOME/.local/share/applications directory in the name of a specific user
+    """
+    def __init__(self, gconf:Configuration, xdg_apps_dir:str, zone_name:str|None=None):
+        self._gconf=gconf
+        self._watch_dir=xdg_apps_dir
+        self._zone_name:str|None=zone_name
+        self._watcher:aionotify.Watcher|None=None
+
+    def _handle_de_created(self, de_file:str) -> tuple[set[str],set[str]]:
+        if os.path.isfile(de_file) and de_file.endswith(".desktop"):
+            logging.debug(f"Handling presence of {'GLOBAL' if self._zone_name is None else 'USER '+self._zone_name} '{de_file}'")
+            res=self._gconf.desktop_entry_install(de_file=de_file, user_zone_name=self._zone_name)
+            return res
+        return (set(),set())
+
+    def _handle_de_deleted(self, de_file:str) -> tuple[set[str],set[str]]:
+        if de_file.endswith(".desktop"):
+            logging.debug(f"Handling deletion of {'GLOBAL' if self._zone_name is None else 'USER '+self._zone_name} '{de_file}'")
+            res=self._gconf.desktop_entry_uninstall(de_file=de_file, user_zone_name=self._zone_name)
+            return res
+        return (set(),set())
+
+    async def catchup(self):
+        # list already existing files
+        e_de_files:set[str]=self._gconf.get_already_created_desktop_entry_files(self._watch_dir, self._zone_name)
+        e_icon_files:set[str]=self._gconf.get_already_created_icon_files(self._watch_dir, self._zone_name)
+        if _debug:
+            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): existing files DE files: {e_de_files}")
+            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): existing files icon files: {e_icon_files}")
+
+        # create/reuse files
+        n_de_files:set[str]=set()
+        n_icon_files:set[str]=set()
+        for fname in os.listdir(self._watch_dir):
+            fpath=os.path.join(self._watch_dir, fname)
+            (de_files, icon_files)=self._handle_de_created(fpath)
+            n_de_files.update(de_files)
+            n_icon_files.update(icon_files)
+        if _debug:
+            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): created/updated files DE files: {n_de_files}")
+            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): created/updated icon DE files: {n_icon_files}")
+
+        # remove obsolete desktop entry files
+        exp_prefix=self._gconf.get_de_files_install_dir(self._watch_dir, self._zone_name)
+        for fname in e_de_files.difference(n_de_files):
+            try:
+                if fname.startswith(exp_prefix):
+                    if fname.endswith(".desktop"):
+                        logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): removing obsolete desktop entry file {fname}")
+                        os.remove(fname)
+                else:
+                    msg=f"CODEBUG: Catchup {self._watch_dir}: was about to remove desktop entry file '{fname}' not in {exp_prefix}"
+                    syslog.syslog(syslog.LOG_ERR, msg)
+                    logging.error(msg)
+            except Exception as e:
+                msg=f"Catchup  {self._watch_dir}: could not remove obsolete desktop entry file {fname}: {str(e)}"
+                syslog.syslog(syslog.LOG_ERR, msg)
+                logging.error(msg)
+
+        # remove obsolete icon files
+        exp_prefix=self._gconf.get_icons_install_dir(self._watch_dir, self._zone_name)
+        for fname in e_icon_files.difference(n_icon_files):
+            try:
+                if fname.startswith(exp_prefix):
+                    logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): removing obsolete icon file {fname}")
+                    os.remove(fname)
+                else:
+                    msg=f"CODEBUG: Catchup {self._watch_dir}: was about to remove icon file '{fname}' not in {exp_prefix}"
+                    syslog.syslog(syslog.LOG_ERR, msg)
+                    logging.error(msg)
+            except Exception as e:
+                msg=f"Catchup {self._watch_dir}: could not remove obsolete icon file {fname}: {str(e)}"
+                syslog.syslog(syslog.LOG_ERR, msg)
+                logging.error(msg)
+
+    async def run(self):
+        self._watcher=aionotify.Watcher()
+        self._watcher.watch(path=self._watch_dir, flags=aionotify.Flags.CREATE | aionotify.Flags.DELETE)
+
+        # roll...
+        loop=asyncio.get_event_loop()
+        await self._watcher.setup(loop)
+        while True:
+            try:
+                event=await self._watcher.get_event()
+                if event is None:
+                    msg="CODEBUG: self._watcher.get_event() returned None"
+                    syslog.syslog(syslog.LOG_ERR, msg)
+                    logging.warning(msg)
+                else:
+                    try:
+                        if event.flags & aionotify.Flags.DELETE:
+                            self._handle_de_deleted(os.path.join(self._watch_dir, event.name))
+                        elif event.flags & aionotify.Flags.CREATE:
+                            self._handle_de_created(os.path.join(self._watch_dir, event.name))
+                        elif event.flags!=aionotify.Flags.IGNORED:
+                            raise Exception(f"Unhandled event flags {event.flags}")
+                    except Exception as e:
+                        msg=f"Error handling desktop entries directory event '{event.flags}' on '{event.name}': {str(e)}"
+                        syslog.syslog(syslog.LOG_ERR, msg)
+                        logging.error(msg)
+            except asyncio.exceptions.IncompleteReadError:
+                break
+        try:
+            self._watcher.close()
+        except Exception:
+            pass
+        finally:
+            self._watcher=None
+
+    async def shutdown(self):
+        """Stop watching
+        """
+        try:
+            if self._watcher is not None:
+                self._watcher.close()
+        except Exception:
+            pass
+
+async def main(gconf: Configuration, is_global:bool):
+    monitors:list[Any]=[]
+    if is_global:
+        # handle system wide desktop entry files
+        for xdg_dir in gconf.xdg_data_dirs:
+            xdg_apps_dir=os.path.join(xdg_dir, "applications")
+            if os.path.exists(xdg_apps_dir):
+                monit=DesktopEntriesDirectoryMonitor(gconf, xdg_apps_dir)
+                monitors.append(monit)
+    else:
+        # handle the current user'd desktop entry files located in each zone, as UserZonesMonitor objects
+        uid=os.getuid()
+        user_run_dir=gconf.get_user_run_dir(uid)
+        userfiles_zones_dir=ZoneUserFiles.compute_all_zones_dir(user_run_dir) # directories where all the per-zone filesystem are mounted
+        monit=UserZonesMonitor(gconf, userfiles_zones_dir)
+        monitors.append(monit)
+
+    # catch up
+    tasks:list[asyncio.Task]=[asyncio.create_task(monit.catchup()) for monit in monitors]
+    await asyncio.gather(*tasks)
+
+    # run
+    tasks=asyncio.taskgroups=[asyncio.create_task(monit.run()) for monit in monitors]
+    await asyncio.gather(*tasks)
+
+
+if __name__=="__main__":
+    def usage():
+        msg=f"{sys.argv[0]} <configuration directory> <GLOBAL|USER>"
+        syslog.syslog(syslog.LOG_ERR, msg)
+        print(msg)
+        sys.exit(1)
+    if len(sys.argv)!=3:
+        usage()
+
+    config_dir=sys.argv[1]
+    gconf=Configuration(config_dir)
+
+    uid=os.geteuid()
+    try:
+        match sys.argv[2]:
+            case "GLOBAL":
+                if uid!=0:
+                    raise Exception(f"The {__file__} program must be run as root in this context")
+                if not os.path.exists(gconf.logs_dir):
+                    os.makedirs(gconf.logs_dir)
+                logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s",
+                                    datefmt="%Y%m%d-%H:%M:%S", filename=os.path.join(gconf.logs_dir, "de-monitor.log"))
+                is_global=True
+                gconf.XDG_DATA_DIRS_install()
+            case "USER":
+                if uid==0:
+                    raise Exception(f"The {__file__} program must not be run as root in this context")
+                logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s",
+                                    datefmt="%Y%m%d-%H:%M:%S",
+                                    filename=os.path.join(gconf.logs_dir, str(uid), "de-monitor.log"))
+                is_global=False
+            case _:
+                raise Exception(f"Invalid context '{sys.argv[2]}'")
+
+        logging.Formatter.converter=time.gmtime # set the converter to use UTC
+        syslog.syslog(syslog.LOG_INFO, f"PID: {os.getpid()}, {'GLOBAL' if is_global else 'USER'} scope, using configuration in '{config_dir}'")
+        asyncio.run(main(gconf, is_global))
+    except Exception as e:
+        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {str(e)}")
+        sys.exit(1)

@@ -1,0 +1,58 @@
+#!/bin/bash
+
+if [ "$1" == "configure" ]; then
+    # disable services which probably have been installed as dependencies
+    systemctl daemon-reload
+    for depservice in kea-dhcp4-server unbound unbound-resolvconf
+    do
+        status=$(systemctl show --value --property=UnitFileState $depservice)
+        [ "$status" == "enabled" ] && {
+            logger "Disabling '$depservice'"
+            systemctl stop $depservice
+            systemctl disable $depservice
+            systemctl mask $depservice
+        }
+    done
+
+    set -e
+
+    # create padsi user (err 9 means it's already present)
+    useradd -M -r -s /usr/sbin/nologin -d /var padsi 2>/dev/null || [ $? == 9 ] || {
+        echo "Failed to create padsi user"
+        exit 1
+    }
+
+    # install the correct GNOME shell extension
+    gnome_extention_uid="padsi@dgac"
+    extensiondir="/usr/share/gnome-shell/extensions/$gnome_extention_uid"
+    mkdir -p "$extensiondir"
+    installdir="/usr/share/padsi/gnome-shell-extensions"
+
+    shv=$(gnome-shell --version)
+    shv=$(echo "$shv" | grep -o -E '[0-9]+' | head -1)
+    [[ "$shv" -gt 45 ]] && {
+        # GNOME 45+
+        zipfile="$installdir/padsi@dgac.shell-extension.zip"
+    } || {
+        logger -p user.error "GNOME shell is too old, the PADSI extension is not available"
+    }
+    rm -rf "$extensiondir"
+    unzip $zipfile -d "$extensiondir" > /dev/null
+
+    # enable the GNOME shell extension
+    gnome-extensions enable padsi@dgac
+
+    [ -f /etc/dconf/profile/user ] || {
+        cat > /etc/dconf/profile/user <<EOF
+user-db:user
+system-db:local
+EOF
+        dconf update
+    }
+
+    # tell the service to restart when possible
+    touch /var/padsi-needrestart || logger -p syslog.err "Could not create '/var/padsi-needrestart' file"
+
+    # reload systemd so it takes into account the override of the GNOME Shell
+    systemctl daemon-reload
+fi

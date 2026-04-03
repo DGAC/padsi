@@ -1,0 +1,7 @@
+[submodule "crates/nflog-rs"]
+	path = crates/nflog-rs
+	url = https://github.com/DGAC/nflog-rs
+[submodule "gnome-shell-extension/rounded-window-corners"]
+	path = gnome-shell-extension/rounded-window-corners
+	url = https://github.com/DGAC/rounded-window-corners
+	branch = padsi

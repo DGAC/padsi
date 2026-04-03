@@ -1,0 +1,107 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+
+#
+# This is the PADSI program which modifies the FW based on the DNS resolutions
+#
+
+import json
+import subprocess
+import sys
+import syslog
+import time
+
+import firewall
+
+
+def _get_default_route_interface():
+    counter=0
+    data="---"
+    while counter<100:
+        counter+=1
+        time.sleep(0.2)
+
+        p=subprocess.run(["ip", "-j", "route", "show", "default"], capture_output=True)
+        if p.returncode!=0:
+            raise Exception(f"Could not determine default route's interface: {p.stderr.decode()}")
+        data=json.loads(p.stdout.decode())
+        if len(data)==1:
+            return data[0]["dev"]
+
+    raise Exception(f"Could not determine default route's interface: {len(data)} default route(s), exactly 1 needed")
+
+class Firewall(firewall.Firewall):
+    """Object which modifies the netfilter based firewall to:
+    - allow or deny access based on static rules (in the file pointer by the fw_rules_file variable, defaulting to /etc/fw-rules.json)
+    - allow access to IPs (and potentially more restricted protocols and ports) based on resolution rules (the same ones used by the
+      DNS server part)
+    """
+    def __init__(self, fw_rules_file:str|None=None, log_denied_spec:firewall.LogSpec|None=None):
+        self._out_iface=_get_default_route_interface()
+
+        # initialize actual FW object before loading any rule
+        super().__init__(log_denied_spec=log_denied_spec)
+
+        # default policies
+        self.set_default_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.DENY)
+        self.set_related_connections_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.ALLOW)
+
+        # static firewall rules
+        self._install_fw_rules("/etc/fw-rules.json" if fw_rules_file is None else fw_rules_file)
+
+    def _install_fw_rules(self, fw_rule_file:str):
+        syslog.syslog(syslog.LOG_INFO, f"Loading static FW rules from {fw_rule_file}")
+        with open(fw_rule_file, "rt") as fd:
+            for entry in json.load(fd):
+                rule=None
+                try:
+                    rule=entry.get("rule")
+                    fl=firewall.NetFlow(None, firewall.Endpoint.from_repr(rule))
+                    policy=firewall.Policy.ALLOW if entry.get("action")=="allow" else firewall.Policy.DENY
+                    try:
+                        match entry.get("chain"):
+                            case "INPUT":
+                                fltype=firewall.FlowType.FILTER_INPUT
+                            case "OUTPUT":
+                                fltype=firewall.FlowType.FILTER_OUTPUT
+                            case "FORWARD":
+                                fltype=firewall.FlowType.FILTER_FORWARD
+                            case _:
+                                syslog.syslog(syslog.LOG_ERR, f"Invalid chain '{entry.get('chain')}' in FW rule, ignoring rule")
+                                fltype=None
+                        if fltype is not None:
+                            self.flow_set_policy(fltype, fl, policy)
+                    except Exception as e:
+                        syslog.syslog(syslog.LOG_WARNING, f"Could not set policy {policy.value} for rule '{rule}': {str(e)}, ignoring")
+                except Exception:
+                    syslog.syslog(syslog.LOG_ERR, f"Invalid firewall rule '{rule}'")
+
+if __name__=="__main__":
+    try:
+        if len(sys.argv)>1:
+            lspec=firewall.LogSpec.from_str(sys.argv[1])
+        else:
+            lspec=None
+        f=Firewall(log_denied_spec=lspec)
+        syslog.syslog(syslog.LOG_INFO, "Static firewall terminated normally")
+    except Exception as e:
+        syslog.syslog(syslog.LOG_ERR, f"Fatal error: {str(e)}")

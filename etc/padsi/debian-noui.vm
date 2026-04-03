@@ -1,0 +1,65 @@
+{
+    "specs": {
+        "secure-boot": true,
+        "descr": "Debian 12 via SSH",
+        "nb-cpu": 2,
+        "mem-mb": 512,
+        "variant": "linux/debian/12",
+        "disk-size-mb": 10000
+    },
+    "admin": {
+        "customize-script": "on-customize.sh",
+        "run-script": "on-run.sh",
+        "update-script": "on-update.sh",
+        "shutdown-script": null,
+        "users": []
+    },
+    "install": {
+        "allowed-users": [
+            "admin"
+        ],
+        "network": {
+            "out-rules": [
+                {
+                    "action": "allow",
+                    "netres": "debian-install"
+                }
+            ]
+        },
+        "with-net": true,
+        "show-ui": true
+    },
+    "run": {
+        "show-ui": false,
+        "mounts": {
+            "Dev": {
+                "source": "Dev"
+            }
+        },
+        "with-net": true,
+        "allowed-users": null,
+        "network": {
+            "out-rules": [
+                {
+                    "netres": "debian-install",
+                    "action": "allow"
+                }
+            ]
+        }
+    },
+    "update": {
+        "allowed-users": [
+            "admin"
+        ],
+        "network": {
+            "out-rules": [
+                {
+                    "action": "allow",
+                    "netres": "debian-install"
+                }
+            ]
+        },
+        "show-ui": true,
+        "with-net": true
+    }
+}

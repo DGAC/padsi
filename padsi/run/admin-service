@@ -1,0 +1,294 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+
+# This program creates and destroys all the infrastructure for all the admin NS
+# which will be used via the padsi-do tool
+
+import asyncio
+import json
+import os
+import pwd
+import signal
+import socket
+import sys
+import syslog
+
+from aiohttp import web
+from aiohttp.web_response import json_response
+
+import padsi.config
+from padsi.run.admin_infra import AdminInfra
+from padsi.simple_comm import Client, Message, MessageType
+
+_debug=False
+
+class AdminService:
+    def __init__(self, config:dict):
+        self._gconf=padsi.config.Configuration(config["config-dir"])
+        self._run_dir=config["run-dir"]
+        self._logs_dir=config["logs-dir"]
+        self._client = Client()
+        self._client_task: asyncio.Task | None = None
+
+        self._socket_file=os.path.join(self._run_dir, "padsi-sserv.sock")
+        self._web_app = web.Application()
+        self._web_app.add_routes(
+            [
+                web.get("/status", self._api_status),
+            ]
+        )
+
+        self._infra_objects:list[AdminInfra]=[]
+
+    async def _httpd_start(self):
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"starting http server on socket {self._socket_file}")
+        socket_file = self._socket_file
+
+        # remove socket if any
+        try:
+            os.unlink(socket_file)
+        except OSError as e:
+            if os.path.exists(socket_file):
+                raise e
+
+        # create new socket file
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(socket_file)
+        os.chmod(socket_file, 0o600)
+
+        runner = web.AppRunner(self._web_app, access_log=None)
+        await runner.setup()
+        site = web.SockSite(runner, sock)
+        await site.start()
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"Service is now listening on {socket_file}")
+
+    async def _killed(self, event:asyncio.Event):
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "SIG* received")
+        event.set()
+
+    async def _api_status(self, request: web.Request):
+        try:
+            res={}
+            for infra in self._infra_objects:
+                conf=infra.admin_conf
+                res[conf.name]={
+                    "net-ns-name": infra.admin_ns_name,
+                    "init-pid": infra.bubble_init_pid,
+                    "traffic-shaper": infra.traffic_shaper.name if infra.traffic_shaper is not None else None
+                }
+            return json_response(res)
+        except Exception as e:
+            return web.Response(text=f"Could not get status ({str(e)})", status=400)
+
+    async def _call_system_service(self, data):
+        """Send a request to the system service"""
+        request = Message(MessageType.REQUEST, data)
+        syslog.syslog(syslog.LOG_INFO, f"_call_system_service({data})")
+        reply = await self._client.call_server(request)
+        return None if reply is None else reply.data
+
+    async def run(self): #gconf:padsi.config.Configuration, run_dir_base:str, logs_dir_base:str):
+        await self._httpd_start()
+        self._client_task = asyncio.create_task(self._client.run())
+
+        # get rid of all the previous admin NS (as files in /run/netns) which are not needed anymore
+        admns_list:list[str]=[]
+        if os.path.exists("/run/netns"):
+            for fname in os.listdir("/run/netns"):
+                if fname.startswith(AdminInfra.ns_prefix):
+                    admns_list.append(fname)
+
+        for adminns in self._gconf.admin_ns_list:
+            nsname=AdminInfra.get_admin_ns_name(adminns)
+            if nsname in admns_list:
+                admns_list.remove(nsname)
+
+        for nsname in admns_list:
+            try:
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"Removing obsolete admin netns {nsname}")
+                await self._call_system_service(
+                    {
+                        "cmde": "infra-delete-ns",
+                        "netns": nsname,
+                        "syslog-prefix": "admin-service-obsolete-adminns",
+                    }
+                )
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"Removed obsolete admin netns {nsname}")
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Error removing obsolete admin netns '{nsname}': {str(e)}")
+
+        # set up of all admin_ns
+        infra_objects:list[AdminInfra]=[]
+        for adminns in self._gconf.admin_ns_list:
+            tsp=adminns.traffic_shaper
+            infra=None
+            setup=False
+            try:
+                lower_net = self._gconf.get_unused_low_admin_network()
+                infra=AdminInfra(self._gconf, adminns, os.geteuid(),
+                    self._run_dir, self._logs_dir, lower_net, tsp)
+                infra.start()
+                await self._call_system_service({
+                        "cmde": "infra-setup",
+                        "lower-iface": infra.lower_iface,
+                        "lower-net": str(infra.lower_net),
+                        "traffic-shaper": None if tsp is None else tsp.name,
+                        "syslog-prefix": infra.syslog_prefix,
+                        "net-namespace-raw": infra.net_namespace_raw,
+                        "init-pid": infra.bubble_init_pid,
+                        "bridge-name": infra.bridge_name,
+                        "bridge-ip": str(infra.bridge_ip),
+                        "mtu": infra.net_mtu
+                    }
+                )
+                setup=True
+
+                # create the net ns which will be where the admin apps will be run and attach it to the infra's network
+                await self._call_system_service({
+                        "cmde": "infra-create-attach-ns",
+                        "attached-netns": infra.admin_ns_name,
+                        "attached-addr": str(infra.admin_ip),
+                        "infra-netns": infra.net_namespace_raw,
+                        "infra-init-pid": infra.bubble_init_pid,
+                        "infra-bridge-ip": str(infra.bridge_ip),
+                        "infra-bridge-name": infra.bridge_name,
+                        "syslog-prefix": infra.syslog_prefix,
+                        "mtu": infra.net_mtu
+                    }
+                )
+
+                # set forwaring rules for incoming traffic
+                if adminns.in_fw_rules is not None:
+                    for rule in adminns.in_fw_rules:
+                        if rule.action=="allow":
+                            if _debug:
+                                syslog.syslog(syslog.LOG_DEBUG, f"Adding DNAT for incoming traffic to '{rule.endpoint.protocols_as_string} ^ {rule.endpoint.ports_as_string}' in admin NS '{adminns.name}'")
+                            await self._call_system_service({
+                                    "cmde": "infra-dnat-incoming",
+                                    "endpoint": str(rule.endpoint),
+                                    "final-ip": str(infra.admin_ip),
+                                    "infra-init-pid": infra.bubble_init_pid,
+                                    "infra-netns": infra.net_namespace_raw,
+                                    "lower-net": str(infra.lower_net),
+                                    "lower-netns": tsp.net_ns if tsp is not None else None,
+                                    "syslog-prefix": infra.syslog_prefix,
+                                }
+                            )
+                infra_objects.append(infra)
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"Network set for admin infra '{adminns.name}' on traffic shaper {tsp.name if tsp is not None else '---'}")
+            except Exception as e:
+                if infra is not None:
+                    if setup:
+                        await self._call_system_service({
+                            "cmde": "infra-cleanup",
+                            "lower-iface": infra.lower_iface,
+                            "lower-net": str(infra.lower_net),
+                            "traffic-shaper": None if tsp is None else tsp.name,
+                            "run-dir": self._run_dir,
+                            "components": [c.serialize() for c in infra.get_components()],
+                            "syslog-prefix": infra.syslog_prefix,
+                        })
+                    infra.stop()
+                syslog.syslog(syslog.LOG_ERR, f"Error starting admin infra '{adminns.name}' on traffic shaper {tsp.name if tsp is not None else '---'}: {str(e)}")
+        self._infra_objects=infra_objects
+
+        # wait for a SIG* to stop
+        kill_event=asyncio.Event()
+        loop=asyncio.get_event_loop()
+        for s in [signal.SIGTERM, signal.SIGINT]:
+            loop.add_signal_handler(s, lambda s=s:asyncio.create_task(self._killed(kill_event)))
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "Waiting for killed asyncio.Event to be set")
+        await kill_event.wait()
+
+        # proper stop
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "Shuting down...")
+        for infra in infra_objects:
+            # we keep the net NS where padsi-do will run its commands (infra.admin_ns_name)
+            # so that we don't have to restart any service which is running in that net NS
+            # Note: this does not present any security risk since the actual network plumbing required
+            #       for that NS to communicate with the outside world will be wiped next
+            assert(infra.admin_conf is not None)
+            try:
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"Stopping admin intra {infra.admin_conf.name}")
+                infra.stop()
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"Stopped admin intra {infra.admin_conf.name}")
+                    syslog.syslog(syslog.LOG_DEBUG, f"Cleaning up admin intra {infra.admin_conf.name}")
+                await self._call_system_service({
+                    "cmde": "infra-cleanup",
+                    "lower-iface": infra.lower_iface,
+                    "lower-net": str(infra.lower_net),
+                    "traffic-shaper": None if infra.traffic_shaper is None else infra.traffic_shaper.name,
+                    "run-dir": self._run_dir,
+                    "components": [c.serialize() for c in infra.get_components()],
+                    "syslog-prefix": infra.syslog_prefix,
+                })
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"Cleaned admin intra {infra.admin_conf.name}")
+
+            except Exception as e:
+                tsp=infra.traffic_shaper
+                syslog.syslog(syslog.LOG_ERR, f"Error stopping admin infra '{infra.admin_conf.name}' on traffic shaper {tsp.name if tsp is not None else '---'}: {str(e)}")
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "Terminated")
+
+if __name__=="__main__":
+    def usage():
+        msg=f"{sys.argv[0]} <configuration file>"
+        syslog.syslog(syslog.LOG_ERR, msg)
+        print(msg)
+        sys.exit(1)
+    if len(sys.argv)!=2:
+        usage()
+
+    try:
+        # load config file
+        config_file=sys.argv[1]
+        with open(config_file, "rt") as fd:
+            config=json.load(fd)
+
+        # check running conditions
+        try:
+            padsi_user=pwd.getpwnam("padsi")
+        except KeyError:
+            raise Exception("Unable to find the 'padsi' user")
+
+        if os.geteuid()!=padsi_user.pw_uid or \
+            os.getegid()!=padsi_user.pw_gid:
+            raise Exception("Must be run as user 'padsi'")
+
+        syslog.syslog(syslog.LOG_INFO, f"PID: {os.getpid()}")
+        service=AdminService(config)
+        asyncio.run(service.run())
+    except Exception as e:
+        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {str(e)}")
+        print(f"Failed to start: {str(e)}", file=sys.stderr)
+        sys.exit(1)

@@ -1,0 +1,1883 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+from __future__ import annotations
+
+import asyncio
+import datetime
+import fcntl
+import hashlib
+import ipaddress
+import json
+import os
+import pwd
+import shutil
+import signal
+import subprocess
+import sys
+import syslog
+import tempfile
+import time
+from dataclasses import dataclass
+
+import aionotify
+import psutil
+
+import firewall
+import padsi.misc
+from padsi.config import Configuration, TrafficShaper, VirtualMachine, VMUsage
+from padsi.run import (AdminVMFiles, VMFiles, VMManagementFiles, VMState,
+                       VMVersion, VMVersionInfo, VMVersionType, ZoneApps,
+                       ZoneUserFiles, network_infra_attach_zone_apps,
+                       network_infra_cleanup,
+                       network_infra_create_attach_netns,
+                       network_infra_delete_netns, network_infra_dnat_incoming,
+                       network_infra_setup, zone_vm_setup)
+from padsi.simple_comm import Message, MessageType, Server
+
+_debug=False
+_padsi_install_dir=os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+_init_log_prefix="denied-host"
+
+class UserServer(Server):
+    """User service for a specific user
+    """
+    def __init__(self, gconf:Configuration, host_fw: firewall.Firewall, lock:asyncio.Lock, usb_devices_watcher:USBDevicesMonitor|None, uid: int, gid:int):
+        super().__init__(lock)
+        self._gconf=gconf
+        self._host_fw=host_fw
+        self._usb_devices_watcher=usb_devices_watcher
+        self._uid=uid
+        self._gid=gid
+
+        self._real_uid:int|None=None
+        self._real_gid:int|None=None
+
+    def pre_client_spawn(self):
+        """Function called before spawning the process, assuming the identify of the user for which a
+        the user service process is spawned
+        """
+        if os.geteuid()!=self._uid:
+            # run the process with specific EUID
+            self._real_uid=os.geteuid()
+            self._real_gid=os.getgid()
+            syslog.syslog(syslog.LOG_DEBUG, f"Changing user {self._real_uid} --> {self._uid}")
+            os.setegid(self._gid)
+            os.seteuid(self._uid)
+
+    def post_client_spawn(self):
+        """Function called after spawning the process, reverting to the effective user
+        """
+        if self._real_gid is not None:
+            if self._real_uid is None or self._real_gid is None:
+                syslog.syslog(syslog.LOG_ERR, f"CODEBUG: self._real_gid ({self._real_uid}) is None or self._real_gid ({self._real_gid}) is None")
+            else:
+                syslog.syslog(syslog.LOG_DEBUG, f"Reverting user {self._uid} --> {self._real_uid}")
+                os.setegid(self._real_gid)
+                os.seteuid(self._real_uid)
+
+    async def handle_request(self, request:Message) -> Message:
+        """Actually handle requests from the user service component
+        """
+        try:
+            cmde=request.data["cmde"]
+        except Exception:
+            raise Exception(f"Invalid request '{request.data}'")
+
+        match cmde:
+            case "create-user-dirs":
+                # users don't have direct access to their HOME in the various zones
+                dirname=self._gconf.all_users_zone_home_dir
+                os.makedirs(dirname, exist_ok=True)
+                os.chmod(dirname, 0o700)
+
+                for dirname in (
+                    self._gconf.get_user_logs_dir(self._uid),
+                    self._gconf.get_user_run_dir(self._uid),
+                    self._gconf.get_zone_user_home_dir(self._uid)
+                ):
+                    os.makedirs(dirname, exist_ok=True)
+                    os.chown(dirname, self._uid, self._gid)
+                    os.chmod(dirname, 0o700)
+            case "update-zones-infos-files":
+                await self._update_zones_infos_files(request.data)
+            case "clean-user-runtime-dir":
+                await self._clean_user_runtime_dir()
+            case "fuse-cleanup":
+                await self._fuse_cleanup(request.data)
+            case "zone-userfiles-setup":
+                return await self._zone_userfiles_setup(request.data)
+            case "zone-userfiles-cleanup":
+                await self._zone_userfiles_cleanup(request.data)
+            case "vm-management-files-setup":
+                await self._vm_management_priv(True, request.data)
+            case "vm-management-files-cleanup":
+                await self._vm_management_priv(False, request.data)
+            case "infra-setup":
+                await self._infra_setup(request.data)
+            case "infra-cleanup":
+                await self._infra_cleanup(request.data)
+            case "infra-attach-zone-apps":
+                await self._infra_attach_zone_apps(request.data)
+            case "infra-create-attach-ns":
+                await self._infra_create_attach_ns(request.data)
+            case "infra-dnat-incoming":
+                await self._infra_dnat_incoming(request.data)
+            case "infra-delete-ns":
+                await self._infra_delete_ns(request.data)
+            case "zone-apps-prepare-dirs":
+                await self._zone_apps_prepare_dirs(request.data)
+            case "vm-zone-setup":
+                await self._vm_zone_setup(request.data)
+            case "vm-files-analyse":
+                return await self._vm_files_analyse(request.data)
+            case "vm-files-list":
+                return await self._vm_files_list(request.data)
+            case "vm-create-common-dirs":
+                await self._vm_create_common_dirs(request.data)
+            case "vm-create-stage-dir":
+                await self._vm_create_stage_dir(request.data)
+            case "vm-commit":
+                await self._vm_commit(request.data)
+            case "vm-publish":
+                return await self._vm_publish(request.data)
+            case "vm-cleanup":
+                return await self._vm_cleanup(request.data)
+            case "vm-discard-files":
+                return await self._vm_discard_files(request.data)
+            case "vm-load":
+                return await self._vm_load(request.data)
+            case "vm-launcher":
+                return await self._vm_launcher(request.data)
+            case "access-pcscd":
+                await self._pcscd_access(request.data)
+            case "access-usbredir":
+                await self._usbredir_access(request.data)
+            case "usb-device-state":
+                return await self._usb_device_state(request.data)
+            case "usb-device-reserve":
+                await self._usb_device_reserve(request.data)
+            case _:
+                raise Exception(f"Unhandled '{cmde}' command")
+        return Message(MessageType.REPLY, None)
+
+    #
+    # handling requests from
+    # user service processes
+    #
+    async def _load_zone_info_prefixes(self) -> dict[str,str]:
+        """Load the prefixes-user-{self._uid}.txt file and return a dictionary
+        where keys are the (mnt,net) namespaces and the value is the name of the associated zone
+        """
+        prefix=self._gconf.zones_infos_dir
+        prefixes_user_file=f"{prefix}/prefixes-user-{self._uid}.txt"
+        if not os.path.exists(prefixes_user_file):
+            return {}
+        lock_file=f"{prefix}/infos.lock"
+        with open(lock_file, "w") as lockfd:
+            fcntl.flock(lockfd, fcntl.LOCK_EX)
+            try:
+                res={}
+                with open(prefixes_user_file, "rt") as fd:
+                    for line in fd.readlines():
+                        # will be like "mnt:[4026533288]net:[4026533291]=padsi.myzone\n"
+                        (ns, zone)=line.split("=")
+                        (_, zone)=zone.split(".")
+                        res[ns]=zone.strip()
+                return res
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Problem reading info prefixes '{prefixes_user_file}': {str(e)}")
+                return {}
+            finally:
+                # unlock the lock file
+                fcntl.flock(lockfd, fcntl.LOCK_UN)
+                lockfd.close()
+
+    async def _update_zones_infos_files(self, args:dict):
+        # steps:
+        # 0. lock the JSON file
+        # 1. write the data for this specific zone
+        # 2. load the JSON file of each user and compute the aggregated data
+        # 3. write the the aggregated data as JSON
+        # 4. unlock the JSON file
+        syslog.syslog(syslog.LOG_DEBUG, "Updating zones' infos with regards to namespaces")
+        colors:dict=args["colors"]
+        prefixes:dict=args["prefixes"]
+        prefix=self._gconf.zones_infos_dir
+        os.makedirs(prefix, exist_ok=True)
+        lock_file=f"{prefix}/infos.lock"
+        colors_agg_file=f"{prefix}/colors.json"
+        colors_user_file=f"{prefix}/colors-user-{self._uid}.json"
+        prefixes_agg_file=f"{prefix}/prefixes.txt"
+        prefixes_user_file=f"{prefix}/prefixes-user-{self._uid}.txt"
+
+        with open(lock_file, "w") as lockfd:
+            fcntl.flock(lockfd, fcntl.LOCK_EX)
+            try:
+                if colors is None:
+                    # remove the file for the user (cleanup)
+                    try:
+                        os.remove(colors_user_file)
+                    except FileNotFoundError:
+                        pass
+                else:
+                    # create /update the file for this user
+                    with open(colors_user_file, "w") as user_fd:
+                        json.dump(colors, user_fd)
+
+                if prefixes is None:
+                    # remove the file for the user (cleanup)
+                    try:
+                        os.remove(prefixes_user_file)
+                    except FileNotFoundError:
+                        pass
+                else:
+                    # create /update the file for this user
+                    with open(prefixes_user_file, "wt") as user_fd:
+                        for (key, value) in prefixes.items():
+                            user_fd.write(f"{key}=padsi.{value}\n")
+
+                # load all the JSON files and compute the aggregated data
+                colors_agg_data={}
+                prefixes_agg_data={}
+                for fname in os.listdir(prefix):
+                    if "-user-" in fname and fname.endswith(".json"):
+                        fpath="---"
+                        try:
+                            fpath=os.path.join(prefix, fname)
+                            data=json.load(open(fpath, "r"))
+                            colors_agg_data.update(data)
+                        except Exception as e:
+                            syslog.syslog(syslog.LOG_ERR, f"Could not load JSON file '{fpath}': {str(e)}")
+                    elif "-user-" in fname and fname.endswith(".txt"):
+                        fpath="---"
+                        try:
+                            fpath=os.path.join(prefix, fname)
+                            with open(fpath, "rt") as fd:
+                                for line in fd.readlines():
+                                    line=line.strip()
+                                    (key, value)=line.split("=")
+                                    prefixes_agg_data[key]=value
+                        except Exception as e:
+                            syslog.syslog(syslog.LOG_ERR, f"Could not load txt file '{fpath}': {str(e)}")
+
+                # write back the data
+                try:
+                    json.dump(colors_agg_data, open(colors_agg_file, "w"))
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Could not write data to aggregated JSON file '{colors_agg_file}': {str(e)}")
+                try:
+                    with open(prefixes_agg_file, "wt") as fd:
+                        for (key, value) in prefixes_agg_data.items():
+                            fd.write(f"{key}={value}\n")
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Could not write data to aggregated text file '{prefixes_agg_file}': {str(e)}")
+            finally:
+                    # unlock the lock file
+                    fcntl.flock(lockfd, fcntl.LOCK_UN)
+                    lockfd.close()
+
+    async def _fuse_cleanup(self, cleanup_args:dict):
+        self._gconf.get_zone(cleanup_args["zone-name"])
+        run_dir=self._gconf.get_user_run_dir(self._uid)
+
+        # unmount resmaining FUSE mount points
+        proc=await asyncio.create_subprocess_exec("/usr/bin/mount", "-l", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        (stdout, stderr)=await proc.communicate()
+        if proc.returncode!=0:
+            syslog.syslog(syslog.LOG_WARNING, f"Coulnd not list mount points: {stderr.decode() if stderr else stdout.decode()}")
+            return
+
+        paths:list[str]=[]
+        dir_path=run_dir+"/" if run_dir[-1]!="/" else run_dir
+        for line in stdout.decode().splitlines():
+            # line will be like:
+            # "fuse-zip on /run/padsi/user/1000/userfiles/dev/mymp type fuse.fuse-zip (rw,nosuid,nodev,relatime,user_id=1000,group_id=1000)"
+            (_, _, mountpoint, _, mp_type, *_)=line.split()
+            if mp_type.startswith("fuse") and mountpoint.startswith(dir_path):
+                paths.append(mountpoint)
+
+        paths.sort(reverse=True)
+        for path in paths:
+            proc=await asyncio.create_subprocess_exec("/usr/bin/umount", path, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            (stdout, stderr)=await proc.communicate()
+            if proc.returncode!=0:
+                syslog.syslog(syslog.LOG_ERR, f"Could unmount FUSE mountpoint '{path}': {stderr.decode() if stderr else stdout.decode()}")
+
+    async def _clean_user_runtime_dir(self):
+        user_run_dir=self._gconf.get_user_run_dir(self._uid)
+        if os.path.exists(user_run_dir):
+            # we need to take a specific care about the userfiles directory as it may still contain some user data
+            # if any bug prevented the mount points from being unmounted
+            userfiles_zones_dir=ZoneUserFiles.compute_all_zones_dir(user_run_dir) # directories where all the per-zone filesystem are mounted
+            if os.path.exists(userfiles_zones_dir):
+                all_done=True
+                for fname in os.listdir(userfiles_zones_dir):
+                    fpath=os.path.join(userfiles_zones_dir, fname)
+                    try:
+                        os.rmdir(fpath)
+                    except PermissionError as e:
+                        all_done=False
+                        syslog.syslog(syslog.LOG_WARNING, f"Could not remove userfiles directory '{fpath}': {str(e)} (filesystem may still be mounted)")
+                    except Exception as e:
+                        all_done=False
+                        syslog.syslog(syslog.LOG_ERR, f"Could not remove userfiles directory '{fpath}': {str(e)} (exception type {type(e)})")
+
+                if all_done:
+                    try:
+                        os.rmdir(userfiles_zones_dir)
+                    except Exception as e:
+                        syslog.syslog(syslog.LOG_ERR, f"Could not remove top userfiles directory '{userfiles_zones_dir}': {str(e)}")
+
+            # remove the rest of the run directory for the zone where there is no data loss risk
+            loop=asyncio.get_event_loop()
+            all_done=True
+            if os.path.exists(user_run_dir):
+                for fname in os.listdir(user_run_dir):
+                    fpath=os.path.join(user_run_dir, fname)
+                    if fpath!=userfiles_zones_dir:
+                        try:
+                            await loop.run_in_executor(None, shutil.rmtree, fpath)
+                            all_done=False
+                        except Exception as e:
+                            syslog.syslog(syslog.LOG_ERR, f"Could not remove directory user run dir '{fpath}': {str(e)}")
+                if all_done:
+                    try:
+                        await loop.run_in_executor(None, shutil.rmtree, user_run_dir)
+                    except Exception as e:
+                        syslog.syslog(syslog.LOG_ERR, f"Could not remove user run dir '{user_run_dir}': {str(e)}")
+
+    async def _zone_userfiles_setup(self, setup_args:dict) -> Message:
+        zone_conf=self._gconf.get_zone(setup_args["zone-name"])
+        run_dir=self._gconf.get_user_run_dir(self._uid)
+        loop=asyncio.get_event_loop()
+        res=await loop.run_in_executor(None, ZoneUserFiles.setup, self._gconf, zone_conf, self._uid, self._gid, run_dir, setup_args["syslog-prefix"])
+        if isinstance(res, Exception):
+            raise res
+        return Message(MessageType.REPLY, res)
+
+    async def _zone_userfiles_cleanup(self, cleanup_args:dict) -> Message:
+        zone_conf=self._gconf.get_zone(cleanup_args["zone-name"])
+        run_dir=self._gconf.get_user_run_dir(self._uid)
+        loop=asyncio.get_event_loop()
+        try:
+            res=await loop.run_in_executor(None, ZoneUserFiles.cleanup, self._gconf, zone_conf, self._uid, self._gid, run_dir, cleanup_args["syslog-prefix"])
+            if isinstance(res, Exception):
+                syslog.syslog(syslog.LOG_ERR, f"Could not cleanup zone userfiles: {str(res)}")
+                raise res
+            return Message(MessageType.REPLY, res)
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Error while cleanup of zone userfiles: {str(e)}")
+            raise e
+
+    async def _vm_management_priv(self, is_setup:bool, args:dict):
+        zone_conf=self._gconf.get_zone(args["zone-name"])
+        run_dir=self._gconf.get_user_run_dir(self._uid)
+        vm_id=args["vm-id"]
+        vm_conf=_get_vm_conf_for_usage(self._gconf, vm_id, self._uid, [VMUsage(args["vm-usage"])])
+        discriminant=args["discriminant"]
+
+        loop=asyncio.get_event_loop()
+        avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
+        if isinstance(avmf, Exception):
+            raise avmf
+        vmf=avmf.get_vm_files(self._uid)
+        if vmf is None:
+            raise Exception(f"No VM files found for user '{self._uid}'")
+        vm_version=args.get("vm-version")
+        if vm_version is None:
+            raise Exception("CODEBUG: 'vm-version' not specified")
+        vm_version=vmf.get_version_by_id(vm_version)
+        if vm_version is None:
+            msg=f"Unexpected None VM version in _vm_management_priv(), args['vm-version']={args['vm-version']}"
+            syslog.syslog(syslog.LOG_WARNING, msg)
+            if is_setup:
+                raise Exception(msg)
+        else:
+            _check_privileges_on_vm_version(self._gconf, vm_id, vm_version, self._uid)
+            if is_setup:
+                await loop.run_in_executor(None, VMManagementFiles.priv_setup, zone_conf, vm_conf, vm_version,
+                                           args["zone-home-dir"], self._uid, self._gid, run_dir, discriminant)
+            else:
+                await loop.run_in_executor(None, VMManagementFiles.priv_cleanup, zone_conf, vm_conf, vm_version,
+                                           args["zone-home-dir"], self._uid, self._gid, run_dir, discriminant)
+
+    async def _infra_setup(self, setup_args:dict):
+        tsp_name:TrafficShaper|None=setup_args.get("traffic-shaper")
+        tsp=None if tsp_name is None else self._gconf.get_traffic_shaper(tsp_name)
+
+        loop=asyncio.get_event_loop()
+        res=await loop.run_in_executor(None, network_infra_setup, self._host_fw, tsp,
+            setup_args["lower-iface"], setup_args["net-namespace-raw"],
+            setup_args["init-pid"], ipaddress.IPv4Interface(setup_args["bridge-ip"]),
+            setup_args["bridge-name"], ipaddress.IPv4Network(setup_args["lower-net"]),
+            setup_args["syslog-prefix"], setup_args["mtu"])
+        if isinstance(res, Exception):
+            raise res
+
+    async def _infra_cleanup(self, cleanup_args:dict):
+        tsp_name:TrafficShaper|None=cleanup_args.get("traffic-shaper")
+        tsp=None if tsp_name is None else self._gconf.get_traffic_shaper(tsp_name)
+
+        loop=asyncio.get_event_loop()
+        res=await loop.run_in_executor(None, network_infra_cleanup, self._host_fw, tsp,
+            cleanup_args["lower-iface"], cleanup_args["run-dir"],
+            cleanup_args["components"], ipaddress.IPv4Network(cleanup_args["lower-net"]),
+            cleanup_args["syslog-prefix"])
+        if isinstance(res, Exception):
+            raise res
+
+    async def _infra_attach_zone_apps(self, attach_args:dict):
+        loop=asyncio.get_event_loop()
+        res=await loop.run_in_executor(None, network_infra_attach_zone_apps, attach_args["zone-netns"],
+                                       attach_args["zone-init-pid"], ipaddress.IPv4Interface(attach_args["zone-addr"]),
+                                       attach_args["infra-netns"], attach_args["infra-init-pid"],
+                                       ipaddress.IPv4Interface(attach_args["infra-bridge-ip"]),
+                                       attach_args["infra-bridge-name"], attach_args["syslog-prefix"], attach_args["mtu"])
+        if isinstance(res, Exception):
+            raise res
+
+    async def _infra_create_attach_ns(self, attach_args:dict):
+        loop=asyncio.get_event_loop()
+        res=await loop.run_in_executor(None, network_infra_create_attach_netns, attach_args["attached-netns"],
+                                       ipaddress.IPv4Interface(attach_args["attached-addr"]),
+                                       attach_args["infra-netns"], attach_args["infra-init-pid"],
+                                       ipaddress.IPv4Interface(attach_args["infra-bridge-ip"]),
+                                       attach_args["infra-bridge-name"], attach_args["syslog-prefix"], attach_args["mtu"])
+        if isinstance(res, Exception):
+            raise res
+
+    async def _infra_dnat_incoming(self, args:dict):
+        endpoint=firewall.Endpoint.from_repr(args["endpoint"])
+        loop=asyncio.get_event_loop()
+        res=await loop.run_in_executor(None, network_infra_dnat_incoming, endpoint, ipaddress.IPv4Interface(args["final-ip"]),
+            args["infra-netns"],
+            args["infra-init-pid"], ipaddress.IPv4Network(args["lower-net"]), args["lower-netns"], args["syslog-prefix"])
+        if isinstance(res, Exception):
+            raise res
+
+    async def _zone_apps_prepare_dirs(self, args:dict):
+        ZoneApps.prepare_dirs(self._gconf, args["zone-name"], args["vm-dir"], self._uid, self._gid)
+
+    async def _vm_zone_setup(self, setup_args:dict):
+        loop=asyncio.get_event_loop()
+        lspec=firewall.LogSpec.from_str(setup_args["log-denied-spec"])
+        res=await loop.run_in_executor(None, zone_vm_setup, setup_args["net-namespace-raw"], setup_args["init-pid"], lspec)
+        if isinstance(res, Exception):
+            raise res
+
+    async def _infra_delete_ns(self, attach_args:dict):
+        loop=asyncio.get_event_loop()
+        res=await loop.run_in_executor(None, network_infra_delete_netns, attach_args["netns"], attach_args["syslog-prefix"])
+        if isinstance(res, Exception):
+            raise res
+
+    async def _vm_files_analyse(self, args:dict) -> Message:
+        def _vm_versions_list_to_str_list(vmversions:list[VMVersion]) -> list[str]:
+            return [str(x) for x in vmversions]
+        def _base_staged_to_str(vmversion:VMVersion|None) -> str|None:
+            if vmversion is None:
+                return None
+            if vmversion.is_complete:
+                state=vmversion.state
+                return state.value if state else "unknown state"
+            else:
+                return None
+        async def _format_status(uid:int, vm:VirtualMachine, avmf:AdminVMFiles, verbose:bool, zone_name:str|None):
+            other_vm_versions:dict={}
+            if vm.is_user_allowed(uid):
+                for ouid in avmf.users:
+                    if ouid!=uid:
+                        staged=avmf.get_staged(VMVersionType.BASE, ouid)
+                        other_vm_versions[ouid]={
+                            "base-staged": _base_staged_to_str(staged),
+                            "user-versions": _vm_versions_list_to_str_list(avmf.user_versions(ouid)),
+                            "snapshot-versions": _vm_versions_list_to_str_list(avmf.snapshot_versions(ouid))
+                        }
+
+            infos={}
+            for vmversion in avmf.all_versions:
+                info:VMVersionInfo=avmf.get_version_info(vmversion)
+                state=vmversion.state
+                qemu_pid=vmversion.get_qemu_pid()
+                if qemu_pid is None:
+                    qemu_ns=None
+                else:
+                    qemu_ns=f"{padsi.misc.get_mnt_namespace(qemu_pid)}{padsi.misc.get_net_namespace(qemu_pid)}"
+                if zone_name is None or vmversion.zone_name is None or zone_name==vmversion.zone_name:
+                    infos[str(vmversion)]={
+                        "dependencies": info.dependencies,
+                        "parent": str(info.parent) if info.parent is not None else None,
+                        "children": [str(v) for v in info.children],
+                        "state": None if state is None else state.value,
+                        "qemu-pid": qemu_pid,
+                        "qemu-ns": qemu_ns,
+                        "zone": vmversion.zone_name,
+                        "nickname": vmversion.nickname,
+                        "history": [str(event) for event in vmversion.get_history(avmf.get_parent_version(vmversion))] if verbose else []
+                    }
+
+            return {
+                "vm-id": vm_id,
+                "directory-exists": True,
+                "base-vm-versions": _vm_versions_list_to_str_list(avmf.base_versions),
+                "self-vm-versions": {
+                    "base-staged": _base_staged_to_str(avmf.get_staged(VMVersionType.BASE, uid)),
+                    "user-versions": _vm_versions_list_to_str_list(avmf.user_versions(uid)),
+                    "snapshot-versions": _vm_versions_list_to_str_list(avmf.snapshot_versions(uid))
+                },
+                "other-vm-versions": other_vm_versions,
+                "commitable-vm-versions": _vm_versions_list_to_str_list(avmf.committable_versions),
+                "obsolete-vm-versions": _vm_versions_list_to_str_list(avmf.obsolete_versions),
+                "unused-files": list(avmf.unused_files),
+                "vm-versions-infos": infos
+            }
+
+        vm_id=args["vm-id"]
+        verbose=args["verbose"]
+        zone_name=args.get("zone")
+        vm:VirtualMachine|None=None
+        for usage in VMUsage:
+            vm_conf=self._gconf.get_vm(usage, vm_id)
+            if vm_conf is not None and vm_conf.is_user_allowed(self._uid):
+                vm=vm_conf
+                break
+        if vm is None:
+            raise Exception(f"Unknown virtual machine '{vm_id}' or not enough privileges")
+
+        loop=asyncio.get_event_loop()
+        res=await loop.run_in_executor(None, self._compute_avmf, vm.directory, self._uid)
+        if isinstance(res, Exception):
+            raise res
+        return Message(MessageType.REPLY, await _format_status(self._uid, vm, res, verbose, zone_name))
+
+    async def _vm_files_list(self, args:dict) -> Message:
+        loop=asyncio.get_event_loop()
+        res=await loop.run_in_executor(None, AdminVMFiles, args["vm-dir"], self._uid)
+        if isinstance(res, Exception):
+            raise res
+        return Message(MessageType.REPLY, res.serialize())
+
+    def _compute_avmf(self, vm_dir:str, uid:int) -> AdminVMFiles:
+        return AdminVMFiles(vm_dir, uid)
+
+    async def _vm_create_common_dirs(self, args:dict):
+        vm_id=args["vm-id"]
+        usage=VMUsage(args["usage"])
+        vm_conf=self._gconf.get_vm(usage, vm_id)
+        if vm_conf is None:
+            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+        if not vm_conf.is_user_allowed(self._uid):
+            raise Exception(f"User {self._uid} is not allowed to {usage.value} VM '{vm_id}'")
+        vmf=VMFiles(vm_conf.directory, self._uid, self._gid, analyse=False)
+        vmf.create_common_dirs()
+
+    async def _vm_create_stage_dir(self, args:dict):
+        vm_id=args["vm-id"]
+        usage=VMUsage(args["usage"])
+        vm_conf=self._gconf.get_vm(usage, vm_id)
+        if vm_conf is None:
+            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+        if not vm_conf.is_user_allowed(self._uid):
+            raise Exception(f"User {self._uid} is not allowed to {usage.value} VM '{vm_id}'")
+        vmf=VMFiles(vm_conf.directory, self._uid, self._gid, analyse=False)
+        os.makedirs(vmf.staging_directory, exist_ok=True)
+        os.chown(vmf.staging_directory, self._uid, self._gid)
+
+    async def _vm_commit(self, args:dict):
+        vmversion_uid=args["vmversion-uid"]
+        vm_id=args["vm-id"]
+        vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
+        if vm_conf is None:
+            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+        if vmversion_uid is not None and vmversion_uid!=self._uid and not vm_conf.is_user_allowed(self._uid):
+            raise Exception(f"User {self._uid} has no admin privilege on VM '{vm_id}'")
+        message=args["message"]
+
+        if not vm_conf.is_user_allowed(self._uid):
+            raise Exception(f"User {self._uid} is not allowed to update VM '{vm_id}'")
+
+        loop=asyncio.get_event_loop()
+        avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
+        if isinstance(avmf, Exception):
+            raise avmf
+        vmf=avmf.get_vm_files(vmversion_uid)
+        if vmf is None:
+            raise Exception(f"No VM files for {vmversion_uid}")
+        vmversion=vmf.get_version_by_id(args["vm-version"])
+        if vmversion is None:
+            raise Exception(f"No VM version '{args['vm-version']}'")
+
+        res=await loop.run_in_executor(None, vmf.commit_version, vmversion, None, 0, 0, message)
+        if isinstance(res, Exception):
+            raise res
+
+    async def _vm_publish(self, args:dict) -> Message:
+        vmversion_uid=args["vmversion-uid"]
+        vm_id=args["vm-id"]
+        vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
+        if vm_conf is None:
+            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+        if vmversion_uid is not None and vmversion_uid!=self._uid and not vm_conf.is_user_allowed(self._uid):
+            raise Exception(f"Permission denied for user {self._uid} on VM '{vm_id}'")
+        message=args["message"]
+
+        loop=asyncio.get_event_loop()
+        avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
+        if isinstance(avmf, Exception):
+            raise avmf
+        vmf=avmf.get_vm_files(vmversion_uid)
+        if vmf is None:
+            raise Exception(f"No VM files for {vmversion_uid}")
+        vmversion=vmf.get_version_by_id(args["vm-version"])
+        if vmversion is None:
+            raise Exception(f"No VM version '{args['vm-version']}'")
+
+        _check_privileges_on_vm_version(self._gconf, vm_id, vmversion, self._uid)
+        res=await loop.run_in_executor(None, vmf.publish_staged, vmversion, 0, 0, message)
+        return Message(MessageType.REPLY, res.serialize())
+
+    async def _vm_cleanup(self, args:dict) -> Message:
+        vm_id=args["vm-id"]
+        vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
+        if vm_conf is None:
+            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+        loop=asyncio.get_event_loop()
+        avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
+        if isinstance(avmf, Exception):
+            raise avmf
+
+        res:list[str]=[]
+        for vmversion in avmf.obsolete_versions:
+            try:
+                _check_privileges_on_vm_version(self._gconf, vm_id, vmversion, self._uid)
+            except Exception:
+                pass
+            else:
+                if vmversion.state!=VMState.RUNNING: # just in case
+                    syslog.syslog(syslog.LOG_INFO, f"Discarding files of VM version '{vmversion.id}'")
+                    vmversion.discard_files()
+                    res.append(vmversion.id)
+        return Message(MessageType.REPLY, res)
+
+    async def _vm_discard_files(self, args:dict) -> Message:
+        vmversion_uid=args["vmversion-uid"]
+        vm_id=args["vm-id"]
+        vtype=VMVersionType(args["vtype"])
+        vnum=args["vnum"]
+        staged=args["staged"]
+        nickname=args["nickname"]
+        force=args.get("force", False)
+        vm_conf=_get_vm_conf_for_usage(self._gconf, vm_id, self._uid, None)
+        vm_upd_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
+        if vm_upd_conf is None:
+            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+        if vmversion_uid is not None and vmversion_uid!=self._uid and not vm_upd_conf.is_user_allowed(self._uid):
+            raise Exception(f"Permission denied for user {self._uid} on VM '{vm_id}'")
+
+        loop=asyncio.get_event_loop()
+        avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
+        if isinstance(avmf, Exception):
+            raise avmf
+
+        if staged:
+            vmversion=avmf.get_staged(VMVersionType.BASE, vmversion_uid)
+            if vmversion is None:
+                raise Exception("No staging version for this VM")
+        else:
+            if vtype==VMVersionType.BASE:
+                vm_conf=_get_vm_conf_for_usage(self._gconf, vm_id, self._uid, [VMUsage.INSTALL, VMUsage.UPDATE])
+            else:
+                vm_conf=self._gconf.get_vm(VMUsage.RUN, vm_id)
+                if vm_conf is None:
+                    raise Exception(f"no declared virtual machine with '{vm_id}' ID")
+
+            match vtype:
+                case VMVersionType.BASE:
+                    vmversion=avmf.get_base_version(vnum)
+                case VMVersionType.USER:
+                    vmversion=avmf.get_user_version(vnum, vmversion_uid)
+                case VMVersionType.SNAP:
+                    if nickname is None:
+                        vmversion=avmf.get_snapshot_version(vnum, vmversion_uid)
+                    else:
+                        vmversion=avmf.get_named_snapshot_version(nickname, vmversion_uid)
+                case _:
+                    raise Exception(f"Unhandled VMVersionType {vtype}")
+            if vmversion is None:
+                raise Exception("VM version not found")
+
+        if vmversion.state==VMState.RUNNING:
+            raise Exception("VM version is running")
+        if not force:
+            if vmversion.version_type==VMVersionType.BASE and not staged and vmversion not in avmf.obsolete_versions and \
+            vmversion.state==VMState.STOPPED:
+                raise Exception("VM version is in the latest version")
+        if len(avmf.get_children_versions(vmversion))>0:
+            raise Exception("VM version is used by other VM versions")
+
+        _check_privileges_on_vm_version(self._gconf, vm_id, vmversion, self._uid)
+        syslog.syslog(syslog.LOG_INFO, f"Discarding files of VM version '{vmversion.id}'")
+        res=await loop.run_in_executor(None, vmversion.discard_files)
+        if isinstance(res, Exception):
+            raise res
+        return Message(MessageType.REPLY, [vmversion.id])
+
+    async def _vm_load(self, args:dict) -> Message:
+        extract_dir=None
+        try:
+            vm_id=args["vm-id"]
+            extract_id=args["extract-id"]
+            message=args["message"]
+
+            vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
+            if vm_conf is None:
+                raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+            if not vm_conf.is_user_allowed(self._uid):
+                raise Exception(f"Permission denied for user {self._uid} on VM '{vm_id}'")
+
+            loop=asyncio.get_event_loop()
+            vm_files=await loop.run_in_executor(None, VMFiles, vm_conf.directory, self._uid, self._gid)
+            if isinstance(vm_files, Exception):
+                raise vm_files
+
+            extract_dir=os.path.join(vm_files.staging_directory, extract_id)
+            vm_versions_to_import:dict[int,VMVersion]={}
+            dep_vm_expected=False
+            dep_vm_version:VMVersion|None=None
+            try:
+                # VM versions to load
+                for fname in os.listdir(extract_dir):
+                    if fname.startswith("vm-version-"):
+                        vid=int(fname[11:])
+                        if vid<0:
+                            raise Exception()
+                        vm_versions_to_import[vid]=VMVersion.from_files(
+                            os.path.join(extract_dir, fname, "base.img"),
+                            os.path.join(extract_dir, fname, "base.vars"),
+                            os.path.join(extract_dir, fname, "base.infos")
+                        )
+
+                # manifest
+                with open(os.path.join(extract_dir, "manifest.json"), "r") as fd:
+                    manifest=json.load(fd)
+                    dep_size=manifest.get("dependency-size")
+                    dep_hash=manifest.get("dependency-hash")
+                    if dep_size is None and dep_hash is not None or dep_size is not None and dep_hash is None:
+                        raise Exception()
+                    if dep_size is not None:
+                        dep_vm_expected=True
+                        for vm_v in vm_files.base_versions:
+                            if os.stat(vm_v.image_file).st_size==dep_size:
+                                with open(vm_v.image_file, "rb") as fd:
+                                    syslog.syslog(syslog.LOG_DEBUG, f"Computing hash of {vm_v.image_file}")
+                                    hash=await loop.run_in_executor(None, hashlib.file_digest, fd, "sha256")
+                                    if hash.hexdigest()==dep_hash:
+                                        dep_vm_version=vm_v
+                                        break
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Invalid saved VM versions' files structure or contents: {str(e)}")
+                raise Exception("Invalid saved VM versions' files structure or contents")
+
+            # check global coherence
+            vm_versions_ids=sorted(vm_versions_to_import.keys(), reverse=True)
+            syslog.syslog(syslog.LOG_DEBUG, f"VM versions to import: {vm_versions_to_import}, sorted IDs: {vm_versions_ids}")
+            if dep_vm_expected and dep_vm_version is None:
+                raise Exception("Could not idenfy dependency VM version in this instance of PADSI")
+            elif not dep_vm_expected:
+                # check 1st VM version to import is complete
+                vm_version=vm_versions_to_import[vm_versions_ids[0]]
+                if not vm_version.is_complete:
+                    raise Exception("First VM version to import is not complete")
+
+            # import VM versions one at a time
+            res:list[str]=[]
+            first_vm=True
+            for vid in vm_versions_ids:
+                vm_version=vm_versions_to_import[vid]
+                e_vm_version=vm_files.get_vm_version_matching_image(vm_version.image_file)
+                if e_vm_version is not None:
+                    syslog.syslog(syslog.LOG_INFO, f"Loading: extracted's {vm_version} is already present as {e_vm_version}")
+                    dep_vm_version=e_vm_version
+                else:
+                    # "target" VM version
+                    tvm_version=VMVersion(VMVersionType.BASE, vm_files.directory, vm_files.next_base_version_number)
+                    handled:bool=False
+                    if first_vm:
+                        first_vm=False
+                        if dep_vm_version is None:
+                            syslog.syslog(syslog.LOG_DEBUG, f"Loading: handling first VM version: move extracted's {vm_version} to {tvm_version}")
+                            vm_version.move(tvm_version, message=message)
+                            handled=True
+
+                    if not handled and dep_vm_version is not None:
+                        syslog.syslog(syslog.LOG_DEBUG, f"Loading: change backing of extracted's {vm_version} to {dep_vm_version}")
+                        vm_version.change_backing_version(dep_vm_version)
+                        syslog.syslog(syslog.LOG_DEBUG, f"Loading: move extracted's {vm_version} to {tvm_version}")
+                        vm_version.move(tvm_version, message=message)
+                    res.append(tvm_version.id)
+                    dep_vm_version=tvm_version
+
+                    # change ownership to root
+                    for fname in (tvm_version.image_file, tvm_version.vars_file, tvm_version.infos_file):
+                        os.chown(fname, 0, 0)
+
+                    vm_files=await loop.run_in_executor(None, VMFiles, vm_conf.directory, self._uid, self._gid)
+                    if isinstance(vm_files, Exception):
+                        raise vm_files
+
+            return Message(MessageType.REPLY, res)
+        finally:
+            if extract_dir is not None:
+                try:
+                    shutil.rmtree(extract_dir)
+                except Exception:
+                    pass
+
+    async def _vm_launcher(self, args:dict) -> Message:
+        def determine_vm_icon_file(top_dir:str, vm_conf:VirtualMachine) -> str:
+            base_icon_path=os.path.join(top_dir, "vm-management", "viewer", "icons")
+            icon_path=None
+            if vm_conf.os_variant is not None:
+                if vm_conf.os_version is not None:
+                    (v,*_)=vm_conf.os_version.split("/")
+                    path=os.path.join(base_icon_path, f"{vm_conf.os_variant}_{v}.png")
+                else:
+                    path=os.path.join(base_icon_path, f"{vm_conf.os_variant}.png")
+                if os.path.exists(path):
+                    icon_path=path
+            if icon_path is None:
+                icon_path=os.path.join(base_icon_path, "generic.png")
+            return icon_path
+
+        def compute_de_path(uid:int, gid:int, conf:Configuration, vm_id:str, zone_name:str, nickname:str|None=None) -> str:
+            # create the directory where DE files are stored
+            path=conf.get_zone_user_home_dir(uid, zone_name)
+            de_path=os.path.join(path, ".local", "share", "applications")
+            padsi.misc.makedirs_with_owner(de_path, path, uid, gid)
+            de_name=f"padsi-vm-viewer.{vm_id}.{nickname if nickname is not None else 'default'}.desktop"
+            return os.path.join(de_path, de_name)
+
+        action=args["action"]
+        zone_name=args["zone"]
+        vm_id=args["vm-id"]
+        nickname=args["nickname"]
+
+        match action:
+            case "create":
+                zone_conf=self._gconf.get_zone(zone_name)
+                vm_conf=zone_conf.get_virtual_machine(vm_id)
+                if vm_conf is None:
+                    raise Exception(f"VM {vm_id} is not allowed in the '{zone_name}' zone")
+                if not vm_conf.is_user_allowed(self._uid):
+                    raise Exception(f"Permission denied for user {self._uid} on VM '{vm_id}'")
+
+                template=os.path.join(_padsi_install_dir, "padsi", "VMViewer.desktop.templ")
+                if not os.path.exists(template):
+                    raise Exception(f"Template file '{template}' is missing")
+
+                if nickname in (None, "default"):
+                    if vm_conf.os_version is None:
+                        name=f"VM {vm_conf.os_variant}"
+                    else:
+                        name=f"VM {vm_conf.os_variant} {vm_conf.os_version}"
+                else:
+                    if vm_conf.os_version is None:
+                        name=f"VM {vm_conf.os_variant} ({nickname})"
+                    else:
+                        name=f"VM {vm_conf.os_variant} {vm_conf.os_version} ({nickname})"
+                variables={
+                    "name": name,
+                    "genericname": "Virtual machine",
+                    "comments": vm_conf.description,
+                    "nickname": nickname if nickname is not None else "default",
+                    "icon": determine_vm_icon_file(_padsi_install_dir, vm_conf),
+                    "cli": "/usr/bin/padsi-cli",
+                    "zone": zone_name,
+                    "vmid": vm_id
+                }
+
+                with open(template, "rt") as fd:
+                    tmp=tempfile.NamedTemporaryFile("wt")
+                    for line in fd.readlines():
+                        nline=padsi.misc.expand_variables_in_string(line, variables)
+                        tmp.write(nline)
+                    tmp.flush()
+
+                    de_path=compute_de_path(self._uid, self._gid, self._gconf, vm_id, zone_name, nickname)
+                    os.chown(tmp.name, self._uid, self._gid)
+                    os.chmod(tmp.name, 0o644)
+                    shutil.copyfile(tmp.name, de_path)
+                    syslog.syslog(syslog.LOG_INFO, f"Created VM desktop entry {de_path}")
+            case "delete":
+                de_path=compute_de_path(self._uid, self._gid, self._gconf, vm_id, zone_name, nickname)
+                try:
+                    os.remove(de_path)
+                    syslog.syslog(syslog.LOG_INFO, f"Deleted VM desktop entry {de_path}")
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_INFO, f"Failed to delete VM desktop entry {de_path}: {str(e)}")
+            case _:
+                raise Exception(f"Unknown vm-launcher action '{action}'")
+        return Message(MessageType.REPLY, None)
+
+    async def _pcscd_access(self, args:dict):
+        """Grant or revoke access to the PCSCD daemon"""
+        grant=args["action"]=="grant"
+        polkit_rules_file=os.path.join("/etc/polkit-1/rules.d", f"00-padsi-pcscd-{self._uid}.rules")
+        if grant:
+            tmpl="""polkit.addRule(function(action, subject) {{
+                if ((action.id=="org.debian.pcsc-lite.access_pcsc" || action.id=="org.debian.pcsc-lite.access_card") && subject.user=="{name}") {{
+                    return polkit.Result.YES;
+                }}
+            }});
+            """
+            name=pwd.getpwuid(self._uid).pw_name
+            with open(polkit_rules_file, "wt") as fd:
+                fd.write(tmpl.format(name=name))
+                fd.close()
+        else:
+            try:
+                os.remove(polkit_rules_file)
+            except FileNotFoundError:
+                pass
+
+    async def _usbredir_access(self, args:dict):
+        """Grant or revoke access to Spice's USB redirection"""
+        grant=args["action"]=="grant"
+        polkit_rules_file=os.path.join("/etc/polkit-1/rules.d", f"00-padsi-usbredir-{self._uid}.rules")
+        if grant:
+            tmpl="""polkit.addRule(function(action, subject) {{
+                if (action.id=="org.spice-space.lowlevelusbaccess" && subject.user=="{name}") {{
+                    return polkit.Result.YES;
+                }}
+            }});
+            """
+            name=pwd.getpwuid(self._uid).pw_name
+            with open(polkit_rules_file, "wt") as fd:
+                fd.write(tmpl.format(name=name))
+                fd.close()
+        else:
+            try:
+                os.remove(polkit_rules_file)
+            except FileNotFoundError:
+                pass
+
+    async def _usb_device_state(self, args:dict) -> Message:
+        if self._usb_devices_watcher is None:
+            raise Exception("CODEBUG: self._usb_devices_watcher should not be None")
+        states=self._usb_devices_watcher.get_devices_states(args["devices"])
+        data={}
+        for (dev_id, dev_data) in states.items():
+            data[dev_id]={
+                "used-by": dev_data if isinstance(dev_data, list) else None,
+                "reserved-by": dev_data if isinstance(dev_data, int) else None
+            }
+        return Message(MessageType.REPLY, data)
+
+    async def _usb_device_reserve(self, args:dict):
+        if self._usb_devices_watcher is None:
+            raise Exception("CODEBUG: self._usb_devices_watcher should not be None")
+        self._usb_devices_watcher.reserve_device(args["device-id"], self._uid)
+
+@dataclass
+class UsbDevice:
+    """Data associated to a USB device being redirected
+    """
+    device_id: str               # device's ID "<bus>/<device>" like "003/072"
+    is_smartcard: bool           # True if device is a smartcard
+    users: list[tuple[int,int]]  # list of [uid, PID] of the user and process having opened the device
+
+@dataclass
+class Reservation:
+    device_id: str               # device's ID "<bus>/<device>" like "003/072"
+    is_smartcard: bool|None      # True if device is a smartcard, None if not yet known
+    uid: int                     # user for which it is reserved
+    valid_to: int                # timestamp for the end of reservation validity
+
+class USBDevicesMonitor:
+    """Object which monitors USB devices' usage by processes
+    and ensures that the PCSC daemon is running when it should and that virtual machines don't try to
+    redirect the same USB device at the same time.
+    """
+    def __init__(self, logs_dir:str):
+        self._logs_dir=logs_dir
+        self._devices:dict[str,UsbDevice]={} # redirected USB devices, key=device ID
+        self._reservations:dict[str,Reservation]={} # redirected USB devices, key=device ID
+        self._pcscd_start_stop=padsi.misc.LateFunction(self._update_pcscd_service_state)
+
+        self._reservation_delay=10
+        self._pcsc_action_delay=0.5
+
+    def _now(self) -> int:
+        return int(datetime.datetime.now(datetime.UTC).timestamp())
+
+    def _cleanup_reservations(self):
+        """Remove reservations which have expired
+        """
+        now=self._now()
+        expired:list[str]=[]
+        for (device_id, resa) in self._reservations.items():
+            if resa.valid_to<now:
+                expired.append(device_id)
+        for device_id in expired:
+            del self._reservations[device_id]
+        if len(expired)>0:
+            self._pcscd_start_stop.start(self._pcsc_action_delay)
+
+    def _check_usb_device_id_format(self, device_id:str):
+        """Ensure that the device ID's format is correct
+        """
+        try:
+            if not isinstance(device_id, str):
+                raise Exception()
+            (bus, dev)=device_id.split("/")
+            bus=int(bus)
+            dev=int(dev)
+        except Exception:
+            raise Exception(f"Invalid USB device ID '{device_id}'")
+
+    async def _update_pcscd_service_state(self, *_):
+        """Start or stop pcscd service depending on if any smartcard is currently being redirected
+        """
+        pcscd_must_run=True
+        for (device_id, dev) in self._devices.items():
+            if dev.is_smartcard:
+                pcscd_must_run=False
+                break
+
+        if pcscd_must_run:
+            self._cleanup_reservations()
+            for (device_id, resa) in self._reservations.items():
+                if resa.is_smartcard is None:
+                    resa.is_smartcard=await self._usb_device_is_smartcard(device_id)
+                if resa.is_smartcard:
+                    pcscd_must_run=False
+                break
+
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"Ensuring PCSC daemon {'active' if pcscd_must_run else 'stopped'}")
+        (status, out, err)=await padsi.misc.asyncio_run(["systemctl", "start" if pcscd_must_run else "stop", "pcscd.socket", "pcscd.service"])
+        if status!=0:
+            syslog.syslog(syslog.LOG_ERR, f"Could not {'start' if pcscd_must_run else 'stop'} PCSCD service and socket: {err if err else out}")
+
+    async def _mark_dev_opened(self, device_id:str, pid:int, uid:int):
+        """Mark a USB devices as being opened (probably for redirection)
+        """
+        self._check_usb_device_id_format(device_id)
+        is_smartcard=await self._usb_device_is_smartcard(device_id)
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"USBDEV: _mark_dev_opened({device_id=}, {pid=}, {uid=}), {is_smartcard=}")
+
+        self._cleanup_reservations()
+        if device_id in self._reservations:
+            del self._reservations[device_id]
+
+        dev=self._devices.get(device_id)
+        if dev is None:
+            self._devices[device_id]=UsbDevice(device_id, is_smartcard, [(uid, pid)])
+        else:
+            dev.users.append((uid, pid))
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"USBDEV: _mark_dev_opened() now: {self._devices=}")
+
+    async def _mark_dev_closed(self, device_id:str, pid:int, uid:int):
+        """Mark a USB devices as being closed by a process
+        """
+        self._check_usb_device_id_format(device_id)
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"USBDEV: _mark_dev_closed({device_id=}, {pid=}, {uid=}))")
+
+        dev=self._devices.get(device_id)
+        if dev is not None:
+            for (duid, dpid) in dev.users:
+                if duid==uid and dpid==pid:
+                    dev.users.remove((duid, dpid))
+                    break
+            if len(dev.users)==0:
+                del self._devices[device_id]
+            self._pcscd_start_stop.start(self._pcsc_action_delay)
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"USBDEV: _mark_dev_closed() now: {self._devices=}")
+
+    def get_devices_states(self, devices_ids:list[str]) -> dict[str,list[int]|int|None]:
+        """For each specified device ID, get the IDs of the users who have a process having opened the specified USB device
+        Also returns the UID of the user which made the reservation if the device is currently reserved
+        """
+        res={}
+        for device_id in devices_ids:
+            self._check_usb_device_id_format(device_id)
+
+            dev=self._devices.get(device_id)
+            if dev is not None:
+                res[device_id]=list({uid for (uid, _pid) in dev.users})
+            else:
+                self._cleanup_reservations()
+                resa=self._reservations.get(device_id)
+                if resa is not None:
+                    res[device_id]=resa.uid
+                else:
+                    res[device_id]=None
+        return res
+
+    def reserve_device(self, device_id:str, uid:int):
+        """Allow to reserve a USB device for redirection for up to 10'
+        """
+        self._check_usb_device_id_format(device_id)
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"USBDEV: new reservation {device_id=}, {uid=}")
+
+        if device_id in self._devices:
+            raise Exception(f"USB device '{device_id}' is already being used")
+
+        self._cleanup_reservations()
+        resa=self._reservations.get(device_id)
+        if resa is not None:
+            if resa.uid!=uid:
+                raise Exception(f"USB device '{device_id}' is already being reserved for user {resa.uid}")
+            resa.valid_to=self._now()+self._reservation_delay
+        else:
+            self._reservations[device_id]=Reservation(device_id=device_id, is_smartcard=None,
+                                                      uid=uid, valid_to=self._now()+self._reservation_delay)
+            self._pcscd_start_stop.start(0)
+
+    async def _usb_device_is_smartcard(self, device_id:str) -> bool:
+        """Quick way to determine if device is a smartcard
+        """
+        self._check_usb_device_id_format(device_id)
+        (status, out, _err)=await padsi.misc.asyncio_run(["lsusb", "-v", "-s", device_id.replace("/", ":")])
+        if status!=0:
+            raise Exception(f"Could not get infos. about USB device {device_id}")
+        for line in out.splitlines():
+            line=line.strip()
+            if line.startswith("bInterfaceClass"):
+                parts=line.split()
+                if parts[1]=="11":
+                    return True
+        return False
+
+    async def _initialize_state(self):
+        """Make a pass on all the devices and get a status for each
+        """
+        for (dirpath, _, filenames) in os.walk("/dev/bus/usb"):
+            for fname in filenames:
+                devpath=f"{dirpath}/{fname}"
+                device_id=f"{os.path.basename(dirpath)}/{fname}"
+                (status, out, err)=await padsi.misc.asyncio_run(["lsof", "-Q", "-t", devpath])
+                if status!=0:
+                    syslog.syslog(syslog.LOG_WARNING, f"Could not determine if USB device '{device_id}' is actually redirected: {err if err else out}")
+                else:
+                    lines=out.splitlines()
+                    if len(lines)>1:
+                        syslog.syslog(syslog.LOG_WARNING, f"Unexpeded output of lsof: {out}, only taking 1st line into account")
+                    elif len(lines)==1:
+                        pid=int(lines[0])
+                        (is_pcscd, uid)=await _get_process_attributes(pid)
+                        if not is_pcscd and uid is not None:
+                            await self._mark_dev_opened(device_id, pid, uid)
+        self._pcscd_start_stop.start(self._pcsc_action_delay)
+
+    async def run(self):
+        await self._initialize_state()
+        cenv=os.environ.copy()
+        cenv["LOG_DIR"]=self._logs_dir
+        process=await asyncio.create_subprocess_exec(
+            os.path.join(_padsi_install_dir, "bin", "usb-monitor"),
+            env=cenv,
+            stdout=asyncio.subprocess.PIPE)
+        if process.stdout is None:
+            raise Exception("CODEBUG: Process.stdout should not be None")
+        async for line in process.stdout:
+            # line will be like:
+            # OPEN;1000;158953;/dev/bus/usb/002/015
+            # CLOSE;1000;158953;/dev/bus/usb/002/015
+            try:
+                line=line.strip().decode()
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"USBDEV: notification: {line}")
+                (action, uid, pid, path)=line.split(";")
+                if not path.startswith("/dev/bus/usb/"):
+                    raise Exception()
+                device_id=path[13:]
+                uid=int(uid)
+                pid=int(pid)
+
+                exe=None
+                try:
+                    # determine if the process having opened the device is PCSCD itself
+                    dproc=psutil.Process(pid)
+                    exe=dproc.exe()
+                    if not exe:
+                        raise Exception()
+                    syslog.syslog(syslog.LOG_INFO, f"Process {exe} {action} device {path}")
+                    is_pcscd=exe=="/usr/sbin/pcscd"
+                except psutil.NoSuchProcess:
+                    # process died
+                    is_pcscd=False
+                    if action=="OPEN":
+                        continue
+
+                # as we may also open the device to get information via lsusb, we must ignore
+                # notifications which result from that action
+                if exe=="/usr/bin/lsusb":
+                    continue
+
+                # finalize treatment
+                if action=="OPEN":
+                    is_redir=not is_pcscd
+                else:
+                    is_redir=False
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"USB device {device_id=}, {pid=}, {uid=}, {is_redir=}")
+
+                if is_redir:
+                    await self._mark_dev_opened(device_id, pid, uid)
+                else:
+                    await self._mark_dev_closed(device_id, pid, uid)
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"USB device {device_id=}, {pid=}, {uid=}, {is_redir=}, new situation => {self._devices}")
+            except Exception as e:
+                syslog.syslog(syslog.LOG_INFO, f"Ignoring an invalid notification from the USB devices monitor: '{line}' ({str(e)})")
+
+        # Wait for process to finish
+        syslog.syslog(syslog.LOG_INFO, "Waiting for USB devices monitor process to die")
+        await process.wait()
+        syslog.syslog(syslog.LOG_INFO, f"USB devices monitor terminated (status={process.returncode})")
+
+@dataclass
+class UserSession:
+    """Data associated to a user being logged in
+    """
+    server: UserServer
+    task: asyncio.Task # server run() task
+
+class PadsiSystemService(padsi.misc.UserSessionNotifier):
+    users_run_dir="/run/user"
+
+    def __init__(self, userservice_path:str, gconf:Configuration):
+        super().__init__()
+        self._gconf=gconf
+        self._traffic_shapers:set[TrafficShaper]=set()
+        self._lock=asyncio.Lock()
+        self._dns_resolvers:set[ipaddress.IPv4Address]=set()
+        self._userservice_path=userservice_path
+        self._user_sessions:dict[int,UserSession]={} # key=UID, value=user's UserSession
+
+        # traffic shaper update mechanism
+        self._tsp_tasks:list[asyncio.Task]=[]
+        self._tsp_event=asyncio.Event()
+
+        self._usb_watcher=USBDevicesMonitor(gconf.logs_dir)
+        self._usb_watcher_task:asyncio.Task|None=None
+
+        self._host_fw=firewall.Firewall(netns=None,
+            log_denied_spec=firewall.LogSpec(_init_log_prefix, self._gconf.firewall_logs_group),
+            objects_prefix="padsi")
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        return self._lock
+
+    @property
+    def host_fw(self) -> firewall.Firewall:
+        return self._host_fw
+
+    def _may_restart(self):
+        """Restart the service if needed
+        """
+        need_restart_file=self._gconf.need_restart_file
+        if not os.path.exists(need_restart_file):
+            return
+
+        # check the configuration is valid, just in case
+        try:
+            _=Configuration(self._gconf.config_dir)
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Did not restart PADSI service as configuration is invalid: {str(e)}")
+            return
+
+        # if the global configuration defines a program to run to check if now is a good time to restart the
+        # PADSI service, then run it now as the 'padsi' user
+        if self._gconf.need_restart_check is not None and os.path.exists(self._gconf.need_restart_check):
+            try:
+                padsi_user=pwd.getpwnam("padsi")
+            except KeyError:
+                raise Exception("Unable to find the 'padsi' user")
+
+            uid=os.geteuid()
+            gid=os.getgid()
+            try:
+                syslog.syslog(syslog.LOG_DEBUG, f"Changing user {uid} --> {padsi_user.pw_uid}")
+                os.setegid(padsi_user.pw_uid)
+                os.seteuid(padsi_user.pw_gid)
+
+                proc=subprocess.run([self._gconf.need_restart_check])
+                if proc.returncode!=0:
+                    syslog.syslog(syslog.LOG_INFO, f"The '{self._gconf.need_restart_check}' program returned {proc.returncode}, not restarting yet")
+                    return
+            finally:
+                syslog.syslog(syslog.LOG_DEBUG, f"Reverting user {padsi_user.pw_uid} --> {uid}")
+                os.setegid(gid)
+                os.seteuid(uid)
+
+        syslog.syslog(syslog.LOG_INFO, "Signaling the PADSI service to restart (SIGTERM)")
+        try:
+            os.remove(need_restart_file)
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Failed to remove PADSI restart file '{need_restart_file}': {str(e)}")
+        signal.raise_signal(signal.SIGTERM)
+
+    def declare_traffic_shaper(self, tshaper:TrafficShaper):
+        """Declare a traffic shaper which will be setup and destroyed when appropriate
+        """
+        if tshaper not in self._traffic_shapers:
+            self._traffic_shapers.add(tshaper)
+
+    def _update_dns_resolvers_list(self):
+        """Parse /etc/resolv to determine the current DNS resolvers
+        """
+        counter=0
+        while counter<5:
+            resolvers:set[ipaddress.IPv4Address]=set()
+            try:
+                with open("/etc/resolv.conf", "rt") as fd:
+                    for line in fd.readlines():
+                        if line.startswith("nameserver"):
+                            try:
+                                (_, addr)=line.split(maxsplit=1)
+                                (addr, *_)=addr.split("%")
+                                resolvers.add(ipaddress.IPv4Address(addr.strip()))
+                            except Exception:
+                                pass
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Failed to parse /etc/resolv.conf: {str(e)}")
+            if len(resolvers)>0:
+                self._dns_resolvers=resolvers
+                break
+            else:
+                counter+=1
+                time.sleep(0.5)
+
+    def _setup_traffic_shapers(self):
+        """This tasks adapt traffic shapers when it receives an event
+        """
+        # set up all the traffic shapers (will create the network namespaces)
+        for tshaper in self._traffic_shapers:
+            # setup if necessary
+            if tshaper.need_setup:
+                try:
+                    lower_net=self._gconf.get_unused_low_network() if tshaper.need_veth else None
+                    syslog.syslog(syslog.LOG_INFO, f"Setting up traffic shaper {tshaper.name} (netns {tshaper.net_ns}) with lower_net {lower_net}")
+                    tshaper.setup(self._host_fw, lower_net)
+                    syslog.syslog(syslog.LOG_INFO, f"Finished setting up traffic shaper {tshaper.name} (netns {tshaper.net_ns})")
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Could not set uptraffic shaper {tshaper.name} (netns {tshaper.net_ns}): {str(e)}")
+
+
+    async def _adapt_traffic_shapers(self):
+        """This tasks adapt traffic shapers when it receives an event
+        """
+        # adapt traffic shapers when the self._tsp_event is set
+        while True:
+            try:
+                await self._tsp_event.wait()
+                self._tsp_event.clear()
+
+                syslog.syslog(syslog.LOG_INFO, "Adapting traffic shapers: updating list of DNS resolvers")
+                current_dns_resolvers=self._dns_resolvers
+                self._update_dns_resolvers_list()
+                syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: updated DNS resolvers list to {self._dns_resolvers} vs previously {current_dns_resolvers}")
+
+                # check if anything needs to be done
+                action_required=current_dns_resolvers!=self._dns_resolvers
+                if not action_required:
+                    for tshaper in self._traffic_shapers:
+                        if not tshaper.functionnal:
+                            action_required=True
+                            break
+
+                # adapt traffic shapers as necessary
+                if action_required:
+                    # determine if any traffic shaper needs the DNS resolution (which takes place in the "init" NS, so it's not a per traffic shapper
+                    # authorization)
+                    try:
+                        dns_resolv_needed=False
+                        for tshaper in self._traffic_shapers:
+                            if tshaper.need_dns_resolution:
+                                dns_resolv_needed=True
+                                break
+                    except Exception as e:
+                        dns_resolv_needed=True
+                        syslog.syslog(syslog.LOG_ERR, f"Could not determine if all traffic shapers need DNS resolution (assuming yes): {str(e)}")
+
+                    # temporary allow DNS resolution if necessary for traffic shaper
+                    allowed_dns_flows:list[firewall.NetFlow]=[]
+                    if dns_resolv_needed:
+                        for ip in self._dns_resolvers:
+                            flow=None
+                            try:
+                                flow=firewall.NetFlow(None, firewall.Endpoint.from_repr(f"{str(ip)}^udp^53"))
+                                syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: allow tmp DNS resolution: {flow}")
+                                self._host_fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, flow, firewall.Policy.ALLOW)
+                                allowed_dns_flows.append(flow)
+                            except Exception as e:
+                                syslog.syslog(syslog.LOG_ERR, f"Could not allow outboud DNS flow '{flow}': {str(e)}")
+
+                    # let all the traffic shapers adapt to the new settings
+                    for tshaper in self._traffic_shapers:
+                        if not tshaper.functionnal:
+                            try:
+                                syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: adapt traffic shaper {tshaper.name}")
+                                await tshaper.adapt(len(self._dns_resolvers)>0, self._host_fw)
+                            except Exception as e:
+                                syslog.syslog(syslog.LOG_ERR, f"Traffic shaper '{tshaper}' failed to adapt: {str(e)}")
+
+                    # de-allow temporary DNS resolution
+                    for flow in allowed_dns_flows:
+                        try:
+                            syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: remove tmp DNS resolution: {flow}")
+                            self._host_fw.flow_delete_policy(firewall.FlowType.FILTER_OUTPUT, flow)
+                        except Exception as e:
+                            syslog.syslog(syslog.LOG_ERR, f"Could not block outboud DNS flow '{flow}': {str(e)}")
+                syslog.syslog(syslog.LOG_INFO, "Adapting traffic shapers: done")
+            except asyncio.exceptions.CancelledError:
+                break
+
+    async def _watch_network_changes(self):
+        """Task to watch for any DNS change (monitoring the /etc/resolv.conf file)
+        """
+        watcher=aionotify.Watcher()
+        watcher.watch(path="/etc", flags=aionotify.Flags.CREATE | aionotify.Flags.MODIFY | aionotify.Flags.MOVED_TO | aionotify.Flags.DELETE)
+
+        loop=asyncio.get_event_loop()
+        await watcher.setup(loop)
+
+        late_func=padsi.misc.LateFunction(self._tsp_event.set)
+        while True:
+            try:
+                event=await watcher.get_event()
+                if event is None:
+                    syslog.syslog(syslog.LOG_ERR, "CODEBUG: watcher.get_event() returned None")
+                elif event.name=="resolv.conf":
+                    late_func.start(1)
+            except asyncio.exceptions.IncompleteReadError:
+                break
+        try:
+            watcher.close()
+        except Exception:
+            pass
+
+    async def _tsp_adapt_timer(self) -> None:
+        while True:
+            try:
+                await asyncio.sleep(30)
+                self._tsp_event.set()
+            except asyncio.exceptions.CancelledError:
+                break
+
+
+    def _setup_fw_rules(self):
+        """Set PADSI's rules using objects which name is prefixed by "padsi_" in the netfilter firewall
+        """
+        fw=self._host_fw
+
+        # deny input and output by default except related connections
+        for family in (firewall.Family.IPv4, firewall.Family.IPv6):
+            fw.flush(firewall.FlowType.FILTER_OUTPUT, family=family)
+            fw.set_default_policy(firewall.FlowType.FILTER_OUTPUT, firewall.Policy.DENY, family=family)
+            fw.set_related_connections_policy(firewall.FlowType.FILTER_OUTPUT, firewall.Policy.ALLOW, family=family)
+
+            fw.flush(firewall.FlowType.FILTER_INPUT, family=family)
+            fw.set_default_policy(firewall.FlowType.FILTER_INPUT, firewall.Policy.DENY, family=family)
+            fw.set_related_connections_policy(firewall.FlowType.FILTER_INPUT, firewall.Policy.ALLOW, family=family)
+
+        # block IPv6 forward
+        fw.set_default_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.DENY, family=firewall.Family.IPv6)
+
+        # allow DHCP
+        flow=firewall.NetFlow.from_repr("* ^ 68 > udp > 255.255.255.255 ^ 67")
+        fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, flow, firewall.Policy.ALLOW)
+        flow=firewall.NetFlow.from_repr("* ^ 67 > udp > * ^68")
+        fw.flow_set_policy(firewall.FlowType.FILTER_INPUT, flow, firewall.Policy.ALLOW)
+
+        # silently drop any packet to non routable multicast addressed (autoconfig/autodiscovery is dangerous)
+        flow=firewall.NetFlow.from_repr("* > > 224.0.0.0/4")
+        fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, flow, firewall.Policy.DENY, log_if_deny=False)
+        fw.flow_set_policy(firewall.FlowType.FILTER_INPUT, flow, firewall.Policy.DENY, log_if_deny=False)
+
+        # apply rules defined in the configuration
+        if self._gconf.host_inbound_fw_rules is not None:
+            for rule in self._gconf.host_inbound_fw_rules:
+                flow=firewall.NetFlow(None, rule.endpoint)
+                fw.flow_set_policy(firewall.FlowType.FILTER_INPUT, flow, firewall.Policy.ALLOW if rule.action=="allow" else firewall.Policy.DENY)
+
+        if self._gconf.host_outbound_fw_rules is not None:
+            for rule in self._gconf.host_outbound_fw_rules:
+                flow=firewall.NetFlow(rule.endpoint, None)
+                fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, flow, firewall.Policy.ALLOW if rule.action=="allow" else firewall.Policy.DENY)
+
+    def _cleanup_fw_rules(self):
+        """Remove PADSI's rules which have been set up
+        """
+        fw=self._host_fw
+        for family in (firewall.Family.IPv4, firewall.Family.IPv6):
+            for ft in firewall.FlowType:
+                try:
+                    fw.flush(ft)
+                    fw.set_default_policy(ft, firewall.Policy.ALLOW, family=family)
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Could not clean up host firewall's flow type '{ft}': {str(e)}")
+
+    #
+    # users' sessions management
+    #
+    def declare_session(self, uid:int, session: UserSession):
+        if uid in self._user_sessions:
+            raise Exception(f"CODEBUG: user {uid} already has a UserSession")
+        self._user_sessions[uid]=session
+
+    def _only_system_sessions(self) -> bool:
+        """Tell if the opened sessions are only system sessions (like for the 'padsi' user
+        in the context of admin. namespaces)
+        """
+        for uid in self._user_sessions:
+            if uid>=1000:
+                return False
+        return True
+
+    def user_logged_in_cb(self, uid:int, gid:int, shell_proc:psutil.Process):
+        """Function called when a user has logged in
+        """
+        syslog.syslog(syslog.LOG_DEBUG, f"User {uid=} is logged in")
+        if uid not in self._user_sessions:
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"Starting PADSI user service for user {uid} (GNOME Shell {shell_proc.pid})")
+            server=UserServer(self._gconf, self._host_fw, self._lock, self._usb_watcher, uid, gid)
+            task=asyncio.create_task(server.serve_client([self._userservice_path,
+                                     os.path.join(PadsiSystemService.users_run_dir, str(uid)),
+                                     self._gconf.config_dir]))
+            self.declare_session(uid, UserSession(server=server, task=task))
+
+    def user_logged_out_cb(self, uid:int):
+        """Function called when a user has logged in
+        """
+        syslog.syslog(syslog.LOG_DEBUG, f"User {uid=} logged out")
+        session=self._user_sessions.get(uid)
+        if session is not None:
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"Stopping user service for user {uid}")
+            try:
+                session.task.cancel()
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Stopping user service for user {uid} error: {str(e)})")
+            del self._user_sessions[uid]
+
+            # check if this service needs to be restarted
+            if self._only_system_sessions():
+                self._may_restart()
+
+    async def run(self):
+        # set host firewall
+        try:
+            self._setup_fw_rules()
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Failed to set up host firewall: {str(e)}")
+
+        # start the USB devices monitor if there is at least one VM configured
+        if len(self._gconf.get_vms_for_usage(VMUsage.RUN))>0:
+            self._usb_watcher_task=asyncio.create_task(self._usb_watcher.run())
+
+        # set up all traffic shapers
+        self._setup_traffic_shapers()
+
+        # tasks to adapt traffic shapers
+        task=asyncio.create_task(self._adapt_traffic_shapers())
+        self._tsp_tasks=[task]
+        self._tsp_event.set()
+        task=asyncio.create_task(self._watch_network_changes()) # watch for DNS changes
+        self._tsp_tasks.append(task)
+        task=asyncio.create_task(self._tsp_adapt_timer()) # simple timer to signal traffic shaper to adapt if necessary
+        self._tsp_tasks.append(task)
+
+        # run the UserSessionNotifier
+        syslog.syslog(syslog.LOG_DEBUG, "UserSessionNotifier run()")
+        await super().run()
+        syslog.syslog(syslog.LOG_DEBUG, "UserSessionNotifier terminated")
+
+    async def shutdown(self):
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "PadsiSystemService shutdown() started")
+        tasks=self._tsp_tasks
+        self._tsp_tasks=[]
+        for task in tasks:
+            task.cancel()
+
+        # close user sessions
+        all_tasks=[session.task for session in self._user_sessions.values()]
+        for uid in list(self._user_sessions.keys()).copy():
+            self.user_logged_out_cb(uid)
+
+        # stop all traffic stapers
+        loop=asyncio.get_running_loop()
+        for tshaper in self._traffic_shapers:
+            try:
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"Destroying traffic shaper {tshaper.name} (netns {tshaper.net_ns})")
+                await loop.run_in_executor(None, tshaper.destroy, self.host_fw)
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"Finished destroying traffic shaper {tshaper.name} (netns {tshaper.net_ns})")
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Could not destroy traffic shaper {tshaper.name} (netns {tshaper.net_ns}): {str(e)}")
+        self._traffic_shapers=set()
+
+        # leave a clean FW
+        self._cleanup_fw_rules()
+
+        # USB devices watcher
+        if self._usb_watcher_task is not None:
+            self._usb_watcher_task.cancel()
+
+        # wait for the remainig tasks to terminate
+        if len(all_tasks)>0:
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"Waiting for the lasts user session tasks to terminate ({len(all_tasks)} sessions)")
+            await asyncio.wait(all_tasks, return_when=asyncio.ALL_COMPLETED)
+
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "PadsiSystemService shutdown completed (no more task left)")
+
+
+def _check_privileges_on_vm_version(gconf:Configuration, vm_id:str, vm_version:VMVersion, uid:int):
+    """Check the user has a right to manipulate a VM version
+    """
+    if vm_version is None:
+        raise Exception("None vm_version passed to _check_privileges_on_vm_version()")
+    match vm_version.version_type:
+        case VMVersionType.BASE:
+            _get_vm_conf_for_usage(gconf, vm_id, uid, [VMUsage.UPDATE])
+        case VMVersionType.USER:
+            _get_vm_conf_for_usage(gconf, vm_id, uid, [VMUsage.RUN])
+        case VMVersionType.SNAP:
+            _get_vm_conf_for_usage(gconf, vm_id, uid, [VMUsage.RUN])
+        case _:
+            raise Exception(f"Unhandled VMVersionType {vm_version.version_type}")
+
+def _get_vm_conf_for_usage(gconf:Configuration, vm_id:str, uid:int, usages:list[VMUsage]|None) -> VirtualMachine:
+    """Get the VM configuration for the specified usage(s), and check is user is actually allowed that usage
+    """
+    for usage in VMUsage if usages is None else usages:
+        vm_conf=gconf.get_vm(usage, vm_id)
+        if vm_conf is not None and vm_conf.is_user_allowed(uid):
+            return vm_conf
+    if usages is None:
+        raise Exception(f"Unknown VM '{vm_id}' or permission denied for user {uid}")
+    raise Exception(f"Unknown VM '{vm_id}' or permission denied for user {uid} to {', '.join([u.value for u in usages])}")
+
+
+async def monitor_proc(proc:subprocess.Popen, context:str):
+    killed=False
+    while True:
+        try:
+            await asyncio.sleep(5)
+            if proc.poll() is not None:
+                syslog.syslog(syslog.LOG_INFO, f"{context} has terminated")
+                killed=True
+                break
+        except asyncio.CancelledError:
+            break
+    if not killed:
+        proc.kill()
+    proc.wait()
+
+async def _get_process_attributes(pid:int) -> tuple[bool, int|None]: # True if is PCSCD, and UID of the process
+    """Get attributes of the specified process:
+    - True if it is the PCSC daemon process (even if the actuel process has terminated)
+    - the UID of the user running the process, or None if it has terminated
+    """
+    try:
+        dproc=psutil.Process(pid)
+        return (dproc.exe()=="/usr/sbin/pcscd", dproc.uids().real)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        (_, out, _)=await padsi.misc.asyncio_run(["systemctl", "show", "--property", "MainPID", "--value", "pcscd.service"])
+        if out=="0":
+            # pcscd unit not active
+            return (False, None)
+        if int(out)==pid:
+            return (True, None)
+        return (False, None)
+
+async def killed(event:asyncio.Event):
+    syslog.syslog(syslog.LOG_INFO, "SIG* received")
+    # when systemd stops the padsi service, it sends the TERM signal to all the processes in the cgroup, let's wait a bit so that
+    # processes run to properly shut down are not killed by systemd
+    time.sleep(0.5)
+    event.set()
+
+async def main(config_dir:str):
+    gconf=Configuration(config_dir)
+    service=PadsiSystemService(os.path.join(_padsi_install_dir, "bin", "user-service"), gconf)
+
+    # remove the need restart file if any
+    need_restart_file=gconf.need_restart_file
+    try:
+        if os.path.exists(need_restart_file):
+            os.remove(need_restart_file)
+    except Exception as e:
+        syslog.syslog(syslog.LOG_ERR, f"Could not remove the '{need_restart_file}' file: {str(e)}")
+
+    # declare traffic shapers
+    for tshaper in gconf.traffic_shapers:
+        service.declare_traffic_shaper(tshaper)
+
+    # start desktop entries monitor
+    proc_tasks:list[asyncio.Task]=[]
+    m_proc=subprocess.Popen([os.path.join(_padsi_install_dir, "bin", "monitor-desktop-entries"), config_dir, "GLOBAL"])
+    a_task=asyncio.create_task(monitor_proc(m_proc, "Desktop entries monitor"))
+    proc_tasks.append(a_task)
+
+    # start data guard (eBPF filter to /run/padsi/user)
+    cenv=os.environ.copy()
+    cenv["LOG_DIR"]=gconf.logs_dir
+    m_proc=subprocess.Popen([os.path.join(_padsi_install_dir, "bin", "data-access-guard")], env=cenv)
+    a_task=asyncio.create_task(monitor_proc(m_proc, "Data access guard"))
+    proc_tasks.append(a_task)
+
+    # start FW logs collection if needed
+    if gconf.firewall_logs_group is not None:
+        cenv=os.environ.copy()
+        cenv["LOG_GROUP"]=str(gconf.firewall_logs_group)
+        cenv["LOG_DIR"]=gconf.logs_dir
+        m_proc=subprocess.Popen([os.path.join(_padsi_install_dir, "bin", "fw-logger")], env=cenv)
+        a_task=asyncio.create_task(monitor_proc(m_proc, "FW logs"))
+        proc_tasks.append(a_task)
+
+    admin_service_task:asyncio.Task|None=None
+
+    # start admin NS if any defined
+    if len(gconf.admin_ns_list)>0:
+        try:
+            padsi_user=pwd.getpwnam("padsi")
+        except KeyError:
+            raise Exception("Unable to find the 'padsi' user")
+
+        run_dir="/run/padsi/padsi"
+        logs_dir=os.path.join(gconf.logs_dir, "padsi")
+        for dir in (run_dir, logs_dir):
+            os.makedirs(dir, mode=0o700, exist_ok=True)
+            os.chown(dir, padsi_user.pw_uid, padsi_user.pw_gid)
+
+        config_data:dict={
+            "config-dir":gconf.config_dir,
+            "run-dir": run_dir,
+            "logs-dir": logs_dir
+        }
+
+        config_file=tempfile.NamedTemporaryFile("wt")
+        os.chown(config_file.name, padsi_user.pw_uid, padsi_user.pw_gid)
+        json.dump(config_data, config_file)
+        config_file.flush()
+
+        server=UserServer(gconf, service.host_fw, service.lock, None, padsi_user.pw_uid, padsi_user.pw_gid)
+        admin_service_task=asyncio.create_task(server.serve_client([
+            os.path.join(_padsi_install_dir, "bin", "admin-service"),
+            config_file.name
+        ]))
+        while True:
+            await asyncio.sleep(0.1)
+            if admin_service_task.done():
+                e=admin_service_task.exception()
+                raise Exception(f"Could not start the admin-service: {str(e) if e is not None else 'CODEBUG'}")
+            if server.is_running:
+                break
+        syslog.syslog(syslog.LOG_DEBUG, f"admin-service config file: {config_file.name}")
+        service.declare_session(padsi_user.pw_uid, UserSession(server=server, task=admin_service_task))
+
+    # run!
+    run_task=None
+    try:
+        run_task=asyncio.create_task(service.run())
+        # catch TERM and INT signals to properly shut down
+        kill_event=asyncio.Event()
+        loop=asyncio.get_event_loop()
+        for s in [signal.SIGTERM, signal.SIGINT]:
+            loop.add_signal_handler(s, lambda s=s:asyncio.create_task(killed(kill_event)))
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "Waiting for killed asyncio.Event to be set")
+        await kill_event.wait()
+    finally:
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "Got killed event, shutting down")
+        if admin_service_task is not None:
+            admin_service_task.cancel()
+            admin_service_task.done()
+
+        for task in proc_tasks:
+            task.cancel()
+        proc_tasks=[]
+
+        if run_task is not None:
+            run_task.cancel()
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "waiting for service.shutdown() to terminate")
+        await service.shutdown()
+        syslog.syslog(syslog.LOG_INFO, "service.shutdown() terminated")
+
+def _set_sysconf(path:str, value:str) -> str|None:
+    """Set a sysconf item and returns the previous value if different from the specified one
+    """
+    to_change=False
+    current_value:str|None=None
+    with open(path, "r") as fd:
+        current_value=fd.readline().strip()
+        if current_value!=value:
+            to_change=True
+    if to_change:
+        with open(path, "wt") as fd:
+            fd.write(f"{value}\n")
+    return current_value
+
+if __name__=="__main__":
+    def usage():
+        msg=f"{sys.argv[0]} <configuration directory>"
+        syslog.syslog(syslog.LOG_ERR, msg)
+        print(msg)
+        sys.exit(1)
+    if len(sys.argv)!=2:
+        usage()
+
+    # set sysconf keys
+    current_ip_forward=_set_sysconf("/proc/sys/net/ipv4/ip_forward", "1")
+    current_nf_log_all_netns=_set_sysconf("/proc/sys/net/netfilter/nf_log_all_netns", "1")
+    try:
+        config_dir=sys.argv[1]
+        if not os.path.isdir(config_dir):
+            print(f"PADSI configuration directory '{config_dir}' does not extist", file=sys.stderr)
+            sys.exit(1)
+
+        syslog.syslog(syslog.LOG_INFO, f"Service starting using configuration in '{config_dir}'")
+        asyncio.run(main(config_dir))
+    finally:
+        # revert to previous sysconf settings
+        if current_ip_forward is not None and current_ip_forward!="1":
+            _set_sysconf("/proc/sys/net/ipv4/ip_forward", current_ip_forward)
+        if current_nf_log_all_netns is not None and current_nf_log_all_netns!="1":
+            _set_sysconf("/proc/sys/net/netfilter/nf_log_all_netns", current_nf_log_all_netns)

@@ -1,0 +1,38 @@
+{
+    "options": {},
+    "network": {
+        "dns-resolvers": null,
+        "traffic-shaper": null,
+        "out-rules": [
+            {
+                "action": "allow",
+                "netres": "banking"
+            }
+        ]
+    },
+    "apps": [
+        "firefox-esr",
+        "org.gnome.Nautilus",
+        "org.gnome.Terminal",
+        "org.gnome.TextEditor",
+        "org.keepassxc.KeePassXC"
+    ],
+    "friendly-name": "Secure",
+    "mounts": {
+        "{VIDEOS}": {
+            "source": "{VIDEOS}"
+        },
+        "{DOCUMENTS}": {
+            "source": "{DOCUMENTS}"
+        },
+        "{DOWNLOAD}/Internet": {
+            "source": "{internet_DOWNLOAD}"
+        },
+        "{TEMPLATES}": {
+            "source": "{TEMPLATES}",
+            "mode": "ro"
+        }
+    },
+    "start-mode": "on-demand",
+    "color": "#14b358"
+}

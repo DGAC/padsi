@@ -1,0 +1,66 @@
+{
+    "run": {
+        "with-net": true,
+        "allowed-users": null,
+        "show-ui": true,
+        "network": {
+            "out-rules": [
+                {
+                    "action": "allow",
+                    "netres": "debian-install"
+                },
+                {
+                    "action": "allow",
+                    "netres": "debian-usage"
+                }
+            ]
+        }
+    },
+    "specs": {
+        "nb-cpu": 2,
+        "descr": "Debian 12 with Gnome UI",
+        "variant": "linux/debian/12",
+        "disk-size-mb": 10000,
+        "mem-mb": 2048,
+        "secure-boot": true
+    },
+    "update": {
+        "with-net": true,
+        "allowed-users": [
+            "admin"
+        ],
+        "network": {
+            "out-rules": [
+                {
+                    "action": "allow",
+                    "netres": "debian-install"
+                }
+            ]
+        },
+        "show-ui": true
+    },
+    "install": {
+        "with-net": true,
+        "allowed-users": [
+            "admin"
+        ],
+        "show-ui": true,
+        "network": {
+            "out-rules": [
+                {
+                    "netres": "debian-install",
+                    "action": "allow"
+                }
+            ]
+        }
+    },
+    "admin": {
+        "shutdown-script": null,
+        "run-script": "on-run.sh",
+        "customize-script": "on-customize.sh",
+        "users": [
+            "vivien"
+        ],
+        "update-script": "on-update.sh"
+    }
+}

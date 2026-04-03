@@ -1,0 +1,19 @@
+[package]
+name = "init"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nix = { version = "0.29", features = ["signal", "process"] }
+libc = "0.2"
+tokio = { version = "1", features = ["full"] }
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json  = "1"
+caps = "0.5"
+anyhow = "1.0.102"
+clap = { version = "4.5.60", features = [ "derive" ] }
+padsi = { path = "../padsi" }
+form_urlencoded = "1.2.2"

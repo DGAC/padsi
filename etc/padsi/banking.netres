@@ -1,0 +1,11 @@
+{
+    "banking": {
+        "endpoints": [
+            "www.credit-agricole.fr. ^ tcp ^ 443",
+            "**.bnpparibas. ^ tcp ^ 443",
+            "**.sg.fr. ^ tcp ^ 443",
+            "webrtc.github.io. ^ tcp ^ 443"
+        ],
+        "descr": "Banking web sites"
+    }
+}

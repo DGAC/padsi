@@ -1,0 +1,19 @@
+{
+    "codium": {
+        "endpoints": [
+            "open-vsx.org. ^ tcp ^ 443",
+            "openvsxorg.blob.core.windows.net.  ^ tcp ^ 443"
+        ],
+        "descr": "Codium's extensions for developpers"
+    },
+    "dev-repos": {
+        "descr": "Repositories for developpers",
+        "endpoints": [
+            "*.docker.io. ^ tcp ^ 443,80",
+            "*.docker.com. ^ tcp ^ 443,80",
+            "production.cloudflare.docker.com. ^ tcp ^ 443,80",
+            "*.npmjs.org. ^ tcp ^ 443",
+            "raw.githubusercontent.com. ^ tcp ^ 443"
+        ]
+    }
+}

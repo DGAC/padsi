@@ -1,0 +1,1226 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+
+#
+# This is the PADSI CLI tool, intended to be used from the host ("init") namespace
+#
+
+from __future__ import annotations, print_function
+
+import argparse
+import datetime
+import enum
+import json
+import os
+import re
+import sys
+import tempfile
+from typing import Any
+
+import colorama  # import Fore, Style
+
+try:
+    import padsi.config
+except ModuleNotFoundError:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))) # pyright: ignore
+    import padsi.config
+
+import padsi.misc
+from firewall import Endpoint, NetFlow
+from padsi.cli.client import print_vm_status
+from padsi.cli.client_host import Client, GlobalStatus
+from padsi.config import ResolvRule, TrafficShaper
+from padsi.config.network import FWRule
+
+# Adapt console coloring to the output type
+if os.isatty(sys.stdout.fileno()):
+    Fore = colorama.Fore  # pyright: ignore
+    Style = colorama.Style  # pyright: ignore
+else:
+    class Fore:
+        BLACK = ""
+        RED = ""
+        GREEN = ""
+        YELLOW = ""
+        BLUE = ""
+        MAGENTA = ""
+        CYAN = ""
+        WHITE = ""
+        RESET = ""
+    class Style:
+        BRIGHT = ""
+        DIM = ""
+        NORMAL = ""
+        RESET_ALL = ""
+
+parser=argparse.ArgumentParser(description="PADSI CLI tool")
+subparsers=parser.add_subparsers()
+parser.add_argument("-v", "--verbose", action="store_true", help="show more information")
+parser.add_argument("--config-dir", help="Configuration directory (defaults to /etc/padsi)", type=str, default="/etc/padsi")
+parser.add_argument("-j", "--json", help="Output JSON", action="store_true")
+parser.add_argument("-U", "--user", type=str, help="UID of the user to use instead of current one")
+
+subparser=subparsers.add_parser("net-usage", help="List all past network usage for a zone")
+subparser.set_defaults(cmde="net-usage")
+subparser.add_argument("name", type=str, help="Zone or admin NS to get information about, or '-' for the 'init namespace'")
+subparser.add_argument("--since", type=str, help="Consider only the events after specified instant (1 day by default, format can be 'YYYYMMDD', 'YYYYMMDD-HH:MM:SS', or a number of days")
+subparser.add_argument("--until", type=str, help="Consider only the events before specified instant (now by default, format can be 'YYYYMMDD', 'YYYYMMDD-HH:MM:SS', or a number of days")
+subparser.add_argument("--no-timeline", action="store_false", help="Group output by items instead of as a timeline (if not JSON output)")
+subparser.add_argument("--status", type=str, help="Specify the status of events to show as a CSV of: 'blocked' (by configuration), 'failed' (something went wrong) and, 'allowed' (warning: firewall does not log successful connections), defaults to 'blocked,failed', pass 'all' for all")
+subparser.add_argument("--events", type=str, help="Specify the kind of events to show as a CSV of: 'dns', 'firewall', or 'proxy', defaults to all")
+
+subparser=subparsers.add_parser("net-rules", help="Get information about a network access")
+subparser.set_defaults(cmde="net-rules")
+subparser.add_argument("endpoint", type=str, help="Target endpoint (ex. '1.2.3.4', 'www.example.com.^tcp^443', '*.example.com.')")
+subparser.add_argument("--text", action="store_true", help="Search using substring")
+
+subparser=subparsers.add_parser("run", help="Run a program in a specific zone")
+subparser.set_defaults(cmde="run")
+subparser.add_argument("zone-name", type=str, help="Zone in which to run the program")
+subparser.add_argument("args", nargs=argparse.REMAINDER, type=str, help="Program to run and its arguments")
+
+subparser=subparsers.add_parser("status", help="Get the status of the PADSI service for the current user")
+subparser.set_defaults(cmde="status")
+subparser.add_argument("--zone", type=str, help="Only show information about this zone")
+
+subparser=subparsers.add_parser("zones", help="List all the declared zones")
+subparser.set_defaults(cmde="zones")
+
+subparser=subparsers.add_parser("zone-info", help="Get information about a zone")
+subparser.set_defaults(cmde="zone-info")
+subparser.add_argument("zone-name", type=str, help="Zone to get information about")
+
+#
+# handling VMs
+#
+subparser=subparsers.add_parser("vms", help="List all the declared virtual machines")
+subparser.set_defaults(cmde="vms")
+
+subparser=subparsers.add_parser("vm-import", help="Import a virtual machine in the staging area (must be published afterwards)")
+subparser.set_defaults(cmde="vm-import")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to import")
+subparser.add_argument("hdd-file", type=str, help="HDD file of the virtual machine")
+subparser.add_argument("vars-file", type=str, help="UEFI variables file of the virtual machine")
+subparser.add_argument("--message", "-m", type=str, help="Import comment")
+
+subparser=subparsers.add_parser("vm-load", help="Load a previously saved virtual machine")
+subparser.set_defaults(cmde="vm-load")
+subparser.add_argument("--vm-id", type=str, help="Forced ID of the virtual machine to load, obtained from the archive otherwise")
+subparser.add_argument("archive-file", type=str, help="File archive to load")
+subparser.add_argument("--message", "-m", type=str, help="VM load comment")
+
+subparser=subparsers.add_parser("vm-save", help="Export a virtual machine to an archive")
+subparser.set_defaults(cmde="vm-save")
+subparser.add_argument("--depend-at", type=str, help="Don't include dependencies files which correspond to the specified hash or VM version")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to save")
+subparser.add_argument("vm-name", type=str, help="VM name/version in the form '[<user ID>/]<base|user|snapshot>.[version]' or '[<user ID>/]staged' or a nickname")
+subparser.add_argument("archive-file", type=str, help="File archive to create")
+
+subparser=subparsers.add_parser("vm-install", help="Install a virtual machine (create a new staging version)")
+subparser.set_defaults(cmde="vm-install")
+subparser.add_argument("--network-of-zone", type=str, help="Zone's network to use (default: automatic)")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to install")
+subparser.add_argument("iso", type=str, help="ISO image file to install the VM from")
+subparser.add_argument("--resource", type=str, help="Extra ISO images or files to be used during the installation", action="append")
+
+subparser=subparsers.add_parser("vm-update", help="Update a virtual machine (create a new staging version)")
+subparser.set_defaults(cmde="vm-update")
+subparser.add_argument("--network-of-zone", type=str, help="Zone's network to use (default: automatic)")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to install")
+subparser.add_argument("--resource", type=str, help="Extra ISO images or files to be used during the update", action="append")
+
+subparser=subparsers.add_parser("vm-publish", help="Publish a staged version for the end users")
+subparser.set_defaults(cmde="vm-publish")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to publish")
+subparser.add_argument("--message", "-m", type=str, help="Publish comment")
+
+subparser=subparsers.add_parser("vm-discard", help="Discard a VM version")
+subparser.set_defaults(cmde="vm-discard")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to discard")
+subparser.add_argument("vm-name", type=str, nargs=argparse.REMAINDER,
+                       help="VM name(s)/version(s) in the form '[<user ID>/]<base|user|snapshot>.[version]' or '[<user ID>/]staged' or a nickname")
+subparser.add_argument("--force", action="store_true", help="Force the removal")
+
+subparser=subparsers.add_parser("vm-clean", help="Discard all the VM versions which can safely be discarded")
+subparser.set_defaults(cmde="vm-clean")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to discard")
+
+subparser=subparsers.add_parser("vm-merge", help="Merge the contents of a VM version with the VM version it comes from")
+subparser.set_defaults(cmde="vm-merge")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to merge")
+subparser.add_argument("vm-name", type=str, help="VM version in the form '[<user ID>/]<base|user|snapshot>.<version>'")
+subparser.add_argument("--message", "-m", type=str, help="Merge comment")
+
+subparser=subparsers.add_parser("vm-status", help="List the status of a VM (files, ...)")
+subparser.set_defaults(cmde="vm-status")
+subparser.add_argument("zone-name", type=str, help="Zone in which the virtual machine is used")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to filter")
+
+subparser=subparsers.add_parser("vm-start", help="Run a new or existing virtual machine in a specific zone. If the VM is already running, it will be shown")
+subparser.set_defaults(cmde="vm-start")
+subparser.add_argument("zone-name", type=str, help="Zone in which to start the virtual machine")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to run")
+subparser.add_argument("vm-name", type=str, nargs="?", default="default", help="Optional: VM version in the form 'snapshot.[version]' or nickname")
+
+subparser=subparsers.add_parser("vm-display", help="Display the viewer of a running virtual machine")
+subparser.set_defaults(cmde="vm-display")
+subparser.add_argument("zone-name", type=str, help="Zone in which the virtual machine is running")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to filter")
+subparser.add_argument("vm-name", type=str, nargs="?", default="default", help="VM version in the form 'snapshot.[version]' or nickname")
+
+subparser=subparsers.add_parser("vm-create-launcher", help="Create a desktop entry launcher for a specific virtual machine")
+subparser.set_defaults(cmde="vm-create-launcher")
+subparser.add_argument("zone-name", type=str, help="Zone in which the virtual machine is to run")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine")
+subparser.add_argument("vm-name", type=str, nargs="?", default="default", help="VM version in the form 'snapshot.[version]' or nickname")
+
+subparser=subparsers.add_parser("vm-delete-launcher", help="Delete a desktop entry launcher for a virtual machine")
+subparser.set_defaults(cmde="vm-delete-launcher")
+subparser.add_argument("zone-name", type=str, help="Zone in which the virtual machine is to run")
+subparser.add_argument("vm-id", type=str, help="ID of the virtual machine")
+subparser.add_argument("vm-name", type=str, nargs="?", default="default", help="VM version in the form 'snapshot.[version]' or nickname")
+
+
+args=vars(parser.parse_args())
+#print("PARSED ARGS: %s"%args)
+if "cmde" not in args:
+    parser.print_help()
+    sys.exit(1) # pyright: ignore
+
+_caller_uid=os.getuid()
+_caller_gid=os.getgid()
+_indent="    "
+
+class PadsiServiceNotRunning(Exception):
+    pass
+
+# test if the PADSI service is running
+try:
+    client_exception=None
+    user=args.get("user")
+    user=int(user) if user is not None else None
+    client=Client(user)
+except Exception as e:
+    client_exception=PadsiServiceNotRunning(str(e))
+    client=None
+
+def load_config() -> padsi.config.Configuration:
+    conf=padsi.config.Configuration(args["config_dir"])
+    return conf
+
+def _get_traffic_shaper_descr(tsp: TrafficShaper|None) -> str:
+    if tsp is None:
+        return "direct network access"
+    else:
+        match tsp.functionnal:
+            case True:
+                return f"VPN {tsp.name} ({tsp.ts_type}, functionnal)"
+            case False:
+                return f"VPN {tsp.name} ({tsp.ts_type}, not functionnal)"
+            case _:
+                return f"VPN {tsp.name} ({tsp.ts_type})"
+
+def print_zones(conf:padsi.config.Configuration, verbose:bool, use_json:bool):
+    user_zones={zone.name: None if zone.friendly_name==zone.name else zone.friendly_name for zone in conf.zones}
+    if use_json:
+        data={
+            "user-zones": user_zones,
+        }
+        print(f"{json.dumps(data, indent=4)}")
+    else:
+        for (zone, descr) in user_zones.items():
+            if descr is None:
+                print(f"{zone}")
+            else:
+                print(f"{zone}: {descr}")
+
+def print_status(status:GlobalStatus, verbose:bool):
+    if len(status.active_zones)>0:
+        print("Started zones:")
+        for zname in status.active_zones:
+            print(f"  - {zname}")
+            if verbose:
+                for zonestatus in status.get_active_zones_status(zname): # pyright: ignore
+                    if zonestatus.vm_conf is None:
+                        print(f"    - {'ready' if zonestatus.ready else 'not ready'}")
+                    else:
+                        print(f"    - {'ready' if zonestatus.ready else 'not ready'}, running VM: {zonestatus.vm_snap}/{zonestatus.vm_nickname}, ({zonestatus.vm_conf})")
+    else:
+        print("No zone started yet")
+    if len(status.running_tasks)>0:
+        print("Running tasks:")
+        for task in status.running_tasks:
+            print(f"  - {task}")
+
+def print_vms(conf:padsi.config.Configuration, verbose:bool, use_json:bool):
+    all_vms:dict[str,set[padsi.config.VirtualMachine]]={}
+    for usage in padsi.config.VMUsage:
+        for vm in conf.get_vms_for_usage(usage):
+            if vm.id not in all_vms:
+                all_vms[vm.id]=set()
+            all_vms[vm.id].add(vm)
+
+    data={}
+    for vmid in all_vms:
+        vmdata={
+            "actions": []
+        }
+        for vm in all_vms[vmid]:
+            if vm.is_user_allowed(_caller_uid):
+                vmdata["actions"].append(vm.usage.value)
+                if vm.usage==padsi.config.VMUsage.RUN:
+                    vmdata["description"]=vm.description # pyright: ignore
+                    zones:list[str]=[]
+                    for zname in conf.get_zones_names():
+                        zone=conf.get_zone(zname)
+                        if vm.id in zone.get_virtual_machine_ids():
+                            zones.append(zone.name)
+                    vmdata["runnable-zone"]=zones
+        data[vmid]=vmdata
+
+    if use_json:
+        print(f"{json.dumps(data, indent=4)}")
+        return
+
+    for (vmid, vmdata) in data.items():
+        print(f"virtual machine '{vmid}' ({vmdata['description']})")
+        print(f"{_indent}actions: {', '.join(vmdata['actions'])}")
+        print(f"{_indent}for zones: {', '.join(vmdata['runnable-zone'])}")
+
+def _format_rule(rule:FWRule|ResolvRule) -> str:
+    if rule.action=="allow":
+        return f"{Fore.GREEN}allowed{Fore.RESET} {rule.endpoint} {Style.DIM}({rule.descr}){Style.RESET_ALL}"
+    else:
+        return f"{Fore.RED}blocked{Fore.RESET} {rule.endpoint} {Style.DIM}({rule.descr}){Style.RESET_ALL}"
+
+class EventType(int, enum.Enum):
+    ALLOWED = 0
+    FAILED = 1
+    BLOCKED = 2
+
+class EventsGroup:
+    """Handle lists of events to group them by timestamp into groups
+    """
+    span_s=300 # span in seconds during which events are groupped
+
+    def __init__(self, ev_type:EventType, context:str, ts:datetime.datetime):
+        self._type=ev_type
+        self._context=context
+        self._start_ts=ts
+        self._last_ts=ts
+        self.span=0
+        self.nb_events=1
+
+    @property
+    def context(self) -> str:
+        return self._context
+
+    @context.setter
+    def context(self, context:str):
+        self._context=context
+        self._type=EventType.FAILED # setting the context is actually only performed when the event is "failed"
+
+    @property
+    def ev_type(self) -> EventType:
+        return self._type
+
+    @property
+    def start_ts(self) -> datetime.datetime:
+        return self._start_ts
+
+    @property
+    def start_ts_str(self) -> str:
+        return self._start_ts.strftime("%Y%m%d-%H:%M:%S")
+
+    def add_event(self, ts:datetime.datetime) -> bool:
+        if (ts-self._last_ts).seconds > EventsGroup.span_s:
+            return False
+        self.nb_events+=1
+        self._last_ts=ts
+        self.span=(ts-self._start_ts).seconds
+        return True
+
+    @staticmethod
+    def _compute_timeline(lgroups:list[EventsGroup]) -> dict[str, list[EventsGroup]]:
+        data: dict[str, list]={}
+        for gr in lgroups:
+            gr_str=str(gr)
+            if gr_str in data:
+                data[gr_str].append(gr)
+            else:
+                data[gr_str]=[gr]
+        return data
+
+    @staticmethod
+    def serialize_list(lgroups:list[EventsGroup], as_timeline:bool) -> Any:
+        if as_timeline:
+            return [{"ts": gr.start_ts_str, "name": str(gr), "count": gr.nb_events, "span": gr.span} for gr in lgroups]
+
+        data=EventsGroup._compute_timeline(lgroups)
+        return {req_name: [{"ts": gr.start_ts_str, "count": gr.nb_events, "span": gr.span} for gr in grlist] for (req_name, grlist) in data.items()}
+
+    @staticmethod
+    def merge_groups_by_ts(llgroups:list[list[EventsGroup]]) -> list[EventsGroup]:
+        allg:dict[datetime.datetime, set[EventsGroup]]={}
+        for lgroup in llgroups:
+            for group in lgroup:
+                if group.start_ts in allg:
+                    allg[group.start_ts].add(group)
+                else:
+                    allg[group.start_ts]={group}
+        res:list[EventsGroup]=[]
+        for (_, s) in sorted(allg.items()):
+            res+=list(s)
+        return res
+
+    @staticmethod
+    def print_list(lgroups:list[EventsGroup], as_timeline:bool):
+        if as_timeline:
+            for gr in lgroups:
+                times="1 time" if gr.nb_events==1 else f"{gr.nb_events} times"
+                duration="" if gr.span<2 else f" over {gr.span} s"
+                print(f"{gr.start_ts_str} {gr}: {gr.context} {times}{duration}")
+        else:
+            data=EventsGroup._compute_timeline(lgroups)
+            for req_name in data:
+                print(f"{req_name}:")
+                for gr in data[req_name]:
+                    times="1 time" if gr.nb_events==1 else f"{gr.nb_events} times"
+                    duration="" if gr.span<2 else f" over {gr.span} s"
+                    print(f"{_indent}{gr.start_ts_str}: {gr.context} {times}{duration}")
+
+class DNSEventsGroup(EventsGroup):
+    def __init__(self, ev_type:EventType, context:str, ts:datetime.datetime, domain_name:str):
+        super().__init__(ev_type, context, ts)
+        self._domain_name=domain_name
+
+    def __repr__(self) -> str:
+        return self._domain_name
+
+def _parse_time_spec(spec:str) -> datetime.datetime:
+    try:
+        return datetime.datetime.strptime(spec, "%Y%m%d-%H:%M:%S")
+    except Exception:
+        try:
+            return datetime.datetime.strptime(spec, "%Y%m%d")
+        except Exception:
+            try:
+                return datetime.datetime.now()-datetime.timedelta(int(spec))
+            except Exception:
+                raise Exception(f"Invalid time specification '{spec}'")
+
+def _compute_since_timestamp(since:str|None):
+    if since is None:
+        return datetime.datetime.now()-datetime.timedelta(1)
+    return _parse_time_spec(since)
+
+def _compute_until_timestamp(until:str|None):
+    if until is None:
+        return datetime.datetime.now()
+    return _parse_time_spec(until)
+
+def get_dns_usage(show_allowed: bool, show_blocked:bool, object:padsi.config.Zone|padsi.config.AdminNS|None, since:str|None, until:str|None) -> list[EventsGroup]:
+    if object is None:
+        return []
+    since_ts=_compute_since_timestamp(since)
+    until_ts=_compute_until_timestamp(until)
+    lgroups:list[EventsGroup]=[]
+    dgroups:dict[str,EventsGroup]={} # key=name, value=EventsGroup
+
+    # get logs directory
+    if isinstance(object, padsi.config.Zone):
+        logs_file=os.path.join(conf.get_zone_logs_dir(object.name, _caller_uid), "resolv.log")
+    elif isinstance(object, padsi.config.AdminNS):
+        logs_file=os.path.join(conf.get_admin_ns_logs_dir(object.name), "resolv.log")
+
+    # analyse logs
+    al_context=f"{Fore.GREEN}domain allowed{Fore.RESET}"
+    bl_context=f"{Fore.RED}domain blocked{Fore.RESET}"
+    try:
+        with open(logs_file, "rt") as fd:
+            for line in fd.readlines():
+                # format: 20251120-17:29:19 INFO {"action": "req-block", "name": "firefox.settings.services.mozilla.com.", "type": "AAAA", "from": "192.168.0.2"}
+                try:
+                    (ts, level, jdata)=line.split(maxsplit=2)
+                    data=json.loads(jdata)
+                    name=data.get("name")
+
+                    if data.get("type") in ("A", "AAAA"):
+                        ts=datetime.datetime.strptime(ts, "%Y%m%d-%H:%M:%S")
+                        if show_allowed and data.get("action")=="req-allow":
+                            if ts>=since_ts and ts<=until_ts:
+                                egr=dgroups.get(name)
+                                if egr is None or not egr.add_event(ts):
+                                    gr=DNSEventsGroup(EventType.ALLOWED, al_context, ts, name)
+                                    lgroups.append(gr)
+                                    dgroups[name]=gr
+                        if show_blocked and data.get("action") in ("req-block", "req-would-block"):
+                            if ts>=since_ts and ts<=until_ts:
+                                egr=dgroups.get(name)
+                                if egr is None or not egr.add_event(ts):
+                                    gr=DNSEventsGroup(EventType.BLOCKED, bl_context, ts, name)
+                                    lgroups.append(gr)
+                                    dgroups[name]=gr
+
+                except Exception as e:
+                    print(f"Invalid log line '{line}': {str(e)}", file=sys.stderr)
+    except FileNotFoundError:
+        pass
+    except PermissionError:
+        raise Exception(f"Failed to read zone's resolution logs file {logs_file}: permission denied")
+    except Exception as e:
+        raise Exception(f"Failed to read zone's resolution logs file {logs_file}: {str(e)}")
+    return lgroups
+
+class FirewallEventsGroup(EventsGroup):
+    def __init__(self, ev_type:EventType, context:str, ts:datetime.datetime, proto:str|None, in_iface:str|None, out_iface:str|None,
+        ip_src:str|None, ip_dst:str|None, port_src:int|None, port_dst:int|None):
+        super().__init__(ev_type, context, ts)
+        src:Endpoint|None=None
+        dst:Endpoint|None=None
+        self._flow:NetFlow|None=None
+        if proto is None:
+            if in_iface is not None:
+                dst=Endpoint(f"#{in_iface}")
+            if out_iface is not None:
+                src=Endpoint(f"#{out_iface}")
+            self._flow=NetFlow(src, dst)
+        else:
+            self._proto=proto.lower()
+            if self._proto in ("tcp", "udp", "icmp"):
+                if in_iface is not None:
+                    src=Endpoint(ip_src, self._proto, str(port_src) if port_src is not None else None)
+                elif out_iface is not None:
+                    src=Endpoint(f"#{out_iface}", self._proto, str(port_src) if port_src is not None else None)
+                if out_iface is not None:
+                    dst=Endpoint(ip_dst, self._proto, str(port_dst) if port_dst is not None else None)
+                elif in_iface is not None:
+                    dst=Endpoint(f"#{in_iface}", self._proto, str(port_dst) if port_dst is not None else None)
+                self._flow=NetFlow(src, dst)
+
+    def __repr__(self) -> str:
+        if self._flow is None:
+            return f"protocol {self._proto}"
+        return str(self._flow)
+
+def get_blocked_firewall_usage(object:padsi.config.Zone|padsi.config.AdminNS|None, since:str|None, until:str|None) -> list[EventsGroup]:
+    since_ts=_compute_since_timestamp(since)
+    until_ts=_compute_until_timestamp(until)
+    lgroups:list[EventsGroup]=[]
+    dgroups:dict[str,EventsGroup]={} # key=name, value=EventsGroup
+
+    # get logs directory
+    if isinstance(object, padsi.config.Zone):
+        logs_dir=conf.get_zone_logs_dir(object.name, _caller_uid)
+    elif isinstance(object, padsi.config.AdminNS):
+        logs_dir=conf.get_admin_ns_logs_dir(object.name)
+    else:
+        logs_dir=conf.logs_dir
+
+    # analyse logs
+    for fname in os.listdir(logs_dir):
+        if fname.startswith("firewall.") and fname.endswith(".json"):
+            start_ts=datetime.datetime.strptime(fname[9:-5], "%Y-%m-%d")
+            if start_ts>=since_ts-datetime.timedelta(days=1) and start_ts<=until_ts:
+                logs_file=os.path.join(logs_dir, fname)
+                try:
+                    with open(logs_file, "tr") as fd:
+                        for line in fd.readlines():
+                            try:
+                                data=json.loads(line)
+                                (ts, *_)=data["timestamp"].split(".")
+                                ts=datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+                                if ts>=since_ts and ts<=until_ts:
+                                    in_iface=data.get("in_iface")
+                                    out_iface=data.get("out_iface")
+                                    if in_iface is None:
+                                        if out_iface is None:
+                                            context=f"{Fore.RED}firewall blocked{Fore.RESET}"
+                                        else:
+                                            context=f"{Fore.RED}firewall INFRA OUT blocked{Fore.RESET}"
+                                    else:
+                                        if out_iface is None:
+                                            context=f"{Fore.RED}firewall INFRA IN blocked{Fore.RESET}"
+                                        else:
+                                            context=f"{Fore.RED}firewall blocked{Fore.RESET}"
+                                    gr=FirewallEventsGroup(EventType.BLOCKED, context, ts, data.get("proto"),
+                                        in_iface, out_iface,
+                                        data.get("ip_src"), data.get("ip_dst"),
+                                        data.get("port_src"), data.get("port_dst"))
+                                    egr=dgroups.get(str(gr))
+                                    if egr is None or not egr.add_event(ts):
+                                        lgroups.append(gr)
+                                        dgroups[str(gr)]=gr
+                            except Exception as e:
+                                print(f"Invalid log line '{line}': {str(e)}", file=sys.stderr)
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    raise Exception(f"Failed to read zone's firewall logs file {logs_file}: {str(e)}")
+    return lgroups
+
+class ProxyEventsGroup(EventsGroup):
+    def __init__(self, ev_type:EventType, context:str, ts:datetime.datetime, endpoint:str, cl_ip:str|None, cl_port:int|None):
+        super().__init__(ev_type, context, ts)
+        self._endpoint=endpoint
+        self._id=self._endpoint if cl_ip is None and cl_port is None else f"{self._endpoint}/{cl_ip}:{cl_port}"
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    def __repr__(self) -> str:
+        return self._endpoint
+
+    @staticmethod
+    def compact_groups(groups:list[EventsGroup]) -> list[EventsGroup]:
+        def _downcast(obj:EventsGroup) -> ProxyEventsGroup:
+            if not isinstance(obj, ProxyEventsGroup):
+                raise Exception("CODEBUG: obj is not a ProxyEventsGroup")
+            return obj
+
+        dgroups:dict[str,EventsGroup]={}
+        lgroups:list[EventsGroup]=[]
+        for gr in groups:
+            pgr=_downcast(gr)
+            egr=dgroups.get(pgr._endpoint)
+            if egr is None or not egr.add_event(gr.start_ts):
+                dgroups[pgr._endpoint]=gr
+                lgroups.append(gr)
+        return lgroups
+
+def get_proxy_usage(show_allowed: bool, show_failed:bool, show_blocked:bool,
+    object:padsi.config.Zone|padsi.config.AdminNS|None, since:str|None, until:str|None) -> list[EventsGroup]:
+    since_ts=_compute_since_timestamp(since)
+    until_ts=_compute_until_timestamp(until)
+    lgroups:list[EventsGroup]=[]
+    dgroups:dict[str,EventsGroup]={} # key=name, value=EventsGroup
+
+    def _get_client_ip_port(spans: list[dict]|None) -> tuple[str|None,int|None]:
+        if spans is not None:
+            for span in spans:
+                if "client_ip" in span and "client_port" in span:
+                    return (span["client_ip"], span["client_port"])
+        return (None, None)
+
+    # get logs directory
+    if isinstance(object, padsi.config.Zone):
+        logs_dir=conf.get_zone_logs_dir(object.name, _caller_uid)
+    elif isinstance(object, padsi.config.AdminNS):
+        logs_dir=conf.get_admin_ns_logs_dir(object.name)
+    else:
+        logs_dir=conf.logs_dir
+
+    # analyse logs
+    al_context=f"{Fore.GREEN}web proxy allowed{Fore.RESET}"
+    fa_context=f"{Fore.GREEN}web proxy failed{Fore.RESET}"
+    bl_context=f"{Fore.RED}web proxy blocked{Fore.RESET}"
+    for fname in os.listdir(logs_dir):
+        if fname.startswith("web-infra.") and fname.endswith(".json"):
+            try:
+                start_ts=datetime.datetime.strptime(fname[10:-5], "%Y-%m-%d")
+            except Exception:
+                raise Exception(f"Could not convert '{fname[10:-5]} ({fname})' to a timestamp")
+            if start_ts>=since_ts-datetime.timedelta(days=1) and start_ts<=until_ts:
+                logs_file=os.path.join(logs_dir, fname)
+                try:
+                    with open(logs_file, "tr") as fd:
+                        for line in fd.readlines():
+                            try:
+                                data=json.loads(line)
+                                (ts, *_)=data["timestamp"].split(".")
+                                ts=datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+                                if ts>=since_ts and ts<=until_ts:
+                                    # determine if actually blocked outside of PADSI
+                                    up_proxy=data.get("up_proxy_blocked")
+                                    up_conn=data.get("up_conn_blocked")
+                                    up_bl_endpoint=up_proxy if up_proxy is not None else up_conn
+
+                                    if up_bl_endpoint is not None:
+                                        # complement corresponding and already parsed allowed endpoint access to make it failed
+                                        (cl_ip, cl_port)=_get_client_ip_port(data.get("spans"))
+                                        gr=ProxyEventsGroup(EventType.ALLOWED, al_context, ts, up_bl_endpoint, cl_ip, cl_port)
+                                        egr=dgroups.get(gr.id)
+                                        if egr is not None:
+                                            if show_failed:
+                                                msg=data.get("message")
+                                                msg=re.sub(' .os error [0-9]+.', '', msg)
+                                                extra=(
+                                                    f"{Fore.RED}blocked{Fore.RESET} by proxy ({msg})" if up_proxy is not None else
+                                                    f"{Fore.RED}blocked{Fore.RESET} by network ({msg})")
+                                                egr.context=f"{fa_context}, {extra}"
+                                            else:
+                                                del dgroups[gr.id]
+                                    else:
+                                        al_endpoint=data.get("allowed") # endpoint which has been allowed
+                                        bl_endpoint=data.get("blocked") # endpoint which has been blocked
+
+                                        if (show_allowed or show_failed) and al_endpoint is not None:
+                                            (cl_ip, cl_port)=_get_client_ip_port(data.get("spans"))
+                                            gr=ProxyEventsGroup(EventType.ALLOWED, al_context, ts, al_endpoint, cl_ip, cl_port)
+                                            egr=dgroups.get(gr.id)
+                                            if egr is None or not egr.add_event(ts):
+                                                lgroups.append(gr)
+                                                dgroups[gr.id]=gr
+
+                                        elif show_blocked and bl_endpoint is not None:
+                                            (cl_ip, cl_port)=_get_client_ip_port(data.get("spans"))
+                                            gr=ProxyEventsGroup(EventType.BLOCKED, bl_context, ts, bl_endpoint, cl_ip, cl_port)
+                                            egr=dgroups.get(gr.id)
+                                            if egr is None or not egr.add_event(ts):
+                                                lgroups.append(gr)
+                                                dgroups[gr.id]=gr
+
+                            except Exception as e:
+                                print(f"Invalid log line '{line}': {str(e)}", file=sys.stderr)
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    raise Exception(f"Failed to read zone's Web proxy logs file {logs_file}: {str(e)}")
+    if not show_allowed:
+        # remove all allowed information which was captured because it might be failed but was not requested
+        nlgroups:list[EventsGroup]=[]
+        for gr in lgroups:
+            if gr.ev_type!=EventType.ALLOWED:
+                nlgroups.append(gr)
+        lgroups=nlgroups
+
+    return ProxyEventsGroup.compact_groups(lgroups)
+
+def print_user_zone_infos(gconf:padsi.config.Configuration, zone:padsi.config.Zone, verbose:bool, use_json:bool):
+    if use_json:
+        data=zone.serialize()
+        print(f"{json.dumps(data, indent=4)}")
+        return
+
+    s=zone.name if zone.friendly_name==zone.name else f"{zone.name} ({zone.friendly_name})"
+    print(f"Zone name: {s}")
+    print(f"Has network: {zone.network_enabled}")
+    if len(zone.configured_options)>0:
+        print("Configured options:")
+        for (option_type, option_value) in zone.configured_options.items():
+            print(f"{_indent}{option_type.value}: {str(option_value)}")
+    else:
+        print("No configured option")
+
+    if zone.network_enabled:
+        # traffic shaper
+        if zone.traffic_shaper:
+            print(f"Traffic shaper: {_get_traffic_shaper_descr(zone.traffic_shaper)}")
+        else:
+            print("Does not use any traffic shaper")
+
+        # DNS
+        if zone.has_dns_resolution:
+            if zone.dns_resolvers is not None:
+                if len(zone.dns_resolvers)==0:
+                    print("DNS resolution provided by the host (NOT YET IMPLEMENTED)")
+                else:
+                    print("DNS resolvers:")
+                    for item in zone.dns_resolvers:
+                        print(f"{_indent}{str(item.ip_address)}:{item.port} ({item.protocol.value})")
+                if zone.resolv_rules is None or len(zone.resolv_rules)==0:
+                    print("No resolution rules")
+                else:
+                    print("Domain resolution rules:")
+                    for rule in zone.resolv_rules:
+                        print(f"{_indent}{_format_rule(rule)}")
+            else:
+                print("No DNS resolution")
+        else:
+            print("Does not offer DNS resolution service")
+
+        # direct access
+        if (zone.fw_rules is None or len(zone.fw_rules)==0) and (zone.resolv_rules is None or len(zone.resolv_rules)==0):
+            print("No direct network access allowed")
+        else:
+            print("Direct network access:")
+            if zone.fw_rules is not None:
+                for rule in zone.fw_rules:
+                    print(f"{_indent}{_format_rule(rule)}")
+            if zone.resolv_rules is not None:
+                for rule in zone.resolv_rules:
+                    print(f"{_indent}{_format_rule(rule)}")
+
+        # Web access via proxies
+        if len(zone.web_proxies)==0:
+            print("No Web access via proxy configured")
+        else:
+            for proxy in zone.web_proxies:
+                print(f"Web access via proxy '{proxy.descr}' ({proxy.host}:{proxy.port}):")
+                if proxy.fw_rules is not None:
+                    for rule in proxy.fw_rules:
+                        print(f"{_indent}{_format_rule(rule)}")
+                if proxy.resolv_rules is not None:
+                    for rule in proxy.resolv_rules:
+                        print(f"{_indent}{_format_rule(rule)}")
+
+    # runnable VMs
+    vms:list[padsi.config.VirtualMachine]=[]
+    for vmid in zone.get_virtual_machine_ids():
+        vm=zone.get_virtual_machine(vmid)
+        if vm is not None and vm.is_user_allowed(_caller_uid):
+            vms.append(vm)
+    if len(vms)>0:
+        print("Virtual machines to run:")
+        for vm in vms:
+            print(f"  - {vm.id} ({vm.description})")
+    else:
+        print("No virtual machines allowed be be run")
+
+    # clipboard sharing
+    print("Clipboard sharing restrictions")
+    pzones=gconf.get_clipboard_allowed_zones(zone.name)
+    if zone.name not in pzones:
+        pzones.append(zone.name)
+    pzones.sort()
+    print(f"{_indent}can paste data copied from zones: {', '.join(pzones)}")
+    czones:list[str]=[zone.name]
+    for zname in gconf.get_zones_names():
+        if zname!=zone.name:
+            pzones=gconf.get_clipboard_allowed_zones(zname)
+            if zone.name in pzones:
+                czones.append(zname)
+    czones.sort()
+    print(f"{_indent}copied data can be pasted into zones: {', '.join(czones)}")
+
+def print_net_access(conf:padsi.config.Configuration, endpoint:str, text_match:bool, use_json:bool):
+    jdata={}
+    def _add_zone_rule(zone:padsi.config.Zone, rule:FWRule|ResolvRule, proxy:padsi.config.Proxy|None=None):
+        rdata={
+            "action": rule.action,
+            "descr": rule.descr,
+            "endpoint": str(rule.endpoint)
+        }
+        if proxy is not None:
+            rdata["proxy"]=proxy.descr
+        if zone.name in jdata:
+            jdata[zone.name].append(rdata)
+        else:
+            jdata[zone.name]=[rdata]
+
+    for zone in conf.zones:
+        handled:bool=False
+        if text_match:
+            if zone.fw_rules is not None:
+                for rule in zone.fw_rules:
+                    if endpoint in str(rule.endpoint):
+                        if use_json:
+                            _add_zone_rule(zone, rule)
+                        else:
+                            print(f"Zone {zone.name}: {_format_rule(rule)}")
+                        handled=True
+            if zone.resolv_rules is not None:
+                for rule in zone.resolv_rules:
+                    if endpoint in str(rule.endpoint):
+                        if use_json:
+                            _add_zone_rule(zone, rule)
+                        else:
+                            print(f"Zone {zone.name}: {_format_rule(rule)}")
+                        handled=True
+            for proxy in zone.web_proxies:
+                if proxy.fw_rules is not None:
+                    for rule in proxy.fw_rules:
+                        if endpoint in str(rule.endpoint):
+                            if use_json:
+                                _add_zone_rule(zone, rule, proxy)
+                            else:
+                                print(f"Zone {zone.name} (via proxy '{proxy.descr}'): {_format_rule(rule)}")
+                            handled=True
+                if proxy.resolv_rules is not None:
+                    for rule in proxy.resolv_rules:
+                        if endpoint in str(rule.endpoint):
+                            if use_json:
+                                _add_zone_rule(zone, rule, proxy)
+                            else:
+                                print(f"Zone {zone.name} (via proxy '{proxy.descr}'): {_format_rule(rule)}")
+                            handled=True
+        else:
+            ep=Endpoint.from_repr(endpoint)
+            if zone.fw_rules is not None:
+                for rule in zone.fw_rules:
+                    if ep.is_part_of(rule.endpoint):
+                        if use_json:
+                            _add_zone_rule(zone, rule)
+                        else:
+                            print(f"Zone {zone.name}: {_format_rule(rule)}")
+                        handled=True
+            if zone.resolv_rules is not None:
+                for rule in zone.resolv_rules:
+                    if ep.is_part_of(rule.endpoint):
+                        if use_json:
+                            _add_zone_rule(zone, rule)
+                        else:
+                            print(f"Zone {zone.name}: {_format_rule(rule)}")
+                        handled=True
+            for proxy in zone.web_proxies:
+                if proxy.fw_rules is not None:
+                    for rule in proxy.fw_rules:
+                        if ep.is_part_of(rule.endpoint):
+                            if use_json:
+                                _add_zone_rule(zone, rule, proxy)
+                            else:
+                                print(f"Zone {zone.name} (via proxy '{proxy.descr}'): {_format_rule(rule)}")
+                            handled=True
+                if proxy.resolv_rules is not None:
+                    for rule in proxy.resolv_rules:
+                        if ep.is_part_of(rule.endpoint):
+                            if use_json:
+                                _add_zone_rule(zone, rule, proxy)
+                            else:
+                                print(f"Zone {zone.name} (via proxy '{proxy.descr}'): {_format_rule(rule)}")
+                            handled=True
+        if not handled:
+            if use_json:
+                _add_zone_rule(zone, FWRule("deny", "default", Endpoint.from_repr("*")))
+            else:
+                print(f"Zone {zone.name}: {Fore.RED}blocked{Fore.RESET} by default")
+    if use_json:
+        print(f"{json.dumps(jdata, indent=4)}")
+
+def require_padsi_service():
+    if client is None:
+        raise client_exception # pyright: ignore
+
+def prepare_extra_isos(resources:list[str]|None) -> tuple[list[str],str|None]:
+    """For each file name in the specified list:
+    - if the file is an ISO, returns it AS-IS in the 1st part of the tuple
+    - all the other files are groupped in a single ISO file as a temporary file returned as a single file in the 2nd part of the tuple
+
+    Notes:
+    - also include the PADSI agent packages in the ISO containing the 'files' resources
+    - it's up to the caller to remove that ISO file when needed anymore
+    """
+    if resources is None:
+        resources=[]
+    # include PADSI's VM agent packages
+    packages:list[str]=[]
+    packages_dir:str=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))), "packages") # pyright: ignore
+    if os.path.isdir(packages_dir): # pyright: ignore
+        for fname in os.listdir(packages_dir): # pyright: ignore
+            fpath=os.path.join(packages_dir, fname)
+            found=False
+            for respath in resources:
+                if os.path.samefile(respath, fpath): # pyright: ignore
+                    found=True
+                    break
+            if not found:
+                packages.append(fpath)
+
+    # actually prepare the final result
+    res1:list[str]=[]
+    res2:str|None=None
+    files:list[str]=[]
+    try:
+        for fname in resources +  packages:
+            if padsi.misc.is_iso_image(fname):
+                res1.append(fname)
+            else:
+                files.append(fname)
+        if len(files)>0:
+            res2=tempfile.mkstemp(".iso")[1]
+            padsi.misc.generate_iso_image(files, "Resources", res2)
+    except Exception as e:
+        raise Exception(f"Invalid extra list of files: {str(e)}")
+    return (res1, res2)
+
+def _bytes_to_human(nb_bytes:int) -> str:
+    if nb_bytes<1000:
+        return "< 1 Kb"
+    elif nb_bytes<1000_000:
+        size=nb_bytes/1000
+        return f"{size:.2f} Kb"
+    elif nb_bytes<1000_000_000:
+        size=nb_bytes/1000_000
+        return f"{size:.2f} Mb"
+    else:
+        size=nb_bytes/1000_000_000
+        return f"{size:.2f} Gb"
+
+#
+# Main
+#
+try:
+    verbose=args.get("verbose", False)
+    use_json=args.get("json", False)
+    cmde=args["cmde"]
+    match cmde:
+        case "status":
+            require_padsi_service()
+            status=client.get_status() # pyright: ignore
+            if use_json:
+                print(f"{json.dumps(status.raw_data, indent=4)}")
+            else:
+                print_status(status, verbose)
+
+        case "run":
+            if len(args)==0:
+                raise Exception("Invalid arguments")
+            require_padsi_service()
+            data=client.run(args["zone-name"], args["args"]) # pyright: ignore
+            if use_json:
+                print(f"{json.dumps(data, indent=4)}")
+            else:
+                print(f"PID: {data.get('pid', '???')}") # pyright: ignore
+
+        case "net-rules":
+            conf=load_config()
+            print_net_access(conf, args.get("endpoint", ""), bool(args.get("text")), use_json)
+
+        #
+        # VM management
+        #
+        case "vms":
+            # data is displayed from the configuration, not the PADSI service itself
+            print_vms(load_config(), verbose, use_json)
+
+        case "vm-discard":
+            require_padsi_service()
+            versions:list[str]=[]
+            for vm_name in args["vm-name"]:
+                data=client.vm_discard(args["vm-id"], vm_name, force=args["force"]) # pyright: ignore
+                versions+=data
+            if use_json:
+                print(f"{json.dumps(versions, indent=4)}")
+            else:
+                if len(versions)>0:
+                    for vmversion in versions:
+                        print(f"{vmversion}")
+                else:
+                    print("No VM version specified")
+
+        case "vm-clean":
+            require_padsi_service()
+            data=client.vm_clean(args["vm-id"]) # pyright: ignore
+            if use_json:
+                print(f"{json.dumps(data, indent=4)}")
+            else:
+                for vmversion in data:
+                    print(f"{vmversion}")
+
+        case "vm-merge":
+            data=client.vm_merge(args["vm-id"], args.get("vm-name"), args["message"]) # pyright: ignore
+            if use_json:
+                print(f"{json.dumps(data, indent=4)}")
+            else:
+                print(f"{json.dumps(data, indent=4)}") # TODO
+
+        case "vm-install":
+            require_padsi_service()
+            boot_iso=args.get("iso")
+            if boot_iso is None:
+                raise Exception("No bootable ISO specified")
+            if not os.path.isabs(boot_iso):
+                boot_iso=os.path.realpath(boot_iso)
+
+            # extra resources
+            extra_isos=None
+            iso_file=None
+            (extra_isos, iso_file)=prepare_extra_isos(args.get("resource"))
+
+            # actual install
+            data=client.vm_install(args["vm-id"], zone_name=args.get("network_of_zone"), boot_iso=boot_iso, extra_isos=extra_isos, iso_file=iso_file) # pyright: ignore
+            if use_json:
+                print(f"{json.dumps(data, indent=4)}")
+            else:
+                print(f"VM version: {data['vm-version']}") # pyright: ignore
+
+        case "vm-import":
+            require_padsi_service()
+            data=client.vm_import(args["vm-id"], args.get("hdd-file"), args.get("vars-file"), args["message"]) # pyright: ignore
+            if use_json:
+                print(f"{json.dumps(data, indent=4)}")
+            else:
+                print(f"VM version: {data['task']}") # pyright: ignore
+
+        case "vm-save":
+            # find the correct VM version to save
+            conf=load_config()
+            require_padsi_service()
+            client.vm_save(conf, args["vm-id"], args["vm-name"], args["archive-file"], args.get("depend_at")) # pyright: ignore
+
+        case "vm-load":
+            conf=load_config()
+            require_padsi_service()
+            client.vm_load(conf, args["archive-file"], args["vm_id"], args["message"]) # pyright: ignore
+
+        case "vm-update":
+            require_padsi_service()
+            extra_isos=None
+            iso_file=None
+            (extra_isos, iso_file)=prepare_extra_isos(args.get("resource"))
+            data=client.vm_update(args["vm-id"], zone_name=args.get("network_of_zone"), extra_isos=extra_isos, iso_file=iso_file) # pyright: ignore
+            if use_json:
+                print(f"{json.dumps(data, indent=4)}")
+            else:
+                print(f"VM version: {data['vm-version']}") # pyright: ignore
+
+        case "vm-publish":
+            require_padsi_service()
+            data=client.vm_publish(args["vm-id"], args["message"]) # pyright: ignore
+            if use_json:
+                print(f"{json.dumps(data, indent=4)}")
+            else:
+                print(f"{json.dumps(data, indent=4)}") # TODO
+
+        case "vm-status":
+            require_padsi_service()
+            print_vm_status(client.get_vm_status(args["vm-id"], args.get("zone-name"), verbose), verbose, use_json, _indent) # pyright: ignore
+
+        case "vm-start":
+            if len(args)==0:
+                raise Exception("Invalid arguments")
+            require_padsi_service()
+            data=client.vm_start(args["vm-id"], args["zone-name"], args.get("vm-name")) # pyright: ignore
+            if data is not None:
+                if use_json:
+                    print(f"{json.dumps(data, indent=4)}")
+                else:
+                    print(f"{json.dumps(data, indent=4)}") # TODO
+
+        case "vm-display":
+            if len(args)==0:
+                raise Exception("Invalid arguments")
+            require_padsi_service()
+            client.vm_display(args["vm-id"], args["zone-name"], args.get("vm-name")) # pyright: ignore
+
+        case "vm-create-launcher":
+            if len(args)==0:
+                raise Exception("Invalid arguments")
+            require_padsi_service()
+            client.vm_launcher_create(args["vm-id"], args["zone-name"], args.get("vm-name")) # pyright: ignore
+
+        case "vm-delete-launcher":
+            if len(args)==0:
+                raise Exception("Invalid arguments")
+            require_padsi_service()
+            client.vm_launcher_delete(args["vm-id"], args["zone-name"], args.get("vm-name")) # pyright: ignore
+
+
+        #
+        # Zones management
+        #
+        case "zone-info":
+            conf=load_config()
+            zone=conf.get_zone(args.get("zone-name", "unspecified"))
+            print_user_zone_infos(conf, zone, verbose, use_json) # pyright: ignore
+
+        case "net-usage":
+            show_blocked=True
+            show_failed=True
+            show_allowed=False
+            status=args.get("status")
+            if status is not None:
+                if status=="all":
+                    show_allowed=True
+                else:
+                    parts=status.split(",")
+                    for p in parts:
+                        if p not in ("blocked", "failed", "allowed"):
+                            raise Exception(f"Invalid status '{p}'")
+                    show_blocked="blocked" in parts
+                    show_failed="failed" in parts
+                    show_allowed="allowed" in parts
+
+            events_list="dns,firewall,proxy".split(",")
+            events=args.get("events")
+            if events is not None:
+                events_list=events.split(",")
+
+            since=args.get("since")
+            until=args.get("until")
+            as_timeline=args.get("no_timeline", True)
+
+            conf=load_config()
+            obj:Any|None=None # will be None for the 'init namespace'
+            name_arg=args.get("name", "infaillible")
+            if name_arg!="-":
+                try:
+                    obj=conf.get_zone(name_arg)
+                except Exception:
+                    try:
+                        obj=conf.get_admin_ns(name_arg)
+                    except Exception:
+                        raise Exception(f"No zone or admin. NS '{name_arg}'")
+
+            all_collected=[] # in case of JSON output
+            handled=False
+
+            if obj is None:
+                if events_list==["dns"]: # user only asked for this, so return an error
+                    raise Exception("No DNS resolution in the 'init namespace'")
+                if events_list==["proxy"]: # user only asked for this, so return an error
+                    raise Exception("No Web proxy in the 'init namespace'")
+
+            if "dns" in events_list:
+                data=get_dns_usage(show_allowed, show_blocked, obj, since, until)
+                all_collected.append(data)
+                handled=True
+            if "firewall" in events_list:
+                if show_blocked:
+                    data=get_blocked_firewall_usage(obj, since, until)
+                    all_collected.append(data)
+                handled=True
+            if "proxy" in events_list:
+                data=get_proxy_usage(show_allowed, show_failed, show_blocked, obj, since, until)
+                all_collected.append(data)
+                handled=True
+
+            if not handled:
+                raise Exception(f"Invalid events '{events}' specified")
+
+            lgroups=EventsGroup.merge_groups_by_ts(all_collected)
+            if use_json:
+                data=EventsGroup.serialize_list(lgroups, as_timeline)
+                print(f"{json.dumps(data, indent=4)}")
+            else:
+                EventsGroup.print_list(lgroups, as_timeline)
+
+        case "zones":
+            print_zones(load_config(), verbose, use_json)
+
+        case _:
+            raise Exception(f"Unhandled command '{cmde}'")
+except KeyboardInterrupt:
+    pass
+except PadsiServiceNotRunning as e:
+    print(f"Error: {str(e)}", file=sys.stderr)
+    sys.exit(2) # pyright: ignore
+except Exception as e:
+    if False:
+        print("========== DEBUG ==========")
+        raise e
+
+    if not os.isatty(sys.stdout.fileno()):
+        try:
+            import gi
+            gi.require_version("Notify", "0.7")
+            from gi.repository import Notify  # pyright: ignore
+            Notify.init("PADSI")
+            n=Notify.Notification.new("Error", str(e), "dialog-error")
+            n.show()
+        except Exception:
+            print(f"Error: {str(e)}", file=sys.stderr)
+            sys.exit(1) # pyright: ignore
+    else:
+        print(f"Error: {str(e)}", file=sys.stderr)
+        sys.exit(1) # pyright: ignore

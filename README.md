@@ -63,11 +63,11 @@ Adjust the configuration according to the needs, and restart the padsi service e
 
 
 ### Configuration
-In order for PADSI to provide the best security, absolutly respect the following rule for any defined zone: **either allow an almost unconstrained access to the Internet OR (in an exclusive way) grant access to files and network resources which have any kind of value, DON'T mix the two**. This rule protects against lateral movement, credential theft and most ransomwares (it does not though protect against wipers). The reasoning behind this very simple rule is that any malicious piece of software which might be running in a zone MUST NEVER be able to simultaneously communicate with the threat actor's Command and Control infrastructure and have access to files or network resources which have any sort of value.
+In order for PADSI to provide the best security, absolutly respect the following rule for any defined zone: **either allow an almost unconstrained access to the Internet OR (in an exclusive way) grant access to files and network resources which have any kind of value, DON'T mix the two**. This rule protects against lateral movement, credential theft and most ransomwares (it does not though protect against wipers). The reasoning behind this very simple rule is that any malicious piece of software which might be running in a zone MUST NEVER be able to simultaneously communicate with the threat actor's Command and Control infrastructure (including via DNS resolution) and have access to files or network resources which have any sort of value.
 
 Another rule which should be taken into account is: **don't allow access to any authenticated service in a zone if this zone also allows an almost uncontrolled access to the Internet**. This rule protects againts phishing when the user is informed that he/she should NEVER provide any knind of credential in the zone which allows an almost uncontrolled access to the Internet.
 
-
+Finally, in order to protect against data exfiltration and avoid any communications with a threat actor's Command and Control infrastructure, a 3rd rule can be to **prevent uncontrolled DNS resolution**. In the context of unrestricted Internet access, one can rely on external web proxies (which perform DNS resolution themselves) and still prevent any direct DNS resolution.
 
 The configuration is a set of JSON files located in the `/etc/padsi` directory by default, refer to the documentation for all the available settings. Basically:
 - the `padsi.conf` file holds the global configuration:

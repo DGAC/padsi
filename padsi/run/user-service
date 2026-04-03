@@ -1,0 +1,2481 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2025-2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+from __future__ import annotations
+
+import asyncio
+import datetime
+import ipaddress
+import json
+import os
+import pwd
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import syslog
+import uuid
+from dataclasses import dataclass
+
+from aiohttp import web
+from aiohttp.web_response import json_response
+
+import firewall
+import nsbubble
+import padsi.config
+import padsi.misc
+import padsi.namesgenerator as namesgenerator
+import padsi.run
+from padsi.simple_comm import Client, Message, MessageType, ServerProcessDied
+
+_debug = False
+
+
+class ZoneData:
+    """Data associated with a zone which has been started
+    (which may "contain" several ZoneApps)
+    """
+
+    def __init__(
+        self,
+        zone_name: str,
+        service: PadsiUserService,
+        userfiles: padsi.run.ZoneUserFiles | None = None,
+        infra: padsi.run.ZoneInfra | None = None,
+        apps: padsi.run.ZoneApps | padsi.run.ZoneVM| None = None
+    ):
+        self.zone_name = zone_name
+        self.service: PadsiUserService = service
+        self.userfiles: padsi.run.ZoneUserFiles | None = userfiles
+        self.infra: padsi.run.ZoneInfra | None = infra
+        self.apps: list[padsi.run.ZoneApps | padsi.run.ZoneVM] | None = None if apps is None else [apps]
+
+        self._lock = asyncio.Lock()
+
+    async def cleanup(self) -> tuple[bool, list[padsi.run.ZoneVM]]:
+        """Get rid of "dead" elements
+        Return True if the whole zone can be removed (i.e. there are only some ancillary things left)
+        """
+        alive: list[padsi.run.ZoneApps|padsi.run.ZoneVM] = []
+        vmzones_removed: list[padsi.run.ZoneVM] = []
+
+        async with self._lock:
+            if self.apps is None:
+                return (False, [])
+
+            loop = asyncio.get_running_loop()
+            for zone in self.apps:
+                duration = zone.running_duration
+                if duration is not None and duration < 30:
+                    # give the zone enough time to start programs
+                    alive.append(zone)
+                    continue
+                if zone.state != nsbubble.BubbleState.TERMINATED:
+                    has_ui_programs = True
+                    if zone.zone_conf.start_mode != padsi.config.StartMode.ALWAYS:
+                        has_ui_programs = await loop.run_in_executor(None, zone.has_gui_processes)
+
+                    if has_ui_programs:
+                        alive.append(zone)
+                    else:
+                        if _debug:
+                            syslog.syslog(syslog.LOG_DEBUG, f"Zone {zone} has no UI, destroying it")
+                        zone.stop()
+                        if isinstance(zone, padsi.run.ZoneVM):
+                            vmzones_removed.append(zone)
+                else:
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"Zone {zone} is now TERMINATED")
+                    zone.stop()
+                    if isinstance(zone, padsi.run.ZoneVM):
+                        vmzones_removed.append(zone)
+
+        self.apps = alive
+
+        if len(self.apps) == 0:
+            return (True, vmzones_removed)
+
+        if len(vmzones_removed) > 0:
+            await self._update_resolv_rules()
+        return (False, vmzones_removed)
+
+    async def destroy(self):
+        """Destroy all the elements managed by the object"""
+        async with self._lock:
+            # get rid of all the zone instances
+            if self.apps is not None:
+                for zone in self.apps:
+                    try:
+                        zone.stop()
+                    except Exception as e:
+                        syslog.syslog(syslog.LOG_WARNING, f"Could not destroy zone instance {'VM ' if isinstance(zone, padsi.run.ZoneVM) else ''}instance: {str(e)}")
+                self.apps = None
+
+            # get rid of the zone's infrastructure
+            if self.infra is not None:
+                try:
+                    try:
+                        await self.service._call_system_service(
+                            {
+                                "cmde": "infra-cleanup",
+                                "lower-iface": self.infra.lower_iface,
+                                "lower-net": str(self.infra.lower_net),
+                                "traffic-shaper": None if self.infra.zone_conf.traffic_shaper is None else self.infra.zone_conf.traffic_shaper.name,
+                                "run-dir": self.infra.run_dir,
+                                "components": [c.serialize() for c in self.infra.get_components()],
+                                "syslog-prefix": self.infra.syslog_prefix,
+                            }
+                        )
+                    except Exception as e:
+                        syslog.syslog(syslog.LOG_WARNING, f"Could not clean up zone network: {str(e)}")
+
+                    self.infra.stop()
+                except ServerProcessDied:
+                    pass
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_WARNING, f"Could not destroy network zone: {str(e)}")
+                self.infra = None
+
+            # unmount any FUSE mounted filesystem
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"calling 'fuse-cleanup' for conf {self.zone_name=}")
+            await self.service._call_system_service(
+                {"cmde": "fuse-cleanup", "zone-name": self.zone_name}
+            )
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"finished 'fuse-cleanup' for conf {self.zone_name=}")
+
+            # get rid of any userfiles
+            if self.userfiles is not None:
+                try:
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"calling 'zone-userfiles-cleanup' for conf {self.zone_name=}")
+                    await self.service._call_system_service(
+                        {
+                            "cmde": "zone-userfiles-cleanup",
+                            "zone-name": self.zone_name,
+                            "syslog-prefix": self.userfiles.syslog_prefix,
+                        }
+                    )
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"finished 'zone-userfiles-cleanup' for conf {self.zone_name=}")
+                except ServerProcessDied:
+                    pass
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Could not clean up zone's user files: {type(e)} ({str(e)})")
+                self.userfiles = None
+
+            # revoke any PCSCD granted access
+            try:
+                await self.service._call_system_service(
+                    {"cmde": "access-pcscd", "action": "deny"}
+                )
+            except Exception as e:
+                syslog.syslog(syslog.LOG_WARNING, f"Could not revoke access to PCSCD service: {str(e)}")
+
+            # revoke any USB redirection granted access
+            try:
+                await self.service._call_system_service(
+                    {"cmde": "access-usbredir", "action": "deny"}
+                )
+            except Exception as e:
+                syslog.syslog(syslog.LOG_WARNING, f"Could not revoke access to USB VM redirection: {str(e)}")
+
+    async def add_zone(self, zone: padsi.run.ZoneApps|padsi.run.ZoneVM):
+        async with self._lock:
+            if self.apps is None:
+                self.apps = [zone]
+            else:
+                self.apps.append(zone)
+
+        # update the zone's DNS to be able to address virtual machines
+        await self._update_resolv_rules()
+
+    async def _update_resolv_rules(self):
+        """Update the resolv rules from all the zone's DNS servers to resolve VMs"""
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"Updating resolv rules for all VMs in the zone {self.zone_name}")
+        async with self._lock:
+            # compute set of rules
+            new_rules: list[padsi.config.ResolvRule] = []
+            if self.apps is None:
+                vmzones = []
+            else:
+                vmzones: list[padsi.run.ZoneVM] = [
+                    izone
+                    for izone in self.apps
+                    if isinstance(izone, padsi.run.ZoneVM)
+                ]
+            for izone in vmzones:
+                if izone.ip_address is not None:
+                    try:
+                        resolv: list[str] = [f"A/60/{izone.ip_address.ip}"]
+                        new_rules.append(
+                            padsi.config.ResolvRule(
+                                "allow",
+                                f"Allow access to VM {izone.vm_version}/{izone.vm_version.nickname}",
+                                firewall.Endpoint.from_repr(",".join(izone.domain_names)),
+                                resolv,
+                            )
+                        )
+                    except Exception as e:
+                        syslog.syslog(syslog.LOG_ERR, f"Failed to take VM {izone.vm_version} into account for DN resolution: {str(e)}")
+
+            # update rules where applicable
+            for izone in vmzones:
+                try:
+                    izone.add_dns_resolution_rules("VM", new_rules)
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Failed to update resolv. rules for zone {izone}: {str(e)}")
+            if self.infra is not None:
+                try:
+                    self.infra.add_dns_resolution_rules("VM", new_rules)
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Failed to update resolv. rules for network of zone: {str(e)}")
+
+    def get_namespaces_colors(self) -> dict:
+        """Get the namespaces to color information"""
+        data = {}
+        if self.apps is not None:
+            for zone in self.apps:
+                if zone.zone_conf.color is not None:
+                    key = f"{zone.mnt_namespace}{zone.net_namespace}"
+                    data[key] = zone.zone_conf.color
+        if self.infra is not None and self.infra.zone_conf.color is not None:
+            key = f"{self.infra.mnt_namespace}{self.infra.net_namespace}"
+            data[key] = self.infra.zone_conf.color
+        return data
+
+    def get_namespaces_prefixes(self) -> dict:
+        """Get the namespaces to XDG prefix (like "padsi.dev")"""
+        data = {}
+        if self.apps is not None:
+            for zone in self.apps:
+                key = f"{zone.mnt_namespace}{zone.net_namespace}"
+                data[key] = zone.zone_conf.name
+        if self.infra is not None:
+            key = f"{self.infra.mnt_namespace}{self.infra.net_namespace}"
+            data[key] = self.infra.zone_conf.name
+        return data
+
+    def get_zone_vm(self, vm_version: padsi.run.VMVersion) -> padsi.run.ZoneVM | None:
+        if self.apps is None:
+            return None
+        for izone in self.apps:
+            if isinstance(izone, padsi.run.ZoneVM) and izone.vm_version == vm_version:
+                return izone
+        return None
+
+
+@dataclass
+class Task:
+    """Represents a (long) task running"""
+    id: str
+    descr: str
+    asyncio_task: asyncio.Task | None = None  # to keep the asyncio.Task alive
+
+
+def _strip_vm_id(vm_id: str) -> str:
+    if vm_id is None:
+        raise Exception("virtual machine not specified")
+    vm_id = vm_id.strip()
+    if vm_id == "":
+        raise Exception("invalid empty VM ID")
+    return vm_id
+
+
+class PadsiUserService:
+    """Implementation of the user service's REST API"""
+
+    def __init__(self, user_session_dir: str, gconf: padsi.config.Configuration):
+        self._gconf = gconf
+        self._uid = os.geteuid()
+        self._gid = os.getegid()
+        self._user_dirs_created=asyncio.Event()
+        self._user_session_dir = user_session_dir
+        self._running_tasks: dict[str, Task] = {}  # list of "long running" tasks
+
+        self._zones: dict[str, ZoneData] = {}  # all information about zones
+        self._vm_versions: dict[str, padsi.run.VMManagementFiles] = {} # all VM version IDs being run at any given time, and their associated VMManagementFiles
+
+        self._start_initial_zones_task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
+
+        self._client = Client()
+        self._client_task: asyncio.Task | None = None
+
+        self._web_app = web.Application()
+        self._web_app.add_routes(
+            [
+                web.get("/status", self._api_status),
+                web.post("/procs", self._api_procs),
+                web.get("/vm", self._api_vm_status),
+                web.post("/vm", self._api_vm_post),
+                web.put("/vm", self._api_vm_modify),
+                web.delete("/vm", self._api_vm_delete),
+                web.post("/vm-display", self._api_vm_display),
+                web.post("/vm-launcher", self._api_launcher_post),
+                web.delete("/vm-launcher", self._api_launcher_delete),
+                web.get("/web-redir", self._api_web_redir_get),
+                web.post("/web-redir", self._api_web_redir_post),
+                web.get("/usb-device", self._api_usb_device_get),
+                web.post("/usb-device", self._api_usb_device_post),
+            ]
+        )
+
+        self._signal_handlers_set: bool = False
+        self._kill_event: asyncio.Event = asyncio.Event()
+        self._kill_handled = False
+
+    async def _httpd_start(self):
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"starting http server on socket {self.socket_file}")
+        socket_file = self.socket_file
+
+        # remove socket if any
+        try:
+            os.unlink(socket_file)
+        except OSError as e:
+            if os.path.exists(socket_file):
+                raise e
+
+        # create new socket file
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(socket_file)
+
+        runner = web.AppRunner(self._web_app, access_log=None)
+        await runner.setup()
+        site = web.SockSite(runner, sock)
+        await site.start()
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"Service for user {self._uid}:{self._gid} is now listening on {socket_file}")
+
+    async def run(self):
+        if not self._signal_handlers_set:
+            # catch TERM and INT signals to properly shut down
+            loop = asyncio.get_event_loop()
+            for s in [signal.SIGTERM, signal.SIGINT]:
+                loop.add_signal_handler(s, lambda s=s: asyncio.create_task(self._killed()))
+            self._signal_handlers_set = True
+
+        # wait for the necessary files to be present
+        while True:
+            all_present = True
+            for fpath in (
+                os.path.join(self._user_session_dir, "wayland-0"),
+                os.path.join(self._user_session_dir, "pipewire-0"),
+                "/tmp/.X11-unix",
+            ):
+                if not os.path.exists(fpath):
+                    syslog.syslog(syslog.LOG_INFO, f"File '{fpath}' is not yet present, waiting a bit")
+                    all_present = False
+                    break
+            if all_present:
+                break
+            await asyncio.sleep(0.5)
+
+        # finish startup
+        await self._httpd_start()
+        self._client_task = asyncio.create_task(self._client.run())
+
+        # create all the necessary directories for the user
+        await self._call_system_service({"cmde": "create-user-dirs"})
+        self._user_dirs_created.set()
+
+        # start necessary zones
+        self._start_initial_zones_task = asyncio.create_task(self._start_initial_zones())
+        self._start_initial_zones_task.add_done_callback(self._start_initial_zones_finished)
+
+        # start background zones cleanuer
+        self._monitor_task = asyncio.create_task(self._zones_background_cleaner())
+
+        # let it run
+        await self._kill_event.wait()
+        syslog.syslog(syslog.LOG_INFO, "PadsiUserService run() terminated")
+
+    async def _killed(self):
+        async with self._lock:
+            if self._kill_handled:
+                return
+
+            self._kill_handled = True
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, "PadsiUserService: killed by signal, starting shutdown")
+
+            # clear the VMManagementFiles objects
+            for _, vmm in self._vm_versions.items():
+                await vmm.cleanup()
+            self._vm_versions = {}
+
+            # destroy all the ZoneData objects
+            try:
+                for zdata in self._zones.values():
+                    await zdata.destroy()
+                self._zones = {}
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Zone data destroy error: {str(e)}")
+
+            # clear user's runtime dir
+            try:
+                await self._call_system_service({"cmde": "clean-user-runtime-dir"})
+            except ServerProcessDied:
+                pass
+            except Exception as e:
+                syslog.syslog(syslog.LOG_WARNING, f"Failed to clean user's runtime directory: {str(e)}")
+
+            # stop the client task
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, "Stopping simple comm' client with system service")
+            if self._client_task is not None:
+                self._client_task.cancel()
+                self._client_task = None
+
+            # Unix socket cleanup
+            try:
+                os.remove(self.socket_file)
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                syslog.syslog(syslog.LOG_WARNING, f"Failed to clean PadsiUserService's socket_file '{self.socket_file}': {str(e)}")
+
+        try:
+            await self._update_zone_infos_files()
+        except Exception as e:
+            syslog.syslog(syslog.LOG_WARNING, f"Failed to update PadsiUserService's zone_infos_files: {str(e)}")
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, "PadsiUserService: finished shutdown")
+        self._kill_event.set()
+
+    async def _call_system_service(self, data):
+        """Send a request to the system service"""
+        request = Message(MessageType.REQUEST, data)
+        syslog.syslog(syslog.LOG_INFO, f"_call_system_service({data})")
+        reply = await self._client.call_server(request)
+        return None if reply is None else reply.data
+
+    @property
+    def socket_file(self) -> str:
+        return os.path.join(self._user_session_dir, "padsi-userv.sock")
+
+    @property
+    def run_dir(self) -> str:
+        """Where runtime files associated to the user are located"""
+        return asyncio.run(self.get_run_dir())
+
+    async def get_run_dir(self) -> str:
+        await self._user_dirs_created.wait()
+        return self._gconf.get_user_run_dir(self._uid)
+
+    async def get_home_dir(self) -> str:
+        await self._user_dirs_created.wait()
+        return self._gconf.get_zone_user_home_dir(self._uid)
+
+    async def _update_zone_infos_files(self):
+        colors_data = {}
+        prefixes_data = {}
+        async with self._lock:
+            for zone_name, zdata in self._zones.items():
+                zone = self._gconf.get_zone(zone_name)
+                if zone != self._gconf.xdg_default_zone:
+                    colors_data.update(zdata.get_namespaces_colors())
+                prefixes_data.update(zdata.get_namespaces_prefixes())
+
+        try:
+            await self._call_system_service(
+                {
+                    "cmde": "update-zones-infos-files",
+                    "colors": colors_data,
+                    "prefixes": prefixes_data,
+                }
+            )
+        except ServerProcessDied:
+            pass
+        except Exception as e:
+            syslog.syslog(syslog.LOG_WARNING, f"Failed to update colors files: {str(e)}")
+
+    def _start_initial_zones_finished(self, _task: asyncio.Task):
+        # clean up reference when task finished
+        self._start_initial_zones_task = None
+
+    async def _get_zone_infra_and_userfiles(self, zone_conf:padsi.config.Zone) -> tuple[padsi.run.ZoneInfra|None, padsi.run.ZoneUserFiles]:
+        tasks=(
+            self._get_zone_infra(zone_conf),
+            self._get_zone_userfiles(zone_conf)
+        )
+        res=await asyncio.gather(*tasks, return_exceptions=True)
+        if isinstance(res[0], BaseException):
+            msg=f"Error while starting zone '{zone_conf.name}' infra: {str(res[0])}"
+            syslog.syslog(syslog.LOG_ERR, msg)
+            raise Exception(msg)
+        if isinstance(res[1], BaseException):
+            msg=f"Error while starting zone '{zone_conf.name}' userfiles: {str(res[1])}"
+            syslog.syslog(syslog.LOG_ERR, msg)
+            raise Exception(msg)
+        return (res[0], res[1])
+
+    async def _start_initial_zones(self):
+        """Start the zones or zone's infra which have to be started right from the beginning"""
+        for zone_name in self._gconf.get_zones_names():
+            zone_conf = self._gconf.get_zone(zone_name)
+            if zone_conf.start_mode == padsi.config.StartMode.ALWAYS:
+                try:
+                    await self._start_zone(zone_conf)
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Error while starting zone '{zone_name}': {str(e)}")
+            elif zone_conf.start_mode == padsi.config.StartMode.ALWAYS_INFRA:
+                try:
+                    await self._get_zone_infra_and_userfiles(zone_conf)
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Error while starting zone '{zone_name}' infra: {str(e)}")
+        syslog.syslog(syslog.LOG_INFO, "Finished starting always present zones")
+
+    async def _zones_background_cleaner(self):
+        """Regularly remove any zone which has terminated"""
+        while True:
+            await asyncio.sleep(5)
+            try:
+                removed_vmversions: list[padsi.run.VMVersion] = []
+                vmversion_to_discard: list[padsi.run.VMVersion] = []
+
+                async with self._lock:
+                    to_destroy: list[str] = []
+                    for zone_name, zdata in self._zones.items():
+                        (to_remove, vmzones_removed) = await zdata.cleanup()
+                        for zone in vmzones_removed:
+                            removed_vmversions.append(zone.vm_version)
+                            if _debug:
+                                syslog.syslog(syslog.LOG_DEBUG, f"VM conf's read-only={zone.vm_conf.read_only} for VM version {zone.vm_version}")
+                            if zone.vm_conf.read_only and zone.vm_version.version_type == padsi.run.vm.VMVersionType.SNAP:
+                                # discard the VMVersion
+                                syslog.syslog(syslog.LOG_INFO, f"Discarding VM version '{zone.vm_version}' (marked as read-only)")
+                                vmversion_to_discard.append(zone.vm_version)
+                        if to_remove:
+                            to_destroy.append(zone_name)
+
+                    for zone_name in to_destroy:
+                        zdata = self._zones[zone_name]
+                        await zdata.destroy()
+                        del self._zones[zone_name]
+
+                # unmark VM version as used and remove any associated VM management files
+                for vmv in removed_vmversions:
+                    await self.unmark_vmversion(vmv)
+
+                # discard VM version's files if necessary (needs to be done _after_ the previous step because it requires the
+                # VM version's files to still be present)
+                for vmv in vmversion_to_discard:
+                    try:
+                        vmv.discard_files()
+                    except Exception as e:
+                        syslog.syslog(syslog.LOG_WARNING, f"Could not discard VMVersion {vmv}: {str(e)}")
+            except asyncio.CancelledError:
+                syslog.syslog(syslog.LOG_ERR, "Zones' background cleaner cancelled")
+                return
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Zones' background cleaner, error: {str(e)}")
+
+    #
+    # VM versions usage tracking
+    #
+    async def mark_vmversion(self, vmversion: padsi.run.VMVersion, vmm: padsi.run.VMManagementFiles):
+        async with self._lock:
+            self._vm_versions[vmversion.id] = vmm
+
+    async def unmark_vmversion(self, vmversion: padsi.run.VMVersion):
+        """Mark a VM version as not being used anymore by a running VM"""
+        async with self._lock:
+            if vmversion.id in self._vm_versions:
+                vmm = self._vm_versions.get(vmversion.id)
+                if vmm is not None:
+                    await vmm.cleanup()
+                del self._vm_versions[vmversion.id]
+            else:
+                syslog.syslog(syslog.LOG_WARNING, f"unmark_vmversion(): VM Version {vmversion.id} not found among running VMs")
+
+    def _is_vmversion_used(self, vmversion: padsi.run.VMVersion) -> bool:
+        """Tell if a VM version is used by a running VM"""
+        return vmversion.id in self._vm_versions
+
+    #
+    # Tasks management
+    #
+    async def _mark_task_started(
+        self, task: Task, ensure_unique: bool = False, unique_descr: str | None = None
+    ) -> bool:
+        """Tell that a task has been started. This allows the server to perform some tasks sequentially or only once.
+        Returns True if this function had to wait for a task with the same ID to terminate before returning, i.e. a task with the
+        same ID was alredy being executed
+        """
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"_mark_task_started({task.id})")
+        async with self._lock:
+            if task.id not in self._running_tasks:
+                self._running_tasks[task.id] = task
+                syslog.syslog(syslog.LOG_INFO, f"Started running task '{task.id}' without waiting")
+                return False
+
+        if ensure_unique:
+            if unique_descr:
+                raise Exception(unique_descr)
+            raise Exception(f"Task '{task.descr}' is already running")
+
+        # wait for the task to be finished
+        start_ts=datetime.datetime.now(datetime.timezone.utc).timestamp()
+        while True:
+            await asyncio.sleep(0.2)
+            async with self._lock:
+                if task.id not in self._running_tasks:
+                    self._running_tasks[task.id] = task
+                    now_ts=datetime.datetime.now(datetime.timezone.utc).timestamp()
+                    syslog.syslog(syslog.LOG_INFO, f"Started running task '{task.id}' after waiting {now_ts-start_ts} sec")
+                    return True
+
+    async def _mark_task_finished(self, task: Task):
+        """Tell that the task is finished"""
+        if _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"_mark_task_finished({task.id})")
+        async with self._lock:
+            if task.id not in self._running_tasks:
+                return
+
+            syslog.syslog(syslog.LOG_INFO, f"Finished running task '{task.id}'")
+            if task.asyncio_task is not None:
+                # get the status of the associated asyncio task
+                try:
+                    res = task.asyncio_task.result()
+                    if res is not None:
+                        # should not happen since tasks are not expected to return anything
+                        syslog.syslog(syslog.LOG_ERR, f"Task '{task.id}' returned unused data: {str(res)}")
+                except asyncio.InvalidStateError:
+                    # can happen if task is calling for itself
+                    if task.asyncio_task != asyncio.current_task():
+                        syslog.syslog(syslog.LOG_ERR, f"_mark_task_finished called for task {task.id} which is still running")
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Task '{task.id}' failed: {str(e)}")
+            del self._running_tasks[task.id]
+
+    #
+    # misc.
+    #
+    async def _get_zone_userfiles(
+        self, zone_conf: padsi.config.Zone
+    ) -> padsi.run.ZoneUserFiles:
+        """Create or get an existing padsi.run.ZoneUserFiles object for the specified zone"""
+        # check already existing
+        zdata = self._zones.get(zone_conf.name)
+        if zdata and zdata.userfiles is not None:
+            return zdata.userfiles
+
+        # check request already being handled
+        task = Task(f"zfiles:{zone_conf.name}", f"Creating user files for zone {zone_conf.name}")
+
+        try:
+            waited = await self._mark_task_started(task)
+            if waited:
+                zdata = self._zones.get(zone_conf.name)
+                if zdata and zdata.userfiles is not None:
+                    return zdata.userfiles
+
+            # create a new ZoneUserFiles
+            await self._prepare_zone_dirs(zone_conf)
+            zuf = padsi.run.ZoneUserFiles(zone_conf, self._uid, await self.get_run_dir())
+
+            await self._call_system_service(
+                {
+                    "cmde": "zone-userfiles-setup",
+                    "zone-name": zone_conf.name,
+                    "syslog-prefix": zuf.syslog_prefix,
+                }
+            )
+
+            # create/update the associated ZoneData
+            async with self._lock:
+                zdata = self._zones.get(zone_conf.name)
+                if zdata is None:
+                    self._zones[zone_conf.name] = ZoneData(zone_conf.name, self, userfiles=zuf)
+                else:
+                    zdata.userfiles = zuf
+            return zuf
+        finally:
+            await self._mark_task_finished(task)
+
+    async def _get_zone_infra(self, zone_conf: padsi.config.Zone) -> padsi.run.ZoneInfra | None:
+        """Create or get an existing padsi.run.ZoneInfra object for the specified zone
+        Returns None if the zone does not have any networking capabilities defined
+        """
+        if not zone_conf.network_enabled and not self._gconf.use_wayland_proxies:
+            return None
+
+        # check already existing
+        zdata = self._zones.get(zone_conf.name)
+        if zdata and zdata.infra is not None:
+            return zdata.infra
+
+        # preparations
+        lower_net = self._gconf.get_unused_low_network()
+
+        # check request already being handled
+        task = Task(f"zone infra:{zone_conf.name}", f"Creating infra for zone {zone_conf.name}")
+
+        try:
+            waited = await self._mark_task_started(task)
+            if waited:
+                zdata = self._zones.get(zone_conf.name)
+                if zdata and zdata.infra is not None:
+                    return zdata.infra
+
+            # create a new ZoneInfra
+            await self._prepare_zone_dirs(zone_conf)
+            logs_dir = self._gconf.get_zone_logs_dir(zone_conf.name, self._uid)
+            zinfra = padsi.run.ZoneInfra(self._gconf, zone_conf, self._uid,
+                await self.get_run_dir(), logs_dir, lower_net)
+            if zone_conf.traffic_shaper is not None:
+                zinfra.net_mtu=zone_conf.traffic_shaper.net_mtu
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"{zinfra.syslog_prefix}: ZoneInfra's MTU: {zinfra.net_mtu}")
+            zinfra.start()
+
+            if zone_conf.network_enabled:
+                await self._call_system_service(
+                    {
+                        "cmde": "infra-setup",
+                        "lower-iface": zinfra.lower_iface,
+                        "lower-net": str(zinfra.lower_net),
+                        "traffic-shaper": None if zone_conf.traffic_shaper is None else zone_conf.traffic_shaper.name,
+                        "syslog-prefix": zinfra.syslog_prefix,
+                        "net-namespace-raw": zinfra.net_namespace_raw,
+                        "init-pid": zinfra.bubble_init_pid,
+                        "bridge-name": zinfra.bridge_name,
+                        "bridge-ip": str(zinfra.bridge_ip),
+                        "mtu": zinfra.net_mtu
+                    }
+                )
+
+            # create/update the associated ZoneData
+            async with self._lock:
+                zdata = self._zones.get(zone_conf.name)
+                if zdata is None:
+                    self._zones[zone_conf.name] = ZoneData(zone_conf.name, self, infra=zinfra)
+                else:
+                    zdata.infra = zinfra
+            return zinfra
+        finally:
+            await self._mark_task_finished(task)
+
+    #
+    # zone instances management
+    #
+    async def _get_existing_non_vm_zone(self, zone_conf: padsi.config.Zone) -> padsi.run.ZoneApps | None:
+        async with self._lock:
+            zdata = self._zones.get(zone_conf.name)
+            if zdata is not None and zdata.apps is not None:
+                for izone in zdata.apps:
+                    if not isinstance(izone, padsi.run.ZoneVM):
+                        return izone
+        return None
+
+    async def _start_zone(self, zone_conf: padsi.config.Zone) -> padsi.run.ZoneApps:
+        """Create or reuse a zone and starts it if necessary"""
+        can_reuse_apps = True # to be modified when we introduce stronger isolation mechanisms for some programs
+
+        if can_reuse_apps:
+            # reuse an existing ZoneApps if possible
+            izone = await self._get_existing_non_vm_zone(zone_conf)
+            if izone is not None:
+                return izone
+            task = Task(f"zone:{zone_conf.name}", f"Creating zone {zone_conf.name}")
+        else:
+            task = Task(f"zone:{zone_conf.name}-{str(uuid.uuid4())}", f"Creating zone {zone_conf.name} (unique)")
+
+        try:
+            waited = await self._mark_task_started(task)
+            if waited:
+                if not can_reuse_apps:
+                    raise Exception("CODEBUG: ISOLATE zones creation already exists?")
+                izone = await self._get_existing_non_vm_zone(zone_conf)
+                if izone is not None:
+                    return izone
+
+            # set up the zone's infra
+            (zinfra, zuf)=await self._get_zone_infra_and_userfiles(zone_conf)
+
+            # granting PCSCD access if needed
+            if zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11).enabled:
+                syslog.syslog(syslog.LOG_INFO, "ASKING to allow PCSCD usage")
+                try:
+                    await self._call_system_service({"cmde": "access-pcscd", "action": "grant"})
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Failed to grant PCSCD usage: {str(e)}")
+
+            # create a new zone
+            syslog.syslog(syslog.LOG_INFO,f"Starting zone '{zone_conf.name}' as UID {os.getuid()}, EUID {os.geteuid()}")
+            logs_dir = self._gconf.get_zone_logs_dir(zone_conf.name, self._uid)
+            zone_ip_addr = zinfra.get_next_unused_ip() if zinfra is not None else None
+            izone = padsi.run.ZoneApps(
+                self._gconf,
+                zone_conf,
+                self._uid,
+                await self.get_run_dir(),
+                logs_dir,
+                zinfra,
+                zuf,
+                zone_ip_addr,
+                zone_service_socket=zinfra.zone_service_socket if zinfra is not None else None,
+                extra_root_cert=zinfra.get_extra_trusted_ca() if zinfra is not None else None,
+                extra_env=zinfra.http_proxy_env if zinfra is not None else None,
+            )
+            if zinfra is not None:
+                izone.net_mtu=zinfra.net_mtu
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"{izone.syslog_prefix}: ZoneApps's MTU: {izone.net_mtu}")
+            izone.start()
+            if zinfra is not None:
+                await self._call_system_service(
+                    {
+                        "cmde": "infra-attach-zone-apps",
+                        "zone-netns": izone.net_namespace_raw,
+                        "zone-init-pid": izone.bubble_init_pid,
+                        "zone-addr": str(zone_ip_addr),
+                        "infra-netns": zinfra.net_namespace_raw,
+                        "infra-init-pid": zinfra.bubble_init_pid,
+                        "infra-bridge-ip": str(zinfra.bridge_ip),
+                        "infra-bridge-name": zinfra.bridge_name,
+                        "syslog-prefix": zinfra.syslog_prefix,
+                        "mtu": zinfra.net_mtu
+                    }
+                )
+
+            # update the internal state
+            async with self._lock:
+                zdata = self._zones.get(zone_conf.name)
+                if zdata is None:
+                    self._zones[zone_conf.name] = ZoneData(zone_conf.name, self, apps=izone)
+                else:
+                    await zdata.add_zone(izone)
+
+            # update zone's color file for the PADSI UI
+            await self._update_zone_infos_files()
+            return izone
+        finally:
+            await self._mark_task_finished(task)
+
+    async def _start_vm_zone(
+        self,
+        zone_conf: padsi.config.Zone,
+        vm_conf: padsi.config.VirtualMachine,
+        vm_version: padsi.run.VMVersion,
+        boot_iso: str | None = None,
+        extra_isos: list[str] | None = None,
+        iso_file: str | None = None,
+    ) -> padsi.run.ZoneVM:
+        """Create a zone for the VM and start it"""
+        if self._is_vmversion_used(vm_version):
+            raise Exception(f"VM version '{vm_version}' is already used by a running VM")
+
+        syslog.syslog(syslog.LOG_INFO, f"Starting VM zone '{zone_conf.name}' as UID {os.getuid()}, EUID {os.geteuid()}")
+
+        # set up the zone's infrastruture
+        (zinfra, zuf)=await self._get_zone_infra_and_userfiles(zone_conf)
+        run_dir = await self.get_run_dir()
+        vmm = padsi.run.VMManagementFiles(zone_conf, vm_conf, vm_version, zuf.zone_home_dir, self._uid,
+            self._gid, run_dir, self._client)
+        await self.mark_vmversion(vm_version, vmm)
+
+        # check request already being handled
+        task = Task(f"vmzone:{zone_conf.name}:{vm_conf.id}",
+            f"Creating VM zone for VM {vm_conf.id} in zone {zone_conf.name}")
+
+        try:
+            await self._mark_task_started(task)
+            await vmm.setup()
+
+            # granting USB redirection access if needed
+            if True:
+                syslog.syslog(syslog.LOG_INFO, "ASKING to allow USB redirection")
+                try:
+                    await self._call_system_service(
+                        {"cmde": "access-usbredir", "action": "grant"}
+                    )
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Failed to grant USB redirection: {str(e)}")
+
+            # always create a new zone
+            await self._prepare_zone_dirs(zone_conf, vm_conf=vm_conf)
+            ipiface: ipaddress.IPv4Interface | None = zinfra.get_next_unused_ip() if zinfra is not None else None
+
+            all_extra_isos: list[str] | None = None
+            if extra_isos is not None:
+                all_extra_isos = extra_isos.copy()
+                if iso_file is not None:
+                    all_extra_isos.append(iso_file)
+            elif iso_file is not None:
+                all_extra_isos = [iso_file]
+
+            logs_dir = self._gconf.get_zone_logs_dir(zone_conf.name, self._uid)
+            vmzone = padsi.run.ZoneVM(
+                self._gconf,
+                zone_conf,
+                self._uid,
+                run_dir,
+                logs_dir,
+                zinfra,
+                zuf,
+                vm_conf,
+                vm_version,
+                vmm,
+                ipiface,
+                self._gid,
+                boot_iso,
+                all_extra_isos,
+                zinfra.net_mtu if zinfra is not None else None
+            )
+            vmzone.start()
+
+            # update the internal state
+            async with self._lock:
+                zdata = self._zones.get(zone_conf.name)
+                if zdata is None:
+                    self._zones[zone_conf.name] = ZoneData(zone_conf.name, self, apps=vmzone)
+                else:
+                    await zdata.add_zone(vmzone)
+
+            # update zone's color file for the PADSI UI
+            zdata = self._zones.get(zone_conf.name)
+            if zdata is None:
+                raise Exception(f"CODEBUG: zdata should not be None for zone '{zone_conf.name}'")
+            if vm_conf.usage == padsi.config.VMUsage.RUN:
+                await self._update_zone_infos_files()
+
+            # start the VM
+            vmzone.start_vm()
+
+            # remove ISO file which was created on the fly to pack files together
+            if iso_file is not None:
+                os.remove(iso_file)
+
+            if zinfra is not None:
+                await self._call_system_service(
+                    {
+                        "cmde": "infra-attach-zone-apps",
+                        "zone-netns": vmzone.net_namespace_raw,
+                        "zone-init-pid": vmzone.bubble_init_pid,
+                        "zone-addr": str(ipiface),
+                        "infra-netns": zinfra.net_namespace_raw,
+                        "infra-init-pid": zinfra.bubble_init_pid,
+                        "infra-bridge-ip": str(zinfra.bridge_ip),
+                        "infra-bridge-name": zinfra.bridge_name,
+                        "syslog-prefix": zinfra.syslog_prefix,
+                        "mtu": zinfra.net_mtu
+                    }
+                )
+
+            await self._call_system_service(
+                {
+                    "cmde": "vm-zone-setup",
+                    "net-namespace-raw": vmzone.net_namespace_raw,
+                    "init-pid": vmzone.bubble_init_pid,
+                    "log-denied-spec": str(vmzone.firewall_log_spec),
+                }
+            )
+
+            return vmzone
+        except Exception as e:
+            await self.unmark_vmversion(vm_version)
+            raise e
+        finally:
+            await self._mark_task_finished(task)
+
+    async def _prepare_zone_dirs(self, zone_conf: padsi.config.Zone, vm_conf: padsi.config.VirtualMachine | None = None):
+        """Ensure all the rutime directories used later by the zone are created with the right user permissions"""
+        try:
+            await self._call_system_service(
+                {
+                    "cmde": "zone-apps-prepare-dirs",
+                    "zone-name": zone_conf.name,
+                    "vm-dir": vm_conf.directory if vm_conf is not None else None,
+                }
+            )
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Failed to call zone-apps-prepare-dirs: {str(e)}")
+            raise e
+
+    #
+    # REST API
+    #
+    def _check_privileges_on_vm_version(
+        self, vm_id: str, vmversion: padsi.run.VMVersion
+    ):
+        """Check the user has a right to manipulate a VM version"""
+        match vmversion.version_type:
+            case padsi.run.VMVersionType.BASE:
+                self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.UPDATE])
+            case padsi.run.VMVersionType.USER:
+                self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.RUN])
+            case padsi.run.VMVersionType.SNAP:
+                self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.RUN])
+            case _:
+                raise Exception(f"CODEBUG: Unhandled VMVersionType {vmversion.version_type}")  # pyright: ignore
+
+    def _get_vm_conf_for_usage(self, vm_id: str, usages: list[padsi.config.VMUsage] | None) -> padsi.config.VirtualMachine:
+        """Get the VM configuration for the specified usage(s), and check is user is actually allowed that usage"""
+        for usage in padsi.config.VMUsage if usages is None else usages:
+            vm_conf = self._gconf.get_vm(usage, vm_id)
+            if vm_conf is None:
+                raise Exception(f"Unknown VM '{vm_id}' or permission denied for user {self._uid}")
+            if vm_conf.is_user_allowed(self._uid):
+                return vm_conf
+        if usages is None:
+            raise Exception(f"Unknown VM '{vm_id}' or permission denied for user {self._uid}")
+        raise Exception(f"Unknown VM '{vm_id}' or permission denied for user {self._uid} to {', '.join([u.value for u in usages])}")
+
+    def _get_zone_infos(self, izone: padsi.run.ZoneApps | padsi.run.ZoneVM, is_privileged: bool) -> dict:
+        ready = izone.ready
+        info = {
+            "type": "VM" if isinstance(izone, padsi.run.ZoneVM) else "APPS",
+            "ready": ready,
+        }
+        if is_privileged:
+            info["run-dir"] = izone.run_dir
+            info["home-dir"] = izone.home_dir
+            info["init-pid"] = izone.bubble_init_pid
+            if ready:
+                try:
+                    info["environment-variables"] = izone.env_variables
+                    info["processes"] = izone.processes
+                    info["ns"] = (
+                        f"{izone.mnt_namespace}{izone.net_namespace}"
+                        if izone.mnt_namespace and izone.net_namespace
+                        else None
+                    )
+                except Exception as e:
+                    info["error"] = str(e)
+        return info
+
+    def _get_dbus_router_infos(self, router: padsi.run.ZoneDBusRouter, is_privileged: bool) -> dict:
+        ready = router.ready
+        info = {
+            "type": "DBUS-ROUTER",
+            "ready": ready,
+        }
+        if is_privileged:
+            info["run-dir"] = router.run_dir
+            info["init-pid"] = router.bubble_init_pid
+            if ready:
+                try:
+                    info["ns"] = (
+                        f"{router.mnt_namespace}{router.net_namespace}"
+                        if router.mnt_namespace and router.net_namespace
+                        else None
+                    )
+                except Exception as e:
+                    info["error"] = str(e)
+        return info
+
+    async def _api_status(self, request: web.Request):
+        try:
+            # determine if request comes from UID 0, and add extra information if that's the case
+            is_privileged: bool = False
+            transport = request.transport
+            if transport is not None:
+                sock = transport.get_extra_info("socket")
+                if sock is not None:
+                    peercreds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+                    (_pid, uid, _gid) = struct.unpack("3i", peercreds)
+                    is_privileged = uid == 0
+
+            async with self._lock:
+                data = {
+                    "uid": self._uid,
+                    "zones-available": self._gconf.get_zones_names(),
+                    "running-tasks": [
+                        t.descr for (_, t) in self._running_tasks.items()
+                    ],
+                }
+                if is_privileged:
+                    data["run-dir"] = await self.get_run_dir()
+                    data["home-dir"] = await self.get_home_dir()
+                    data["socket-file"] = self.socket_file
+
+            # programs in zones
+            loop = asyncio.get_event_loop()
+            active_zones = {}
+            async with self._lock:
+                for zone_name, zdata in self._zones.items():
+                    stdata = []
+                    zone_conf: padsi.config.Zone = self._gconf.get_zone(zone_name)
+
+                    if is_privileged and zdata.infra is not None:
+                        stdata.append(
+                            {
+                                "type": "INFRA",
+                                "ready": zdata.infra.ready,
+                                "init-pid": zdata.infra.bubble_init_pid,
+                                "lower-iface": zdata.infra.lower_iface,
+                                "bridge-name": zdata.infra.bridge_name,
+                                "bridge-ip": str(zdata.infra.bridge_ip),
+                                "lower-net": str(zdata.infra.lower_net),
+                                "enforce-mode": (
+                                    "log-only"
+                                    if zone_conf.get_option(
+                                        padsi.config.ZoneOptionType.NET_LOG_ONLY
+                                    ).enabled
+                                    else "block"
+                                ),
+                            }
+                        )
+
+                    if is_privileged and zdata.userfiles is not None:
+                        stdata.append({
+                                "type": "USERFILES",
+                                "home-dir": zdata.userfiles.zone_home_dir,
+                            })
+
+                    if zdata.apps is not None:
+                        for zone in zdata.apps:
+                            info = self._get_zone_infos(zone, is_privileged)
+                            options: dict = {}
+                            options["screen-sharing"] = True if zone_conf.get_option(padsi.config.ZoneOptionType.SCREEN_SHARE).enabled else False
+                            options["desktop-notifications"] = True if zone_conf.get_option(padsi.config.ZoneOptionType.DESKTOP_NOTIFICATIONS).enabled else False
+                            options["X11"] = True if zone_conf.get_option(padsi.config.ZoneOptionType.X11).enabled else False
+                            info["options"] = options
+                            if isinstance(zone, padsi.run.ZoneVM):
+                                info["vm-conf"] = None if zone.vm_conf is None else zone.vm_conf.id
+                                info["vm-snap"] = None if zone.vm_conf is None else str(zone.vm_version)
+                                info["vm-nickname"] = None if zone.vm_conf is None else zone.vm_version.nickname
+                            info["has-gui-processes"] = await loop.run_in_executor(None, zone.has_gui_processes)
+                            stdata.append(info)
+
+                            dbus_router = zone.dbus_router if isinstance(zone, padsi.run.ZoneApps) else None
+                            if dbus_router is not None:
+                                info = self._get_dbus_router_infos(dbus_router, is_privileged)
+                                stdata.append(info)
+
+                    active_zones[zone_name] = stdata
+                data["active-zones"] = active_zones
+
+            return json_response(data)
+        except Exception as e:
+            return web.Response(text=f"Could not get status ({str(e)})", status=400)
+
+    def _set_zone_autostop(self, izone: padsi.run.ZoneApps):
+        # defining zones' auto-stopping is impossible: some programs like gnome-terminal will spawn some other
+        # processes (gnome-terminal-server) and terminate, and some will use DBUS activation (and presumably also terminate)
+        # and there is no currently way to determine which process to monitor to declare the zone can be stopped
+        # when the process terminate (the normal desktop is not meant for that).
+        # For that reason, it is disabled at the zones' level, but zones where no UI program are present will be destroyed by the
+        # monitoring task (see self._monitor_task)
+        if izone.api is not None:
+            izone.api.auto_stop = False  # we want True in the end!
+
+    async def _api_procs(self, request: web.Request):
+        """Start a new process (flatpak or otherwise) in the specified zone"""
+        try:
+            data = await request.json()
+            zone_name = data.get("zone")
+            if not zone_name:
+                raise Exception("zone not specified")
+            zone_conf = self._gconf.get_zone(zone_name)
+            args = data.get("args")
+            if not args:
+                raise Exception("process to run is not specified")
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            if len(args) == 0:
+                raise Exception("Invalid empty arguments")
+            progname = args[0].strip()
+            if progname == "":
+                raise Exception("Invalid empty program name")
+
+            izone = await self._start_zone(zone_conf)
+            loop = asyncio.get_running_loop()
+            pid = await loop.run_in_executor(None, izone.api.start_process, args) # pyright: ignore
+            self._set_zone_autostop(izone)
+            return json_response({"pid": pid})
+        except Exception as e:
+            return web.Response(text=f"Could not start the program: ({str(e)})", status=400)
+
+    async def _api_vm_status(self, request: web.Request):
+        try:
+            vm_id = request.rel_url.query.get("vm-id")
+            if vm_id is None:
+                raise Exception
+            verbose = request.rel_url.query.get("verbose") == "True"
+            zone_name = request.rel_url.query.get("zone")
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            vm: padsi.config.VirtualMachine | None = None
+            for usage in padsi.config.VMUsage:
+                vmu = self._gconf.get_vm(usage, vm_id)
+                if vmu is not None and vmu.is_user_allowed(self._uid):
+                    vm = vmu
+                    break
+            if vm is None:
+                raise Exception(f"Unknown virtual machine '{vm_id}' or not enough privileges")
+            if zone_name is not None:
+                zone=self._gconf.get_zone(zone_name)
+                if not zone.get_virtual_machine(vm.id):
+                    raise Exception(f"Virtual machine '{vm_id}' can't be used in zone")
+
+            if not os.path.exists(vm.directory):
+                result = {
+                    "vm-id": vm_id,
+                    "directory-exists": False,
+                    "base-vm-versions": [],
+                    "self-vm-versions": {
+                        "base-staged": None,
+                        "user-versions": [],
+                        "snapshot-versions": [],
+                    },
+                    "other-vm-versions": {},
+                    "commitable-vm-versions": [],
+                    "obsolete-vm-versions": [],
+                    "unused-files": [],
+                    "vm-versions-infos": {},
+                }
+            else:
+                result = await self._call_system_service(
+                    {
+                        "cmde": "vm-files-analyse",
+                        "vm-id": vm.id,
+                        "zone": zone_name,
+                        "verbose": verbose,
+                    }
+                )
+            return json_response(result)
+
+        except Exception as e:
+            return web.Response(text=f"Could not get the VM's status: ({str(e)})", status=400)
+
+    def _vm_show_viewer(self, zone_name: str, vm_version: padsi.run.VMVersion):
+        """Force the VM viewer to be displayed"""
+        zdata = self._zones.get(zone_name)
+        if zdata is None:
+            raise Exception(f"No ZoneData object for zone '{zone_name}'")
+        izone = zdata.get_zone_vm(vm_version)
+        if izone is None:
+            raise Exception("VM is not running")
+        if izone.vm_viewer_host_pid is not None:
+            os.kill(izone.vm_viewer_host_pid, signal.SIGUSR1)
+
+    async def _import_vm_version(
+        self,
+        task: Task,
+        vm_conf: padsi.config.VirtualMachine,
+        hdd_file: str,
+        vars_file: str,
+        message: str | None = None,
+    ):
+        try:
+            syslog.syslog(syslog.LOG_INFO, f"Importing VM version with task {task.id}")
+            loop = asyncio.get_running_loop()
+            vm_files = await loop.run_in_executor(None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid)
+            await loop.run_in_executor(None, vm_files.stage_imported_files, hdd_file, vars_file, message)
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Failed to import VM version with task {task.id}: {str(e)}")
+        finally:
+            await self._mark_task_finished(task)
+
+    async def _vm_post_import(self, vm_id: str, hdd_file: str, vars_file: str, message: str):
+        # check request already being handled
+        task = Task(
+            f"vm_post:{vm_id}:import",
+            f"Importing VM '{vm_id}' from '{hdd_file}' and '{vars_file}' (msg: '{message}')",
+        )
+        try:
+            await self._mark_task_started(task, ensure_unique=True, unique_descr="VM is already being imported")
+
+            vm_conf = self._gconf.get_vm(padsi.config.VMUsage.INSTALL, vm_id)
+            if vm_conf is None:
+                raise Exception(f"Unknown VM {vm_id}")
+            vm_conf.check_user_allowed(self._uid)
+
+            # ensure VM's common directories are created
+            await self._call_system_service(
+                {
+                    "cmde": "vm-create-common-dirs",
+                    "vm-id": vm_id,
+                    "usage": padsi.config.VMUsage.INSTALL.value,
+                }
+            )
+
+            # create the staging directory for the user
+            await self._call_system_service(
+                {
+                    "cmde": "vm-create-stage-dir",
+                    "vm-id": vm_conf.id,
+                    "usage": padsi.config.VMUsage.INSTALL.value,
+                }
+            )
+
+            # prepare VM version which will be returned
+            vm_files = padsi.run.VMFiles(vm_conf.directory, self._uid, self._gid, analyse=False)
+            vm_version = padsi.run.VMVersion(padsi.run.VMVersionType.BASE, vm_files.staging_directory)
+
+            # create an asyncio task to import the VM
+            task.asyncio_task = asyncio.create_task(self._import_vm_version(task, vm_conf, hdd_file, vars_file, message))
+
+            return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": task.descr})
+        except Exception as e:
+            await self._mark_task_finished(task)
+            raise e
+
+    async def _load_vm_versions(
+        self,
+        task: Task,
+        vm_conf: padsi.config.VirtualMachine,
+        extract_id: str,
+        message: str | None,
+    ):
+        """Actual asyncio task to load VM versions"""
+        try:
+            # identify all the VM versions which will be loaded and the dependencies if any
+            await self._call_system_service(
+                {
+                    "cmde": "vm-load",
+                    "vm-id": vm_conf.id,
+                    "extract-id": extract_id,
+                    "message": message,
+                }
+            )
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Failed to load VM versions with task {task.id}: {str(e)}")
+        finally:
+            await self._mark_task_finished(task)
+
+    async def _vm_post_load(self, vm_id: str, extract_id: str, message: str):
+        task = Task(
+            f"vm_post:{vm_id}:load:{extract_id}",
+            f"Loading VM '{vm_id}' with extract ID '{extract_id}' (msg: '{message}')",
+        )
+        try:
+            await self._mark_task_started(task, ensure_unique=True, unique_descr="VM is already being loaded")
+
+            vm_conf = self._gconf.get_vm(padsi.config.VMUsage.INSTALL, vm_id)
+            if vm_conf is None:
+                raise Exception(f"Unknown VM {vm_id}")
+            vm_conf.check_user_allowed(self._uid)
+
+            # ensure VM's common directories are created
+            await self._call_system_service(
+                {
+                    "cmde": "vm-create-common-dirs",
+                    "vm-id": vm_id,
+                    "usage": padsi.config.VMUsage.INSTALL.value,
+                }
+            )
+
+            # create the staging directory for the user
+            await self._call_system_service(
+                {
+                    "cmde": "vm-create-stage-dir",
+                    "vm-id": vm_conf.id,
+                    "usage": padsi.config.VMUsage.INSTALL.value,
+                }
+            )
+
+            # analyse and use the available files
+            vm_files = padsi.run.VMFiles(vm_conf.directory, self._uid, self._gid, analyse=False)
+            extract_dir = os.path.join(vm_files.staging_directory, extract_id)
+            if not os.path.isdir(extract_dir):
+                raise Exception(f"Resources directory '{extract_dir}' does not exist")
+
+            # analyse directory where the extracted files are to determine a target VM version and return
+            # it at this stage to the user before actually loading VM versions
+            try:
+                nb_vm_versions = 0
+                # VM versions to load
+                for fname in os.listdir(extract_dir):
+                    if fname.startswith("vm-version-"):
+                        nb_vm_versions += 1
+                # manifest
+                with open(os.path.join(extract_dir, "manifest.json"), "r") as fd:
+                    manifest = json.load(fd)
+                    if manifest.get("dependency-size") is not None:
+                        nb_vm_versions += 1
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Invalid saved VM versions' files structure or contents: {str(e)}")
+                raise Exception("Invalid saved VM versions' files structure or contents")
+
+            # prepare VM version which will be returned
+            vm_version = padsi.run.VMVersion(
+                padsi.run.VMVersionType.BASE,
+                vm_files.directory,
+                vm_files.next_base_version_number + nb_vm_versions - 1,
+            )
+
+            # create an asyncio task to import the VM
+            task.asyncio_task = asyncio.create_task(self._load_vm_versions(task, vm_conf, extract_id, message))
+
+            return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": task.descr})
+        except Exception as e:
+            await self._mark_task_finished(task)
+            raise e
+
+    async def _vm_run_usage(self, vm_id: str, nickname: str | None, zone_name: str):
+        task: Task | None = None
+        try:
+            # determine VM and zone configs to use
+            if not zone_name:
+                raise Exception("zone not specified")
+            zone_conf: padsi.config.Zone = self._gconf.get_zone(zone_name)
+            vm_conf: padsi.config.VirtualMachine | None = zone_conf.get_virtual_machine(vm_id)
+            if vm_conf is None:
+                raise Exception(f"No declared virtual machine with '{vm_id}' ID (for the '{padsi.config.VMUsage.RUN.value}' usage) in the '{zone_name}' zone")
+
+            # check user has the permission
+            vm_conf.check_user_allowed(self._uid)
+
+            # compute VMFiles for the specified VM configuration
+            if not os.path.exists(vm_conf.directory):
+                raise Exception("Could not find any base version to use")
+            loop = asyncio.get_event_loop()
+            vm_files = await loop.run_in_executor(None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid)
+
+            # generate a nickname if none provided, might be useful later
+            if nickname is None:
+                while True:
+                    nname = namesgenerator.get_random_name()
+                    if vm_files.get_named_snapshot_version(nname) is None:
+                        # nickname not used!
+                        break
+            elif not padsi.run.VMVersion.nickname_is_valid(nickname):
+                raise Exception(f"Invalid nickname '{nickname}'")
+            else:
+                nname = nickname
+
+            # check request already being handled
+            task = Task(
+                f"vm_post:{vm_id}:{padsi.config.VMUsage.RUN.value}:{nname}",
+                f"Starting VM '{vm_id}' with nickname '{nname}' ('{padsi.config.VMUsage.RUN}' usage)",
+            )
+            await self._mark_task_started(task, ensure_unique=True, unique_descr=f"VM {vm_id} '{nname}' is already being started")
+
+            # ensure VM versions' common directories are created
+            await self._call_system_service(
+                {
+                    "cmde": "vm-create-common-dirs",
+                    "vm-id": vm_id,
+                    "usage": padsi.config.VMUsage.RUN.value,
+                }
+            )
+
+            # comply with network requirements
+            if zone_conf.network_spec is not None:
+                (compat, failed)=vm_conf.is_network_compatible(zone_conf.network_spec, zone_conf.web_proxies)
+                if not compat:
+                    raise Exception(f"VM network requirements '{failed}' not compatible with zone's networking restrictions")
+            await self._prepare_zone_dirs(zone_conf, vm_conf=vm_conf)
+
+            # determine actual VM version to use
+            vm_version: padsi.run.VMVersion | None = vm_files.get_named_snapshot_version(nname)
+            if vm_version is not None and vm_version.state==padsi.run.VMState.DISCARDED:
+                # get rid of that VM version
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"Getting rid of snapshot {vm_version}")
+                await self._call_system_service(
+                    {
+                        "cmde": "vm-discard-files",
+                        "vmversion-uid": vm_version.uid,
+                        "vm-id": vm_id,
+                        "vtype": vm_version.version_type,  # pyright: ignore
+                        "vnum": vm_version.version_number,
+                        "staged": vm_version.staged,
+                        "nickname": nname,
+                        "force": False,
+                    }
+                )
+                vm_files = await loop.run_in_executor(None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid)
+                vm_version=None
+
+            if vm_version is None:
+                try:
+                    (userid, _vtype, vnum, staged, pnname) = padsi.run.parse_vm_version(nname)
+                    if vnum is not None:
+                        vm_version = vm_files.get_snapshot_version(vnum)
+                        if vm_version is None:
+                            raise Exception
+                        # check we have a correct VM version
+                        if (userid is not None and userid != self._uid) or staged \
+                            or vm_version.version_type != padsi.run.VMVersionType.SNAP:
+                            raise Exception()
+                        if pnname is not None:
+                            nname = pnname
+                except Exception:
+                    syslog.syslog(syslog.LOG_WARNING, f"Can't use VM version '{vm_version}'")
+
+            if vm_version is not None:
+                # check if VMVersion is already in use
+                if self._is_vmversion_used(vm_version):
+                    # show the VM viewer
+                    self._vm_show_viewer(zone_name, vm_version)
+                    await self._mark_task_finished(task)
+                    return json_response(None)
+                else:
+                    task.asyncio_task = asyncio.create_task(self._vm_run(task, zone_conf, vm_conf, vm_version))
+                    return json_response(
+                        {
+                            "vm-id": vm_id,
+                            "vm-version": str(vm_version),
+                            "vm-nickname": vm_version.nickname,
+                            "customization": False,
+                            "task": task.descr,
+                        }
+                    )
+            else:
+                # start a new snapshot based on the last user VMVersion (creating one if none exist)
+                user_vmversion = vm_files.last_user_version
+                if user_vmversion is None or vm_files.last_user_version_is_obsolete():
+                    # instanciate a USER VM version, customization will be done elsewhere
+                    if vm_files.last_base_version is None:
+                        raise Exception("No BASE VM version available")
+                    user_vmversion = await loop.run_in_executor(
+                        None,
+                        vm_files.create_user_version,
+                        zone_name,
+                        vm_files.last_base_version,
+                    )
+                    # customize the new user VM version
+                    task.asyncio_task = asyncio.create_task(self._vm_customize_and_run(
+                            task,
+                            zone_conf,
+                            vm_conf,
+                            vm_version=user_vmversion,
+                            vm_files=vm_files,
+                            nickname=nname,
+                        )
+                    )
+                    return json_response(
+                        {
+                            "vm-id": vm_id,
+                            "vm-version": str(user_vmversion),
+                            "vm-nickname": nname,
+                            "customization": True,
+                            "task": task.descr,
+                        }
+                    )
+                else:
+                    vm_version = vm_files.create_snaphot_version(zone_conf.name, user_vmversion)
+                    vm_version.nickname = nname
+                    task.asyncio_task = asyncio.create_task(self._vm_run(task, zone_conf, vm_conf, vm_version))
+                    return json_response(
+                        {
+                            "vm-id": vm_id,
+                            "vm-version": str(vm_version),
+                            "vm-nickname": vm_version.nickname,
+                            "customization": False,
+                            "task": task.descr,
+                        }
+                    )
+        except Exception as e:
+            if task is not None:
+                await self._mark_task_finished(task)
+            raise e
+
+    async def _vm_install_or_update_usage(
+        self,
+        usage: padsi.config.VMUsage,
+        vm_id: str,
+        nickname: str | None,
+        zone_name: str,
+        boot_iso: str | None,
+        extra_isos: list[str] | None,
+        iso_file: str | None,
+    ):
+        task: Task | None = None
+        try:
+            # determine VM and zone configs to use
+            zone_conf: padsi.config.Zone | None = None
+            if zone_name:  # may be unspecified by the user, will be determined automatically
+                zone_conf = self._gconf.get_zone(zone_name)
+            vm_conf: padsi.config.VirtualMachine | None = self._gconf.get_vm(usage, vm_id)
+            if vm_conf is None:
+                raise Exception(f"No declared virtual machine with '{vm_id}' ID (for the '{usage.value}' usage)")
+
+            # check user has the permission
+            vm_conf.check_user_allowed(self._uid)
+
+            # ensure VM versions' common directories are created
+            await self._call_system_service(
+                {"cmde": "vm-create-common-dirs", "vm-id": vm_id, "usage": usage.value}
+            )
+
+            # compute VMFiles for the specified VM configuration
+            loop = asyncio.get_event_loop()
+            vm_files = await loop.run_in_executor(
+                None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid
+            )
+
+            # check request already being handled
+            task = Task(
+                f"vm_post:{vm_id}:{usage.value}",
+                f"Starting VM '{vm_id}' ('{usage.value}' usage)",
+            )
+            await self._mark_task_started(task, ensure_unique=True, unique_descr=f"VM {vm_id} is already being {usage.value}")
+
+            # comply with network requirements
+            if zone_conf is not None and zone_conf.network_spec is not None:
+                (compat, failed)=vm_conf.is_network_compatible(zone_conf.network_spec, zone_conf.web_proxies)
+                if not compat:
+                    raise Exception(f"VM network requirements '{failed}' not compatible with zone's networking restrictions")
+                else:
+                    syslog.syslog(syslog.LOG_ERR, f"VM '{vm_id}' ('{usage.value}') will use zone '{zone_name}' networking as specified")
+            else:
+                for zone_name in self._gconf.get_zones_names():
+                    z = self._gconf.get_zone(zone_name)
+                    if z.network_spec is not None:
+                        (compat, failed)=vm_conf.is_network_compatible(z.network_spec, z.web_proxies)
+                        if compat:
+                            zone_conf = z
+                            syslog.syslog(syslog.LOG_ERR,f"VM '{vm_id}' ('{usage.value}') will use zone '{zone_name}' networking as compatible",)
+                            break
+                if zone_conf is None:
+                    raise Exception("Could not identify a zone which networking restrictions are compatible with VM network requirements for installation")
+            await self._prepare_zone_dirs(zone_conf, vm_conf=vm_conf)
+
+            # staging directory preparation if necessary
+            await self._call_system_service(
+                {
+                    "cmde": "vm-create-stage-dir",
+                    "vm-id": vm_conf.id,
+                    "usage": vm_conf.usage.value,
+                }
+            )
+
+            # determine actual VM version to use
+            vm_version: padsi.run.VMVersion | None = None
+            if vm_conf.usage == padsi.config.VMUsage.INSTALL:
+                # we are installing a new base VM
+                vm_version = await loop.run_in_executor(
+                    None,
+                    vm_files.stage_from_scratch,
+                    padsi.run.VMVersionType.BASE,
+                    vm_conf.specs.disk_size_mb,
+                    vm_conf.specs.secure_boot,
+                    self._uid,
+                    self._gid,
+                )
+            elif vm_conf.usage == padsi.config.VMUsage.UPDATE:
+                # we are updating a base VM
+                base_mvversion = vm_files.last_base_version
+                if base_mvversion is None:
+                    raise Exception("VM has no base version to update")
+                vm_version = await loop.run_in_executor(
+                    None,
+                    vm_files.stage_existing_version,
+                    base_mvversion,
+                    self._uid,
+                    self._gid,
+                )
+
+            assert vm_version is not None
+            if self._is_vmversion_used(vm_version):
+                # show the VM viewer
+                self._vm_show_viewer(zone_name, vm_version)
+                await self._mark_task_finished(task)
+                return json_response(None)
+
+            # actually run the VM
+            task.asyncio_task = asyncio.create_task(
+                self._vm_run(
+                    task, zone_conf, vm_conf, vm_version, boot_iso, extra_isos, iso_file
+                )
+            )
+
+            return json_response(
+                {
+                    "vm-id": vm_id,
+                    "vm-version": str(vm_version),
+                    "vm-nickname": vm_version.nickname,
+                    "customization": False,
+                    "task": task.descr,
+                }
+            )
+        except Exception as e:
+            if task is not None:
+                await self._mark_task_finished(task)
+            raise e
+
+    async def _api_vm_post(self, request: web.Request):
+        """Start a new VM in the specified zone, for any usage (install, update or run), actually always instanciate a new ZoneApps, OR
+        import a VM from its HDD and VARS files
+        """
+        try:
+            data = await request.json()
+            vm_id = _strip_vm_id(data.get("vm-id"))
+            nickname = data.get("nickname")
+
+            message = data.get("message")
+            match data.get("action"):
+                case "create-staged-dir":
+                    # create the staging directory for the user
+                    await self._call_system_service(
+                        {
+                            "cmde": "vm-create-stage-dir",
+                            "vm-id": vm_id,
+                            "usage": padsi.config.VMUsage.UPDATE.value,  # require UPDATE privileges
+                        }
+                    )
+                    return json_response(None)
+                case "import" | "load":
+                    usage = None
+                    hdd_file = data.get("hdd-file")
+                    vars_file = data.get("vars-file")
+                    extract_id = data.get("extract-id")
+                case _:
+                    usage = padsi.config.VMUsage(data.get("action"))
+                    if nickname is not None and usage != padsi.config.VMUsage.RUN:
+                        raise Exception(f"VM usage {usage.value} does not allow specifying a nickname")
+
+            zone_name = data.get("zone")
+            if zone_name is not None and not isinstance(zone_name, str):
+                raise Exception("Invalid zone name")
+            boot_iso = data.get("boot-iso")
+            if boot_iso is not None and not isinstance(boot_iso, str):
+                raise Exception("Invalid boot ISO file name")
+            extra_isos = data.get("extra-isos")
+            if extra_isos is not None:
+                if isinstance(extra_isos, list):
+                    for path in extra_isos:
+                        if (
+                            path is None
+                            or not isinstance(path, str)
+                            or not padsi.misc.is_iso_image(path)
+                        ):
+                            raise Exception(f"Invalid path {path} extra ISOs argument")
+                else:
+                    raise Exception("Invalid extra ISOs argument")
+            iso_file = data.get("extra-iso-file")
+            if iso_file is not None and (not isinstance(iso_file, str) or not padsi.misc.is_iso_image(iso_file)):
+                raise Exception("Invalid extra ISO file argument")
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            if usage is None:
+                if data.get("action") == "import":
+                    return await self._vm_post_import(vm_id, hdd_file, vars_file, message) # pyright: ignore
+                else:
+                    return await self._vm_post_load(vm_id, extract_id, message) # pyright: ignore
+            elif usage == padsi.config.VMUsage.RUN:
+                return await self._vm_run_usage(vm_id, nickname, zone_name)
+            elif usage in (padsi.config.VMUsage.INSTALL, padsi.config.VMUsage.UPDATE):
+                return await self._vm_install_or_update_usage(usage, vm_id, nickname, zone_name, boot_iso, extra_isos, iso_file)
+            else:
+                raise Exception(f"Unnown '{usage}' VM usage")
+        except Exception as e:
+            if usage is None:
+                if data.get("action") == "import":
+                    return web.Response(text=f"Could not import the VM: {str(e)}", status=400)
+                else:
+                    return web.Response(text=f"Could not load the VM: {str(e)}", status=400)
+            return web.Response(text=f"Could not start the VM: {str(e)}", status=400)
+
+    async def _api_vm_display(self, request: web.Request):
+        """Display the VM viewer for a running VM"""
+        try:
+            data = await request.json()
+            vm_id = _strip_vm_id(data.get("vm-id"))
+            nickname = data.get("nickname")
+            zone_name = data.get("zone")
+            if zone_name is not None and not isinstance(zone_name, str):
+                raise Exception("Invalid zone name")
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            # determine VM and zone configs to use
+            if not zone_name:
+                raise Exception("zone not specified")
+            if not nickname:
+                raise Exception("No VM name specified")
+
+            zone_conf: padsi.config.Zone = self._gconf.get_zone(zone_name)
+            vm_conf: padsi.config.VirtualMachine | None = zone_conf.get_virtual_machine(vm_id)
+            if vm_conf is None:
+                raise Exception(f"No declared virtual machine with '{vm_id}' ID (for the '{padsi.config.VMUsage.RUN.value}' usage) in the '{zone_name}' zone")
+
+            # check user has the permission
+            vm_conf.check_user_allowed(self._uid)
+
+            # comput VMFiles for the specified VM configuration
+            loop = asyncio.get_event_loop()
+            vm_files = await loop.run_in_executor(
+                None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid
+            )
+
+            # determine actual VM version to use
+            vm_version: padsi.run.VMVersion | None = vm_files.get_named_snapshot_version(nickname)
+            if vm_version is None:
+                try:
+                    (userid, vtype, vnum, staged, nickname) = padsi.run.parse_vm_version(nickname)
+                    if vnum is not None:
+                        vm_version = vm_files.get_snapshot_version(vnum)
+                except Exception:
+                    raise Exception(f"Invalid nickname '{nickname}'")
+
+            if vm_version is not None and self._is_vmversion_used(vm_version):
+                # show the VM viewer
+                self._vm_show_viewer(zone_name, vm_version)
+                return json_response(None)
+            raise Exception("VM does not exist or is not running")
+        except Exception as e:
+            return web.Response(text=f"Could not display the VM: ({str(e)})", status=400)
+
+    async def _vm_run(
+        self,
+        task: Task,
+        zone_conf: padsi.config.Zone,
+        vm_conf: padsi.config.VirtualMachine,
+        vm_version: padsi.run.VMVersion,
+        boot_iso: str | None = None,
+        extra_isos: list[str] | None = None,
+        iso_file: str | None = None,
+    ):
+        try:
+            syslog.syslog(syslog.LOG_INFO, f"Actual VM starting with task {task.id}")
+            izone = await self._start_vm_zone(zone_conf, vm_conf, vm_version,
+                boot_iso=boot_iso, extra_isos=extra_isos, iso_file=iso_file)
+            if izone.api is not None:
+                izone.api.auto_stop = True
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Failed to start VM with task {task.id}: {str(e)}")
+        finally:
+            await self._mark_task_finished(task)
+
+    async def _vm_customize_and_run(
+        self,
+        task: Task,
+        zone_conf: padsi.config.Zone,
+        vm_conf: padsi.config.VirtualMachine,
+        vm_version: padsi.run.VMVersion,
+        vm_files: padsi.run.VMFiles,
+        nickname: str,
+    ):
+        """User VM customization before actually running the VM"""
+        cust_task = Task(
+            f"vm_customize:{vm_conf.id}:{vm_version}",
+            f"Customizing VM '{vm_conf.id}' for user {self._uid}",
+        )
+        cust_failed: bool = False
+        try:
+            waited = await self._mark_task_started(cust_task)
+            if not waited:
+                syslog.syslog(syslog.LOG_INFO, f"Starting USER VM customization ({vm_version})")
+                izone = await self._start_vm_zone(zone_conf, vm_conf, vm_version)
+                izone.api.auto_stop = True # pyright: ignore
+                loop = asyncio.get_running_loop()
+                while True:
+                    await asyncio.sleep(0.5)
+                    state = await loop.run_in_executor(None, izone.bubble.get_state) # pyright: ignore
+                    if state != nsbubble.BubbleState.RUNNING:
+                        syslog.syslog(syslog.LOG_INFO,
+                            f"Finised USER VM customization with state {vm_version.state}")
+                        if vm_version.state != padsi.run.VMState.STOPPED:
+                            raise Exception("USER VM customization has been aborted")
+                        break
+        except Exception as e:
+            cust_failed = True
+            syslog.syslog(syslog.LOG_ERR, f"Failed to customize VM with task {task.id}: {str(e)}")
+        finally:
+            await self._mark_task_finished(cust_task)
+
+        if cust_failed:
+            await self._mark_task_finished(task)
+        else:
+            final_vmversion = vm_files.create_snaphot_version(zone_conf.name, vm_version)
+            final_vmversion.nickname = nickname
+            await self._vm_run(task, zone_conf, vm_conf, final_vmversion)
+
+    async def _vm_publish_or_commit(
+        self,
+        task: Task,
+        commit: bool,
+        vm_id: str,
+        userid: int,
+        vtype: padsi.run.VMVersionType,
+        vnum: int | None,
+        message: str,
+    ):
+        """Actually publish or commit a VM version"""
+        try:
+            match vtype:
+                case padsi.run.VMVersionType.BASE | None:
+                    vm_conf = self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.UPDATE])
+                case padsi.run.VMVersionType.USER:
+                    vm_conf = self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.RUN])
+                case padsi.run.VMVersionType.SNAP:
+                    vm_conf = self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.RUN])
+                case _:
+                    raise Exception(f"CODEBUG: unknown VMVersionType {vtype}")
+
+            result = await self._call_system_service(
+                {"cmde": "vm-files-list", "vm-dir": vm_conf.directory}
+            )
+            if result is None:
+                raise Exception("CODEBUG: 'vm-files-list' returned None")
+            avmf: padsi.run.AdminVMFiles = padsi.run.AdminVMFiles.deserialize(result)
+
+            if commit:
+                # commit
+                if vnum is None:
+                    raise Exception("CODEBUG: vnum is None")
+                vmversion = avmf.get_version(vtype, vnum, userid)
+                if vmversion is None:
+                    raise Exception("VM version not found")
+                if vmversion not in avmf.committable_versions:
+                    raise Exception("VM version cannot be merged yet")
+                self._check_privileges_on_vm_version(vm_id, vmversion)
+
+                vmf = avmf.get_vm_files(userid)
+                if vmf is None:
+                    raise Exception(f"CODEBUG: no VMFiles for user {userid}")
+                match vtype:
+                    case padsi.run.VMVersionType.BASE:
+                        await self._call_system_service(
+                            {
+                                "cmde": "vm-commit",
+                                "vmversion-uid": userid,
+                                "vm-id": vm_id,
+                                "vm-version": vmversion.id,
+                                "message": message,
+                            }
+                        )
+                    case padsi.run.VMVersionType.USER:
+                        loop = asyncio.get_running_loop()
+                        await loop.run_in_executor(
+                            None,
+                            vmf.commit_version,
+                            vmversion,
+                            None,
+                            None,
+                            None,
+                            message,
+                        )
+                    case padsi.run.VMVersionType.SNAP:
+                        new_user_vmversion = padsi.run.VMVersion(
+                            padsi.run.VMVersionType.USER,
+                            vmversion.directory,
+                            vmf.next_user_version_number,
+                        )
+                        loop = asyncio.get_running_loop()
+                        await loop.run_in_executor(
+                            None,
+                            vmf.commit_version,
+                            vmversion,
+                            new_user_vmversion,
+                            None,
+                            None,
+                            message,
+                        )
+                        vnum = new_user_vmversion.version_number
+            else:
+                # publish
+                vmversion = avmf.get_staged(padsi.run.VMVersionType.BASE, userid)
+                if vmversion is not None:
+                    vmf = avmf.get_vm_files(userid)
+                    if vmf is None:
+                        raise Exception(f"CODEBUG: VMFiles is None for user {userid}")
+                    self._check_privileges_on_vm_version(vm_id, vmversion)
+
+                    await self._call_system_service(
+                        {
+                            "cmde": "vm-publish",
+                            "vmversion-uid": userid,
+                            "vm-id": vm_id,
+                            "vm-version": vmversion.id,
+                            "message": message,
+                        }
+                    )
+                else:
+                    raise Exception("No staging version for this VM")
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Task {task.id} failed: {str(e)}")
+        finally:
+            await self._mark_task_finished(task)
+
+    async def _api_vm_modify(self, request: web.Request):
+        """Publish a staged VM version or merge a VM version with its backing VM version
+        User must be allowed to either install of update the VM
+        """
+        try:
+            data = await request.json()
+            action = data.get("action")
+            if action not in ("publish", "commit"):
+                raise Exception(f"Unknown action '{action}'")
+            commit = action == "commit"
+            message = data.get("message")
+
+            vm_id = _strip_vm_id(data.get("vm-id"))
+            (userid, vtype, vnum, _staged, _nickname) = (
+                (None, None, None, None, None)
+                if not commit
+                else padsi.run.parse_vm_version(data.get("vm-version"))
+            )
+            if userid is None:
+                userid = self._uid
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        # check request already being handled
+        usermsg = f"for user {userid}"
+        if commit:
+            task = Task(
+                f"vm_modify:{vm_id}:{commit}:{userid}",
+                f"Merging VM '{vm_id}' {vtype.value}.{vnum} {usermsg}",  # pyright: ignore
+            )
+        else:
+            task = Task(
+                f"vm_modify:{vm_id}:{commit}:{userid}",
+                f"Publishing VM '{vm_id}' {usermsg}",
+            )
+
+        try:
+            if await self._mark_task_started(task, ensure_unique=True):
+                # was already done by another task
+                return json_response({"task": None})
+
+            task.asyncio_task = asyncio.create_task(
+                self._vm_publish_or_commit(task, commit, vm_id, userid, vtype, vnum, message)  # pyright: ignore
+            )
+            return json_response({"task": task.descr})
+        except Exception as e:
+            await self._mark_task_finished(task)
+            return web.Response(text=str(e), status=400)
+
+    async def _api_vm_delete(self, request: web.Request):
+        """Delete the resources associated to a VM version, or all the obsolete VM versions"""
+        try:
+            data = await request.json()
+            action = data.get("action")
+            if action not in ("discard", "clean"):
+                raise Exception(f"Unknown action '{action}'")
+            cleanup = action == "clean"
+            vm_id = _strip_vm_id(data.get("vm-id"))
+            force = data.get("force", False)
+            (userid, vtype, vnum, staged, nickname) = (
+                (None, None, None, None, None)
+                if cleanup
+                else padsi.run.parse_vm_version(data.get("vm-version"))
+            )
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        # actual delete
+        try:
+            if cleanup:
+                # discard all the obsolete (unused anymore) VM versions
+                res = await self._call_system_service(
+                    {"cmde": "vm-cleanup", "vm-id": vm_id}
+                )
+            else:
+                # discard a specific version only
+                res = await self._call_system_service(
+                    {
+                        "cmde": "vm-discard-files",
+                        "vmversion-uid": userid,
+                        "vm-id": vm_id,
+                        "vtype": vtype.value,  # pyright: ignore
+                        "vnum": vnum,
+                        "staged": staged,
+                        "nickname": nickname,
+                        "force": force,
+                    }
+                )
+            return json_response(res)
+        except Exception as e:
+            if cleanup:
+                return web.Response(text=f"Could not clean VM: ({str(e)})", status=400)
+            return web.Response(text=f"Could not discard VM version ({str(e)})", status=400)
+
+    async def _api_launcher_post(self, request: web.Request):
+        try:
+            data = await request.json()
+            vm_id = _strip_vm_id(data.get("vm-id"))
+            nickname = data.get("nickname")
+            zone_name = data.get("zone")
+            if zone_name is not None and not isinstance(zone_name, str):
+                raise Exception("Invalid zone name")
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        try:
+            # ask the system service
+            try:
+                await self._call_system_service(
+                    {
+                        "cmde": "vm-launcher",
+                        "action": "create",
+                        "vm-id": vm_id,
+                        "zone": zone_name,
+                        "nickname": nickname,
+                    }
+                )
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Could not create VM launcher: {str(e)}")
+                raise e
+            return json_response(None)
+
+        except Exception as e:
+            return web.Response(text=f"Could not create VM launcher: ({str(e)})", status=400)
+
+    async def _api_launcher_delete(self, request: web.Request):
+        try:
+            data = await request.json()
+            vm_id = _strip_vm_id(data.get("vm-id"))
+            nickname = data.get("nickname")
+            zone_name = data.get("zone")
+            if zone_name is not None and not isinstance(zone_name, str):
+                raise Exception("Invalid zone name")
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        try:
+            # ask the system service
+            try:
+                await self._call_system_service(
+                    {
+                        "cmde": "vm-launcher",
+                        "action": "delete",
+                        "vm-id": vm_id,
+                        "zone": zone_name,
+                        "nickname": nickname,
+                    }
+                )
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Could not delete VM launcher: {str(e)}")
+                raise e
+            return json_response(None)
+
+        except Exception as e:
+            return web.Response(text=f"Could not delete VM launcher: ({str(e)})", status=400)
+
+    #
+    # Web redirection
+    #
+    async def _api_web_redir_get(self, request: web.Request):
+        """Identify which zone can be used to open a specific Web site from a specific zone
+        identified by the the PID of a process running in it
+        """
+        try:
+            host = request.rel_url.query.get("host")
+            if not isinstance(host, str):
+                raise Exception(f"Invalid host specification '{host}'")
+            port = int(request.rel_url.query.get("port"))  # pyright: ignore
+            if port <= 0 or port > 65355:
+                raise Exception(f"Invalid port number '{port}'")
+            pid = int(request.rel_url.query.get("pid"))  # pyright: ignore
+            if pid <= 0:
+                raise Exception(f"Invalid PID number '{pid}'")
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            # get the zone in which the process is
+            zone_conf: padsi.config.Zone | None = None
+            async with self._lock:
+                for zdata in self._zones.values():
+                    try:
+                        if zdata.infra is not None and zdata.infra.bubble is not None:
+                            if zdata.infra.bubble.is_host_pid_beneath_bubble(pid):
+                                zone_conf = zdata.infra.zone_conf
+                                if _debug:
+                                    syslog.syslog(syslog.LOG_DEBUG, f"Zone for PID {pid} is {zone_conf.name}")
+                                break
+                    except Exception as e:
+                        syslog.syslog(syslog.LOG_WARNING, f"Failed to check if PID {pid} is in a bubble: {str(e)}")
+
+            # get the list of zones to which a web redirection can be done
+            allowed_zones: list[str] | None = None
+            if zone_conf is not None:
+                web_redirection_option = zone_conf.get_option(padsi.config.ZoneOptionType.WEB_REDIRECTION)
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"Web redirection allowed zones for zone {zone_conf.name}: {web_redirection_option.allowed_zones}")  # pyright: ignore
+                if web_redirection_option.enabled:
+                    allowed_zones = web_redirection_option.allowed_zones # pyright: ignore
+
+            # get the list of zones which can connect to the requested host and port, filtered by
+            # the previous list
+            res: list[str] = []  # list of zones where the site is allowed
+            if allowed_zones is not None:
+                endpoint = firewall.Endpoint.from_repr(f"{host}. ^ tcp ^ {port}")
+                for zone_name in allowed_zones:
+                    try:
+                        zone_conf = self._gconf.get_zone(zone_name)
+                    except Exception:
+                        syslog.syslog(syslog.LOG_WARNING, f"Zone '{zone_name}' is listed as possible Web redirections zone but does not exist")
+                        zone_conf = None
+
+                    if (
+                        zone_conf is not None
+                        and zone_conf.network_spec is not None
+                        and zone_conf.network_spec.resolv_rules is not None
+                    ):
+                        added = False
+                        for rule in zone_conf.network_spec.resolv_rules:
+                            if _debug:
+                                syslog.syslog(syslog.LOG_DEBUG, f"Testing {endpoint=} vs main network {rule=}",)
+                            if rule.action == "allow" and endpoint.is_part_of(rule.endpoint):
+                                res.append(zone_name)
+                                added = True
+                                if _debug:
+                                    syslog.syslog(syslog.LOG_DEBUG, f"rule {endpoint} is a subset of {rule.endpoint}")
+                                break
+                        if not added and len(zone_conf.web_proxies)>0:
+                            for proxy in zone_conf.web_proxies:
+                                if added:
+                                    break
+                                if proxy.resolv_rules is not None:
+                                    for rule in proxy.resolv_rules:
+                                        if _debug:
+                                            syslog.syslog(syslog.LOG_DEBUG, f"Testing {endpoint=} vs proxy network {rule=}")
+                                        if rule.action == "allow" and endpoint.is_part_of(rule.endpoint):
+                                            res.append(zone_name)
+                                            if _debug:
+                                                syslog.syslog(syslog.LOG_DEBUG, f"rule {endpoint} is a subset of {rule.endpoint}")
+                                            added=True
+                                            break
+
+            return json_response({"zones": res})
+        except Exception as e:
+            return web.Response(text=f"Error: ({str(e)})", status=400)
+
+    async def _api_web_redir_post(self, request: web.Request):
+        try:
+            data = await request.json()
+            zone_name = data.get("zone")
+            if zone_name is not None and not isinstance(zone_name, str):
+                raise Exception(f"Invalid zone name '{zone_name}'")
+            zone_conf = self._gconf.get_zone(zone_name)
+            url = data.get("url")
+            if url is not None and not isinstance(url, str):
+                raise Exception(f"Invalid URL '{url}'")
+            browser = data.get("browser")
+            if browser is not None and not isinstance(browser, str):
+                raise Exception(f"Invalid browser '{browser}'")
+            if browser not in padsi.config.ProgramPoliciesFactory().supported_browsers:
+                raise Exception(f"Unsupported browser '{browser}'")
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            izone = await self._start_zone(zone_conf)
+            factory = padsi.config.ProgramPoliciesFactory().get_program_policies(browser)
+            args = factory.get_open_url_arguments(url)  # pyright: ignore
+            loop = asyncio.get_running_loop()
+            pid = await loop.run_in_executor(None, izone.api.start_process, args) # pyright: ignore
+            self._set_zone_autostop(izone)
+            return json_response({"pid": pid})
+        except Exception as e:
+            return web.Response(text=f"Could not create VM launcher: ({str(e)})", status=400)
+
+    #
+    # USB devices access
+    #
+    async def _api_usb_device_get(self, request: web.Request):
+        """Request the usage status of a USB device"""
+
+        def _uid_to_user_name(uid: int) -> str:
+            if uid == self._uid:
+                return "-"
+            return pwd.getpwuid(uid).pw_gecos.split(",")[0]
+
+        try:
+            devices_ids = request.rel_url.query.get("devices")
+            if not isinstance(devices_ids, str):
+                raise Exception(f"Invalid USB devices IDs list '{devices_ids}'")
+            if not devices_ids:  # empty list
+                return json_response({})
+            devices_ids = devices_ids.split(",")
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            # ask the system service
+            try:
+                data = await self._call_system_service(
+                    {"cmde": "usb-device-state", "devices": devices_ids}
+                )
+                if not isinstance(data, dict):
+                    raise Exception("CODEBUG: 'usb-device-state' did not return a dict")
+                # data will be like:
+                # {
+                #     "003:012": {
+                #         "used-by": [1000]    <-- list of UIDs or None
+                #         "reserved-by": 1001  <-- single UID, or None
+                #     }
+                # }
+                resdata = {}
+                for dev_id, dev_data in data.items():
+                    resdata[dev_id] = {
+                        "used-by": (
+                            [_uid_to_user_name(uid) for uid in dev_data["used-by"]]
+                            if dev_data["used-by"] is not None
+                            else None
+                        ),
+                        "reserved-by": (
+                            _uid_to_user_name(dev_data["reserved-by"])
+                            if dev_data["reserved-by"] is not None
+                            else None
+                        ),
+                    }
+                return json_response(resdata)
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Could not get USB devices' status for '{devices_ids}': {str(e)}")
+                raise e
+        except Exception as e:
+            return web.Response(text=f"Could not get USB devices' status for '{devices_ids}': ({str(e)})", status=400)
+
+    async def _api_usb_device_post(self, request: web.Request):
+        try:
+            data = await request.json()
+            device_id = data.get("device-id")
+            if not isinstance(device_id, str):
+                raise Exception(f"USB device ID '{device_id}'")
+        except Exception as e:
+            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        try:
+            # ask the system service
+            try:
+                data = await self._call_system_service(
+                    {"cmde": "usb-device-reserve", "device-id": device_id}
+                )
+                return json_response(data)
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Could not reserve USB device '{device_id}': {str(e)}")
+                raise e
+        except Exception as e:
+            return web.Response(text=f"Could not reserve USB device '{device_id}': ({str(e)})", status=400)
+
+
+async def monitor_process(proc: subprocess.Popen, context: str):
+    while True:
+        try:
+            await asyncio.sleep(5)
+            if proc.poll() is not None:
+                if proc.returncode != -15:
+                    # -15 is because process was killed
+                    syslog.syslog(syslog.LOG_WARNING, f"{context} process has terminated (status {proc.returncode})")
+                elif _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"{context} process has terminated (status {proc.returncode})")
+                proc.wait()
+                return
+        except asyncio.CancelledError:
+            return
+
+
+async def main(user_session_dir: str, config_dir: str):
+    extra: dict[str, list] = {}
+    try:
+        gconf = padsi.config.Configuration(config_dir)
+        userservice = PadsiUserService(user_session_dir, gconf)
+
+        # start desktop entries monitor
+        script_file = "???"
+        try:
+            script_dir = os.path.realpath(os.path.dirname(__file__))
+            script_file = os.path.join(script_dir, "monitor-desktop-entries")
+            proc = subprocess.Popen([script_file, config_dir, "USER"])
+            task = asyncio.create_task(monitor_process(proc, "Desktop entries monitor"))
+            extra["DE"] = [proc, task]
+        except FileNotFoundError:
+            raise Exception(f"Desktop entries monitoring program '{script_file}' is missing")
+
+        # start the Web redirections notifications server if necessary
+        notif_server_required = False
+        for name in gconf.get_zones_names():
+            zone_conf = gconf.get_zone(name)
+            if zone_conf.get_option(padsi.config.ZoneOptionType.WEB_REDIRECTION).enabled:
+                notif_server_required = True
+                break
+        if notif_server_required:
+            try:
+                prog_dir = os.path.join(
+                    os.path.dirname(script_dir),
+                    "padsi",
+                    "run",
+                    "components",
+                    "web_infra",
+                )
+                script_file = os.path.join(prog_dir, "notif-server.py")
+                proc = subprocess.Popen([script_file, user_session_dir, config_dir])
+                task = asyncio.create_task(
+                    monitor_process(proc, "Notifications server")
+                )
+                extra["NOTIF"] = [proc, task]
+            except FileNotFoundError:
+                raise Exception(f"Notifications server program '{script_file}' is missing")
+
+        # start the netlink shim if necessary
+        netlink_shim_required = False
+        for name in gconf.get_zones_names():
+            zone_conf = gconf.get_zone(name)
+            if (
+                zone_conf.has_virtual_machines
+                or zone_conf.get_option(padsi.config.ZoneOptionType.FIDO2).enabled
+            ):
+                netlink_shim_required = True
+                break
+        if netlink_shim_required:
+            try:
+                script_file = os.path.join(script_dir, "netlink-proxy")
+                proc = subprocess.Popen([script_file, user_session_dir])
+                task = asyncio.create_task(monitor_process(proc, "Netlink proxy"))
+                extra["NETLINK"] = [proc, task]
+            except FileNotFoundError:
+                raise Exception(f"Netlink proxy program '{script_file}' is missing")
+
+        # run
+        await userservice.run()
+    except Exception as e:
+        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {str(e)}")
+    finally:
+        for proc_task in extra.values():
+            (proc, task) = proc_task
+            task.cancel()
+            proc.kill()
+            proc.wait()
+
+
+if __name__ == "__main__":
+    try:
+        if len(sys.argv) != 3:
+            raise Exception(f"Usage: {sys.argv[0]} <user session directory> <configuration directory>")
+
+        # drop privileges if necessary
+        if os.getuid() != os.geteuid():
+            euid = os.geteuid()
+            os.seteuid(os.getuid())
+            os.setgid(os.getegid())
+            os.setuid(euid)
+
+        config_dir = sys.argv[2]
+        user_session_dir = sys.argv[1]
+        syslog.syslog(syslog.LOG_INFO, f"PID: {os.getpid()}, UID {os.getuid()} in {user_session_dir}, Using configuration in '{config_dir}'")
+
+        asyncio.run(main(user_session_dir, config_dir))
+    except Exception as e:
+        syslog.syslog(syslog.LOG_ERR, f"Error: {str(e)}")
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
