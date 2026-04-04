@@ -111,7 +111,7 @@ PADSI
 \end_layout
 
 \begin_layout Right Address
-For version 0.9.28
+For version 0.9.29
 \end_layout
 
 \begin_layout Standard
@@ -3806,7 +3806,7 @@ xdg-dbus-proxy
 \end_layout
 
 \begin_layout Subsection
-Authentication devices integration
+Security devices integration
 \end_layout
 
 \begin_layout Standard
@@ -3814,7 +3814,7 @@ Zones can set to allow users to use smartcards and/or FIDO2 authenticators.
 \end_layout
 
 \begin_layout Subsubsection
-Smartcard
+Smartcards
 \begin_inset CommandInset label
 LatexCommand label
 name "smartcard"
@@ -3909,12 +3909,129 @@ Note that the full path to the PKCS#11 library file must be provided when this f
  which may help solve PKCS#11 drivers incompatibilities).
 \end_layout
 
+\begin_layout Standard
+Applications in zones will be granted access to smartcards if the 
+\family typewriter
+
+\begin_inset Quotes eld
+\end_inset
+
+PKCS11
+\begin_inset Quotes erd
+\end_inset
+
+
+\family default
+ option is enabled for the zone (refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "zones-configuration"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+)
+\end_layout
+
 \begin_layout Subsubsection
-FIDO2
+FIDO2 authenticators
 \end_layout
 
 \begin_layout Standard
-FIDO2 
+FIDO2 authenticators can be used by applications in zones if the 
+\family typewriter
+
+\begin_inset Quotes eld
+\end_inset
+
+FIDO2
+\begin_inset Quotes erd
+\end_inset
+
+
+\family default
+ option is enabled for the zone (refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "zones-configuration"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+).
+\end_layout
+
+\begin_layout Subsubsection
+GPG card
+\end_layout
+
+\begin_layout Standard
+GPG card access is granted via the 
+\family typewriter
+scdaemon
+\family default
+ process (part of GnuPG) via the PCSD daemon.
+ To allow easy access to YubiKeys and other devices which also offer smartcard features,
+ the 
+\family typewriter
+$HOME/.gnupg/scdaemon.conf
+\family default
+ file in each zone is initially created with the following contents:
+\begin_inset listings
+lstparams "basicstyle={\footnotesize\ttfamily}"
+inline false
+status open
+
+\begin_layout Plain Layout
+
+disable-ccid
+\end_layout
+
+\begin_layout Plain Layout
+
+pcsc-shared
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+This contents can then be changed by users if necessary.
+\end_layout
+
+\begin_layout Standard
+Applications in zones will be granted access to GPG cards if the 
+\family typewriter
+
+\begin_inset Quotes eld
+\end_inset
+
+GPG-CARD
+\begin_inset Quotes erd
+\end_inset
+
+
+\family default
+ option is enabled for the zone (refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "zones-configuration"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+)
 \end_layout
 
 \begin_layout Subsection
@@ -10457,6 +10574,28 @@ Note
  if true,
  permits usage of FIDO2 authenticators (e.g.
  for WebAuthn);
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+"GPG-CARD"
+\family default
+:
+ if true,
+ permits usage of GPG cards (note that the GPG keys still need to be 
+\begin_inset Quotes eld
+\end_inset
+
+manually
+\begin_inset Quotes erd
+\end_inset
+
+ imported in the zone's 
+\family typewriter
+$HOME/.gnupg
+\family default
+ directory);
 \end_layout
 
 \begin_layout Itemize

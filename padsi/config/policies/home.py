@@ -26,18 +26,34 @@ def initialize_home_policies(home_dir:str, uid:int, gid:int):
     # prevent p11-kit from injecting the OpenSC's PKCS#11 driver into the various NSS DB
     # refer ro man pkcs11.conf, and https://p11-glue.github.io/p11-glue/p11-kit/manual
     parts=[".config", "pkcs11", "modules"]
-    path=os.path.join(home_dir, *parts)
-    if not os.path.exists(path):
-        os.makedirs(path)
+    mod_path=os.path.join(home_dir, *parts)
+    if not os.path.exists(mod_path):
+        os.makedirs(mod_path)
         path=home_dir
         for part in parts:
             path=os.path.join(path, part)
             os.chown(path, uid, gid)
 
-    conf_file=os.path.join(path, "opensc-pkcs11.module")
+    conf_file=os.path.join(mod_path, "opensc-pkcs11.module")
     with open(conf_file, "wt") as fd:
         # extends /usr/share/p11-kit/modules/opensc-pkcs11.module
         fd.write("""
 module: opensc-pkcs11
 disable-in: firefox nss
 """)
+
+    # pre-configure GPG if ever needed
+    gpg_path=os.path.join(home_dir, ".gnupg")
+    if not os.path.exists(gpg_path):
+        os.makedirs(gpg_path)
+        os.chown(gpg_path, uid, gid)
+        os.chmod(gpg_path, 0o700)
+
+    gpg_conf=os.path.join(gpg_path, "scdaemon.conf")
+    if not os.path.exists(gpg_conf):
+        with open(gpg_conf, "wt") as fd:
+            fd.write("""
+disable-ccid
+pcsc-shared
+""")
+        os.chown(gpg_conf, uid, gid)

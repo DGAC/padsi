@@ -299,6 +299,7 @@ class Zone:
             ZoneOptionType.WEB_REDIRECTION: WebRedirectionOption(ZoneOptionType.WEB_REDIRECTION, False, []),
             ZoneOptionType.PKI: PKIOption(ZoneOptionType.PKI, False, {}),
             ZoneOptionType.PKCS11: PKCS11Option(ZoneOptionType.PKCS11, False, None, None),
+            ZoneOptionType.GPG_CARD: BoolOption(ZoneOptionType.FUSE, False),
             ZoneOptionType.FIDO2: FIDO2Option(ZoneOptionType.FIDO2, False),
             ZoneOptionType.DNS_BLOCKLIST: BlockListOption(ZoneOptionType.DNS_BLOCKLIST, False, None),
         }

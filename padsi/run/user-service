@@ -819,7 +819,8 @@ class PadsiUserService:
             (zinfra, zuf)=await self._get_zone_infra_and_userfiles(zone_conf)
 
             # granting PCSCD access if needed
-            if zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11).enabled:
+            if zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11).enabled or \
+                zone_conf.get_option(padsi.config.ZoneOptionType.GPG_CARD).enabled:
                 syslog.syslog(syslog.LOG_INFO, "ASKING to allow PCSCD usage")
                 try:
                     await self._call_system_service({"cmde": "access-pcscd", "action": "grant"})

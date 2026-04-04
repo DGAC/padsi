@@ -357,7 +357,8 @@ class ZoneApps(ZoneFoundations):
         with_drm=self.zone_conf.get_option(padsi.config.ZoneOptionType.DRM).enabled
         with_fuse=self.zone_conf.get_option(padsi.config.ZoneOptionType.FUSE).enabled
         bind_medias=self.zone_conf.get_option(padsi.config.ZoneOptionType.MEDIAS).enabled
-        with_pcscd=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11).enabled
+        with_pcscd=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11).enabled or \
+            self.zone_conf.get_option(padsi.config.ZoneOptionType.GPG_CARD).enabled
         with_fido2=self.zone_conf.get_option(padsi.config.ZoneOptionType.FIDO2).enabled
         return nsbubble.Features(bind_x11=self.with_x11, with_multimedia=True, with_syslog=True, with_host_resolv=False,
                                    extra_env=self._extra_env, bind_medias=bind_medias,

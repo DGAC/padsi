@@ -32,6 +32,7 @@ class ZoneOptionType(str, enum.Enum):
     MEDIAS = "MEDIAS"  # allow access to /media/<username>/XXX where mass storage medias are mounted
     NET_LOG_ONLY = "NET-LOG-ONLY"  # deny network accesses are only logged, not actually denied
     PKCS11 = "PKCS11"  # allow the usage of smartcards
+    GPG_CARD = "GPG-CARD" # allow the usage of GPG cards
     PKI = "PKI"  # trusted CA certificates
     SCREEN_SHARE = "SCREEN-SHARE"  # allow screen sharing
     WEB_REDIRECTION = "WEB-REDIRECTION"  # allow web sites to be opened in the web browser of a zone where the URL is accessible
@@ -56,6 +57,7 @@ class ZoneOption:
                     | ZoneOptionType.MEDIAS
                     | ZoneOptionType.DRM
                     | ZoneOptionType.FIDO2
+                    | ZoneOptionType.GPG_CARD
                     | ZoneOptionType.FUSE
                 ):
                     if not isinstance(data, bool):
