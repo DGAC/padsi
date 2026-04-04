@@ -45,7 +45,7 @@ For now, packages building is only supported on the Debian 13 distribution.
 Compilation might take a while.
 
 Follow these steps:
-1. if not yet done, download PADSI's source code (including the Git submodules): `git clone --recurse-submodules https://github.com/DGAC/`
+1. if not yet done, download PADSI's source code (including the Git submodules): `git clone --recurse-submodules https://github.com/DGAC/padsi`
 2. cd into PADSI's source code and:
   - if NPM and the associated tools to compile the extension are present in the system, run `make`
   - if not, then:

@@ -33,6 +33,19 @@ The key to desing of those environments, which are called **zones**, is to map t
 
 
 
+## UX
+
+Here is an example of the GNOME desktop's overview where applications and icons are outlined with colors corresponding to the zone in which they are running (or will be running for launcher icons). The icons without outlines correspond to a zone for which outlines have been disabled to avoid a visually stressing environment.
+
+![GNOME desktop overview](https://raw.githubusercontent.com/DGAC/padsi/master/doc/overview-example.png "GNOME desktop overview")
+
+To illustrate how network access filtering might appear, the screenshot below shows two Firefox web browser running in a zone where Internet access is allowed but prevents access to “business applications” (outlined in orange), and in a zone where broad Internet access is blocked and only some specific business applications can be used (outlined in green). Note the following:
+- browser settings differ per zone (one shows the vertical tabs in its sidebar, whereas tabs are horizontal in the other), as each zone has its own user settings;
+- being a public Web site (nos business here), access to the Wikipedia is blocked in the “green” zone whereas it displays nicely in the “orange” zone;
+- similarly, access to a business application is blocked in the “orange” (and would be allowed in the “green” one if it was shown here);
+- finally, the error messages where access is blocked differ in this case as the failure to connect reason for the browser's perspective varies (a Web proxy blocked the connection in the “orange” zone and the DNS failed to resolve “www.wikipedia.org” in the “green” zone). Of course the situation actually depends on how PADSI is configured.
+
+![GNOME desktop with applications](https://raw.githubusercontent.com/DGAC/padsi/master/doc/apps-example.png "GNOME desktop with applications")
 
 ## How it's done
 
@@ -42,15 +55,17 @@ Here a very consise summary of how PADSI is implemented:
   - one for the dedicated infrastructure in support for the applications running in the zone (DNS, web proxy, firewall logging, Wayland proxy, etc.)
   - one for the end user's applications.
 - each zone configuration has its own HOME directory (located in `<padsi's root path>/home/<UID>/<zone name>`) but can also mount directories from the HOME directory of the user in the host (user's files), or system wide directories;
-- the colored outline around each window of each application is performed via a GNOME shell extension;
+- the colored outline around each window of each application is performed via a GNOME shell extension (a customized version of the [Rounded Window Corners Reborn](https://github.com/flexagoon/rounded-window-corners) extension);
 - virtual machines are run using [QEMU](https://www.qemu.org/) (libvirt is not used);
 - many other ancillary programs ensure a smooth integration with the GNOME desktop and provide some extra security;
 - PADSI is mainly written in Python and Rust.
 
+For further information, please refer [PADSI's documentation](https://raw.githubusercontent.com/DGAC/padsi/master/doc/padsi.pdf).
 
 
 ## Getting started
 
+To compile PADSI, refer to the dedicated [README-dev](https://github.com/DGAC/padsi/blob/main/README-dev.md).
 
 ### Installation
 For a quick test, using a Debian 13 Linux system:
