@@ -510,9 +510,11 @@ class DesktopEntry:
                 fd.write("\n".join(new_contents)+"\n")
 
             # generate new file
-            res=subprocess.run(["desktop-file-install", "--dir", "/tmp", tmpde], capture_output=True)
+            res=subprocess.run(["desktop-file-install", "--dir", "/tmp", tmpde], capture_output=True, text=True)
             if res.returncode!=0:
-                syslog.syslog(syslog.LOG_ERR, f"Could not customize app {self._app_id} for zone {zone.name}: {res.stderr.decode()}")
+                msg=f"Invalid desktop entry for {self._app_id} (zone {zone.name}): {res.stderr}"
+                syslog.syslog(syslog.LOG_ERR, msg)
+                raise Exception(msg)
 
             # reuse existing file if possible (needs to be made _after_ generation because some tags like "X-Desktop-File-Install-Version" may be added),
             # better to avoid giving too much work to the DE
