@@ -17,10 +17,10 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
-use std::os::unix::fs::FileTypeExt;
-use std::env;
-use std::sync::Arc;
 use clap::Parser;
+use std::env;
+use std::os::unix::fs::FileTypeExt;
+use std::sync::Arc;
 
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -31,8 +31,8 @@ use tokio::sync::Mutex;
 use padsi::trace::{LevelFilter, TraceConfig, error, info, tracing_setup_json};
 
 mod api;
-mod config;
 mod capabilities;
+mod config;
 mod process;
 mod reap;
 
@@ -43,40 +43,39 @@ use crate::reap::chld_reaper_setup;
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(help="Run directory")]
+    #[arg(help = "Run directory")]
     rundir: String,
-    #[arg(long="cap-add", help="CSV list of capabilities to add")]
-    caps: Option<String>
+    #[arg(long = "cap-add", help = "CSV list of capabilities to add")]
+    caps: Option<String>,
 }
 
 #[tokio::main]
 async fn main() {
     // init logging
-    let mut log_dir=String::from("/var/log");
-    if let Ok(v)=env::var("LOG_DIR") {
-        log_dir=String::from(v)
+    let mut log_dir = String::from("/var/log");
+    if let Ok(v) = env::var("LOG_DIR") {
+        log_dir = String::from(v)
     }
     println!("Logging to directory '{}'", log_dir);
-    let trace_conf= TraceConfig::new(&log_dir, "init")
+    let trace_conf = TraceConfig::new(&log_dir, "init")
         .with_stdout_output(false)
         .with_file_level(LevelFilter::DEBUG)
         .with_syslog_level(LevelFilter::DEBUG);
-    let _t=tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
+    let _t = tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
 
     let args = Args::parse();
-
-    let config=match Config::new(args.caps.as_deref()) {
+    let socket_file = format!("{}/bubble.sock", args.rundir);
+    let config = match Config::new(&socket_file, args.caps.as_deref()) {
         Ok(c) => c,
         Err(err) => {
-            let msg=format!("Invalid arguments: {}", err.to_string());
+            let msg = format!("Invalid arguments: {}", err.to_string());
             error!(msg);
             panic!("Invalid arguments")
         }
     };
-    let config=Arc::new(Mutex::new(config));
+    let config = Arc::new(Mutex::new(config));
     chld_reaper_setup(&config);
 
-    let socket_file=format!("{}/bubble.sock", args.rundir);
     if let Ok(meta) = std::fs::metadata(&socket_file) {
         if meta.file_type().is_socket() {
             std::fs::remove_file(&socket_file).expect("Failed to remove stale socket");
@@ -94,7 +93,10 @@ async fn main() {
                 let config = Arc::clone(&config);
                 tokio::spawn(async move {
                     if let Err(e) = http1::Builder::new()
-                        .serve_connection(io, service_fn(move |req| handle_request(req, Arc::clone(&config))))
+                        .serve_connection(
+                            io,
+                            service_fn(move |req| handle_request(req, Arc::clone(&config))),
+                        )
                         .await
                     {
                         eprintln!("[init] connection error: {e}");

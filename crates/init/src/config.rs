@@ -18,7 +18,7 @@
 //
 
 use anyhow::Result;
-use caps::{Capability};
+use caps::Capability;
 use std::collections::HashMap;
 
 use std::sync::Arc;
@@ -29,21 +29,23 @@ use crate::process::Process;
 
 // global configuration
 pub struct Config {
-    pub procs: HashMap<u32, Process>,
+    pub procs: HashMap<i32, Process>,
     pub capabilities: Vec<Capability>,
     pub auto_stop: bool,
-    pub env: HashMap<String, String>
+    pub env: HashMap<String, String>,
+    pub socket_file: String,
 }
 
 impl Config {
-    pub fn new(caps: Option<&str>) -> Result<Self> {
-        let caps_v=match caps {
-            Some(s)=>s.split(',')
+    pub fn new(socket_file: &str, caps: Option<&str>) -> Result<Self> {
+        let caps_v = match caps {
+            Some(s) => s
+                .split(',')
                 .map(parse_capability)
                 .collect::<Result<Vec<Capability>>>(),
-            None=>Ok(vec![])
+            None => Ok(vec![]),
         }?;
-        let mut cenv:HashMap<String,String>=HashMap::new();
+        let mut cenv: HashMap<String, String> = HashMap::new();
         for (key, value) in std::env::vars() {
             cenv.insert(key, value);
         }
@@ -51,7 +53,8 @@ impl Config {
             procs: HashMap::new(),
             capabilities: caps_v,
             auto_stop: false,
-            env: cenv
+            env: cenv,
+            socket_file: String::from(socket_file),
         })
     }
 }
