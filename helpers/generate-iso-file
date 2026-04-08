@@ -1,0 +1,66 @@
+#!/usr/bin/python3
+
+#
+# Copyright (c) 2026 DGAC/DSNA
+#
+# This file is part of PADSI.
+#
+# This software is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import argparse
+import os
+import subprocess
+import tempfile
+import sys
+
+
+parser=argparse.ArgumentParser(description="Generate an ISO file with the contents specified on the command line")
+parser.add_argument("-o", type=str, default="bundle.iso", help="Output file (defaults to 'bundle.iso')")
+parser.add_argument("-l", type=str, default="Bundle", help="ISO volume label (defaults to 'Bundle')")
+parser.add_argument("files", type=str, nargs=argparse.REMAINDER, help="File or directory to add")
+
+args=vars(parser.parse_args())
+
+try:
+    outfile=args.get("o")
+    label=args.get("l")
+    files:list[str]=args.get("files", [])
+    if len(files)==0:
+        raise Exception("no file specified")
+    print(f"{outfile=} {files=} {label=}")
+
+    unique:dict[str, str]={}
+    for fname in files:
+        fpath=os.path.realpath(fname)
+        bname=os.path.basename(fpath)
+        if bname in unique:
+            raise Exception(f"two files have the same base name: '{fname}' and '{unique[bname]}'")
+        unique[bname]=fname
+
+    args:list[str]=["mkisofs", "-lJRf", "-V", label, "-input-charset", "utf-8", "-o", outfile]
+    with tempfile.TemporaryDirectory() as tempdir:
+        for fname in files:
+            fpath=os.path.realpath(fname)
+            os.symlink(fpath, os.path.join(tempdir, os.path.basename(fpath)))
+        #input(f"==> {tempdir}")
+        args.append(tempdir)
+        proc=subprocess.run(args)
+        if proc.returncode!=0:
+            raise Exception("mkisofs failed")
+        else:
+            print(f"Generated '{outfile}'")
+
+except Exception as e:
+    print(f"Error: {str(e)}", file=sys.stderr)

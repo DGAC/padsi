@@ -41,11 +41,12 @@ function create_main_package() {
     installdir="$tmpdir/usr/share/padsi"
     systemddir="$tmpdir/lib/systemd/system"
     docdir="$tmpdir/usr/share/doc/padsi"
+    pbindir="$installdir/bin"
 
     mkdir -p "$bindir"
     mkdir -p "$etcdir"
     mkdir -p "$installdir"
-    mkdir -p "$installdir/bin"
+    mkdir -p "$pbindir"
     mkdir -p "$systemddir"
     mkdir -p "$docdir"
 
@@ -72,14 +73,14 @@ function create_main_package() {
 
     # PADSI files
     cp "$srcdir/systemd/padsi.service" "$systemddir/"
-    cp "$srcdir/systemd/padsi-system-service" "$installdir/bin"
-    cp "$srcdir/padsi/run/user-service" "$installdir/bin"
-    cp "$srcdir/padsi/run/admin-service" "$installdir/bin"
-    cp "$srcdir/padsi/run/monitor-desktop-entries" "$installdir/bin"
-    cp "$srcdir/crates/usb-monitor/target/release/usb-monitor" "$installdir/bin"
-    cp "$srcdir/crates/padsi-do/target/release/padsi-do" "$installdir/bin"
+    cp "$srcdir/systemd/padsi-system-service" "$pbindir"
+    cp "$srcdir/padsi/run/user-service" "$pbindir"
+    cp "$srcdir/padsi/run/admin-service" "$pbindir"
+    cp "$srcdir/padsi/run/monitor-desktop-entries" "$pbindir"
+    cp "$srcdir/crates/usb-monitor/target/release/usb-monitor" "$pbindir"
+    cp "$srcdir/crates/padsi-do/target/release/padsi-do" "$pbindir"
     ln -s "../share/padsi/bin/padsi-do" "$bindir/padsi-do"
-    cp "$srcdir/crates/data-access-guard/target/release/data-access-guard" "$installdir/bin"
+    cp "$srcdir/crates/data-access-guard/target/release/data-access-guard" "$pbindir"
 
     mkdir -p "$installdir/padsi"
     mkdir -p "$installdir/nsbubble"
@@ -100,7 +101,7 @@ function create_main_package() {
 
     rm "$install_compdir/fw_logger/crate"
     cp "$srcdir/crates/fw-logger/target/release/fw-logger" "$install_compdir/fw_logger"
-    ln -s "../padsi/run/components/fw_logger/fw-logger" "$installdir/bin"
+    ln -s "../padsi/run/components/fw_logger/fw-logger" "$pbindir"
 
     rm "$install_compdir/web_infra/crate"
     src_webroot=$(realpath "$src_compdir/web_infra/crate/webroot")
@@ -111,13 +112,13 @@ function create_main_package() {
     cp "$srcdir/crates/wayland-proxy/target/release/wayland-proxy" "$install_compdir/wayland_proxy"
 
     # mutter's preloader
-    cp "$srcdir/padsi/run/mutter-appid/mutter-appid.so" "$installdir/bin"
+    cp "$srcdir/padsi/run/mutter-appid/mutter-appid.so" "$pbindir"
     mkdir -p "$tmpdir/etc/systemd/user/org.gnome.Shell@wayland.service.d"
     cp "$srcdir/padsi/run/mutter-appid/org.gnome.Shell@wayland.service-override.conf" "$tmpdir/etc/systemd/user/org.gnome.Shell@wayland.service.d/padsi.conf"
 
     # netlink shim
-    cp "$srcdir/padsi/run/netlink-shim/netlink-shim.so" "$installdir/bin"
-    cp "$srcdir/padsi/run/netlink-shim/netlink-proxy" "$installdir/bin"
+    cp "$srcdir/padsi/run/netlink-shim/netlink-shim.so" "$pbindir"
+    cp "$srcdir/padsi/run/netlink-shim/netlink-proxy" "$pbindir"
 
     # Gnome shell extension
     extdir="$installdir/gnome-shell-extensions"
@@ -132,11 +133,16 @@ function create_main_package() {
 
     # DBus router
     prog_bin="$srcdir/padsi/run/dbus-router/dbus-router"
-    mkdir -p "$installdir/bin"
-    cp "$prog_bin" "$installdir/bin/dbus-router"
+    cp "$prog_bin" "$pbindir/dbus-router"
     lib_dir="$srcdir/padsi/run/dbus-router/dbus_min"
     mkdir -p "$installdir/dbus_min"
     cp "$lib_dir"/*.py "$installdir/dbus_min/"
+
+    # helpers
+    mkdir -p "$installdir/helpers"
+    for file in "generate-blocklist" "generate-iso-file" "padsi-ms365-importer"; do
+        cp "$srcdir/helpers/$file" "$installdir/helpers/"
+    done
 
     # agent packages
     pkg_dir="$installdir/packages"
