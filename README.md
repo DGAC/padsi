@@ -1,10 +1,19 @@
 # PADSI
 
-PADSI is a security software package designed for Linux desktop users which allows them to run programs within constrained environments regardings access to files and network resources. It is in a way similar to what [Qubes OS](https://www.qubes-os.org/) achieves but using Linux's kernel isolation mechanisms instead of virtual machines
-(and thus inherently less secure), in a way it can be seen as using containers on a desktop setup.
+PADSI is a security software package designed for Linux desktop users which allows them to run programs within constrained environments regardings access to files and network resources. It is in a way similar to what [Qubes OS](https://www.qubes-os.org/) achieves but using Linux's kernel isolation mechanisms instead of virtual machines (it is thus inherently less secure), in a way it can be seen as using containers on a desktop setup.
 
-The key to desing of those environments, which are called **zones**, is to map them to the users' various activities and their relative security needs in an exclusive mode. For instance, for a personal usage, one might define a "private" zone in which all personal sensitive work is being done (such as banking, or e-mailing) and an "internet" zone in which the user surfs the global Internet. Applications running in the first zone have access to personal files and a limited set of network resources (like the bank's web site and the personal e-mail services) whereas in the second zone, no personel files is accessible but all the Web sites on the Internet are (with the exception of bank's web site and the personal e-mail services).
+As opposed to traditional system where security primarily aims at preventing threat actors from executing any malicious code on a system, PADSI is built to tolerate that threat actors execute some malicious code but ensures they cannot do anything nefarious (barring any unknown vulnerability). Of course, a system where PADSI is deployed should also be hardened to further limit risks.
 
+The key to desing of those environments, which are called **zones**, is to map them to the users' various activities and their relative security needs, in an exclusive mode. For instance, for a personal usage, one might define a "private" zone in which all personal sensitive work is being done (such as banking, or e-mailing) and an "internet" zone in which the user surfs the global Internet. Applications running in the first zone should have access to personal files and a limited set of network resources (like the bank's web site and the personal e-mail services) whereas in the second zone, no personel files is accessible but all the Web sites on the Internet are (with the exception of bank's web site and the personal e-mail services).
+
+
+A _correctly configured_ PADSI system (refer to the Configuration section below) can very reliably protect againts the folloging attack techniques:
+- lateral movement,
+- credential theft,
+- ransomwares deployment,
+- phishing,
+- data exfiltration,
+- other various social engineering attacks like ClickFix.
 
 
 ## Features
@@ -12,9 +21,9 @@ The key to desing of those environments, which are called **zones**, is to map t
 - end-users can easily run applications in zones with a visual feedback (a colored outline around each window and icon) to identify which application is running in which zone;
 - zones need not be completely isolated (even thoug they are by deault), they can share some directories (in read-only or read-write mode);
 - end-users and administrators can easily see which network access has been blocked (and sometimes which network access are actually used);
-- system administrators can force the network traffic of some zones to go through a VPN (WireGuard and OpenVPN arre currently supported), refered to as **traffic shapers** (anticipating future features related to network handling);
+- system administrators can route the network traffic of some zones to go through one or more VPNs (often to be able to reach internal services), refered to as **traffic shapers** (anticipating future features related to network handling);
 - programs running outside of any zone, sometimes refered to as the "**init zone**" are constrained by the netfilter firewall to some white listed network resources. For example incoming SSH connections might be granted to allow remote SSH access to the system.
-- If VPNs are used, some incoming and outgoing network traffic can also be allowed via a VPN using **administration namespaces**;
+- if VPNs are used, some incoming and outgoing network traffic can also be allowed via a VPN using **administration namespaces**;
 - end-users can run and manage virtual machines to achieve specific tasks:
   - system administrators define the set of virtual machine templates which can be used and are responsible for the configuration and maintenance of these templates;
   - each virtual machine run by a user is customized for the end user, specifically (but depending on how the virtual machine template is set up), the user has a local account in the virtual machine which is the same as the one in the host system;
@@ -80,7 +89,7 @@ Adjust the configuration according to the needs, and restart the padsi service e
 ### Configuration
 In order for PADSI to provide the best security, absolutly respect the following rule for any defined zone: **either allow an almost unconstrained access to the Internet OR (in an exclusive way) grant access to files and network resources which have any kind of value, DON'T mix the two**. This rule protects against lateral movement, credential theft and most ransomwares (it does not though protect against wipers). The reasoning behind this very simple rule is that any malicious piece of software which might be running in a zone MUST NEVER be able to simultaneously communicate with the threat actor's Command and Control infrastructure (including via DNS resolution) and have access to files or network resources which have any sort of value.
 
-Another rule which should be taken into account is: **don't allow access to any authenticated service in a zone if this zone also allows an almost uncontrolled access to the Internet**. This rule protects againts phishing when the user is informed that he/she should NEVER provide any knind of credential in the zone which allows an almost uncontrolled access to the Internet.
+Another rule which should be taken into account is: **don't allow access to any authenticated service in a zone if this zone also allows an almost uncontrolled access to the Internet**. This rule protects againts phishing when the user is informed that he/she should NEVER provide any kind of credential in the zone which allows an almost uncontrolled access to the Internet.
 
 Finally, in order to protect against data exfiltration and avoid any communications with a threat actor's Command and Control infrastructure, a 3rd rule can be to **prevent uncontrolled DNS resolution**. In the context of unrestricted Internet access, one can rely on external web proxies (which perform DNS resolution themselves) and still prevent any direct DNS resolution.
 
