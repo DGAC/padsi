@@ -7024,7 +7024,7 @@ init
 
  process (the 
 \family typewriter
-init.py
+init
 \family default
  program) which:
 \end_layout
@@ -7046,7 +7046,31 @@ init
 \end_layout
 
 \begin_layout Itemize
-offers a REST API available via a Unix socket (thus benefiting from the Linux's files permissions to control its access) to manage processes running within the bubble from outside the bubble.
+offers a REST API available via a Unix socket (thus benefiting from the Linux's files permissions to control its access) to manage processes running within the bubble from outside the bubble;
+\end_layout
+
+\begin_layout Itemize
+can restart processes marked as 
+\begin_inset Quotes eld
+\end_inset
+
+restart
+\begin_inset Quotes erd
+\end_inset
+
+ if they terminate (up to a pre-defined rate to avoid overload due to a buggy process);
+\end_layout
+
+\begin_layout Itemize
+can kill all the processes running in the bubble if some process marked as 
+\begin_inset Quotes eld
+\end_inset
+
+required
+\begin_inset Quotes erd
+\end_inset
+
+ ever terminates.
 \end_layout
 
 \begin_layout Standard
