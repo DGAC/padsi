@@ -194,21 +194,26 @@ def network_infra_dnat_incoming(
     infra_netns:str,
     infra_init_pid:int,
     lower_net:ipaddress.IPv4Network,
-    lower_netns:str|None,
+    traffic_shaper:TrafficShaper|None,
     syslog_prefix: str,):
     """Forward via DNAT some incoming traffic to a process running in an admin NS
     """
     ns_infra = None
     try:
         ns_infra = nsbubble.named_netns_create(infra_netns, infra_init_pid)
-        # forward traffic in the admin infra
+
+        # forward traffic in the infra
         fw=firewall.Firewall(infra_netns)
         fw.add_dnat(dest_addr=final_ip.ip, in_iface=None, protocol_spec=endpoint.protocols_as_string, port_spec=endpoint.ports_as_string)
 
-        # forward traffic from the "init" or the VPN network NS
-        fw_init_ns = firewall.Firewall(lower_netns, objects_prefix="padsi" if lower_netns is None else None)
-        addr_in_infra_ns = ipaddress.IPv4Interface(f"{str(lower_net[2])}/{lower_net.prefixlen}")
-        fw_init_ns.add_dnat(dest_addr=addr_in_infra_ns.ip, in_iface=None, protocol_spec=endpoint.protocols_as_string, port_spec=endpoint.ports_as_string)
+        # forward traffic from the "init" network NS or a traffic shaper network NS
+        dest_addr = ipaddress.IPv4Interface(f"{str(lower_net[2])}/{lower_net.prefixlen}")
+        if traffic_shaper is None:
+            fw_init_ns = firewall.Firewall(traffic_shaper.net_ns if traffic_shaper is not None else None, objects_prefix="padsi" if traffic_shaper is None else None)
+            for iface in padsi.network.get_default_interfaces():
+                fw_init_ns.add_dnat(dest_addr=dest_addr.ip, in_iface=iface, protocol_spec=endpoint.protocols_as_string, port_spec=endpoint.ports_as_string)
+        else:
+            traffic_shaper.add_incoming_dnat("padsi", dest_addr=dest_addr.ip, protocol_spec=endpoint.protocols_as_string, port_spec=endpoint.ports_as_string)
 
     except Exception as e:
         syslog.syslog(syslog.LOG_ERR, f"{syslog_prefix}: could not DNAT incoming traffic to {endpoint}: {str(e)}")

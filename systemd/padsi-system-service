@@ -44,6 +44,7 @@ import psutil
 import firewall
 import padsi.misc
 from padsi.config import Configuration, TrafficShaper, VirtualMachine, VMUsage
+from padsi.system import NetworkInputManager
 from padsi.run import (AdminVMFiles, VMFiles, VMManagementFiles, VMState,
                        VMVersion, VMVersionInfo, VMVersionType, ZoneApps,
                        ZoneUserFiles, network_infra_attach_zone_apps,
@@ -60,9 +61,11 @@ _init_log_prefix="denied-host"
 class UserServer(Server):
     """User service for a specific user
     """
-    def __init__(self, gconf:Configuration, host_fw: firewall.Firewall, lock:asyncio.Lock, usb_devices_watcher:USBDevicesMonitor|None, uid: int, gid:int):
+    def __init__(self, gconf:Configuration, net_in_manager:NetworkInputManager, traffic_shapers:dict[str, TrafficShaper], host_fw: firewall.Firewall, lock:asyncio.Lock, usb_devices_watcher:USBDevicesMonitor|None, uid: int, gid:int):
         super().__init__(lock)
         self._gconf=gconf
+        self._net_in_manager=net_in_manager
+        self._traffic_shapers=traffic_shapers
         self._host_fw=host_fw
         self._usb_devices_watcher=usb_devices_watcher
         self._uid=uid
@@ -467,10 +470,17 @@ class UserServer(Server):
 
     async def _infra_dnat_incoming(self, args:dict):
         endpoint=firewall.Endpoint.from_repr(args["endpoint"])
+        tsp:TrafficShaper|None=None
+        tsp_name=args["traffic-shaper"]
+        if tsp_name is not None:
+            tsp=self._traffic_shapers.get(tsp_name)
+            if tsp is None:
+                raise Exception(f"CODEBUG: no traffic shapper named '{tsp_name}'")
         loop=asyncio.get_event_loop()
-        res=await loop.run_in_executor(None, network_infra_dnat_incoming, endpoint, ipaddress.IPv4Interface(args["final-ip"]),
-            args["infra-netns"],
-            args["infra-init-pid"], ipaddress.IPv4Network(args["lower-net"]), args["lower-netns"], args["syslog-prefix"])
+        res=await loop.run_in_executor(None, network_infra_dnat_incoming,
+            endpoint, ipaddress.IPv4Interface(args["final-ip"]),
+            args["infra-netns"], args["infra-init-pid"],
+            ipaddress.IPv4Network(args["lower-net"]), tsp, args["syslog-prefix"])
         if isinstance(res, Exception):
             raise res
 
@@ -1276,7 +1286,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
     def __init__(self, userservice_path:str, gconf:Configuration):
         super().__init__()
         self._gconf=gconf
-        self._traffic_shapers:set[TrafficShaper]=set()
+        self._traffic_shapers:dict[str, TrafficShaper]={}
         self._lock=asyncio.Lock()
         self._dns_resolvers:set[ipaddress.IPv4Address]=set()
         self._userservice_path=userservice_path
@@ -1292,6 +1302,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         self._host_fw=firewall.Firewall(netns=None,
             log_denied_spec=firewall.LogSpec(_init_log_prefix, self._gconf.firewall_logs_group),
             objects_prefix="padsi")
+        self._net_in_manager=NetworkInputManager(self._host_fw)
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -1300,6 +1311,14 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
     @property
     def host_fw(self) -> firewall.Firewall:
         return self._host_fw
+
+    @property
+    def net_input_manager(self) -> NetworkInputManager:
+        return self._net_in_manager
+
+    @property
+    def traffic_shapers(self) -> dict[str, TrafficShaper]:
+        return self._traffic_shapers
 
     def _may_restart(self):
         """Restart the service if needed
@@ -1350,7 +1369,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         """Declare a traffic shaper which will be setup and destroyed when appropriate
         """
         if tshaper not in self._traffic_shapers:
-            self._traffic_shapers.add(tshaper)
+            self._traffic_shapers[tshaper.name]=(tshaper)
 
     def _update_dns_resolvers_list(self):
         """Parse /etc/resolv to determine the current DNS resolvers
@@ -1381,7 +1400,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         """This tasks adapt traffic shapers when it receives an event
         """
         # set up all the traffic shapers (will create the network namespaces)
-        for tshaper in self._traffic_shapers:
+        for tshaper in self._traffic_shapers.values():
             # setup if necessary
             if tshaper.need_setup:
                 try:
@@ -1402,6 +1421,11 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                 await self._tsp_event.wait()
                 self._tsp_event.clear()
 
+                try:
+                    await self._net_in_manager.adapt()
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Failed to adapt inbound network rules: {str(e)}")
+
                 syslog.syslog(syslog.LOG_INFO, "Adapting traffic shapers: updating list of DNS resolvers")
                 current_dns_resolvers=self._dns_resolvers
                 self._update_dns_resolvers_list()
@@ -1410,7 +1434,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                 # check if anything needs to be done
                 action_required=current_dns_resolvers!=self._dns_resolvers
                 if not action_required:
-                    for tshaper in self._traffic_shapers:
+                    for tshaper in self._traffic_shapers.values():
                         if not tshaper.functionnal:
                             action_required=True
                             break
@@ -1421,7 +1445,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                     # authorization)
                     try:
                         dns_resolv_needed=False
-                        for tshaper in self._traffic_shapers:
+                        for tshaper in self._traffic_shapers.values():
                             if tshaper.need_dns_resolution:
                                 dns_resolv_needed=True
                                 break
@@ -1443,7 +1467,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                                 syslog.syslog(syslog.LOG_ERR, f"Could not allow outboud DNS flow '{flow}': {str(e)}")
 
                     # let all the traffic shapers adapt to the new settings
-                    for tshaper in self._traffic_shapers:
+                    for tshaper in self._traffic_shapers.values():
                         if not tshaper.functionnal:
                             try:
                                 syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: adapt traffic shaper {tshaper.name}")
@@ -1461,6 +1485,8 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                 syslog.syslog(syslog.LOG_INFO, "Adapting traffic shapers: done")
             except asyncio.exceptions.CancelledError:
                 break
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Failed to adapt traffic shapers: {str(e)}")
 
     async def _watch_network_changes(self):
         """Task to watch for any DNS change (monitoring the /etc/resolv.conf file)
@@ -1527,8 +1553,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         # apply rules defined in the configuration
         if self._gconf.host_inbound_fw_rules is not None:
             for rule in self._gconf.host_inbound_fw_rules:
-                flow=firewall.NetFlow(None, rule.endpoint)
-                fw.flow_set_policy(firewall.FlowType.FILTER_INPUT, flow, firewall.Policy.ALLOW if rule.action=="allow" else firewall.Policy.DENY)
+                self._net_in_manager.add_rule(rule)
 
         if self._gconf.host_outbound_fw_rules is not None:
             for rule in self._gconf.host_outbound_fw_rules:
@@ -1571,7 +1596,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         if uid not in self._user_sessions:
             if _debug:
                 syslog.syslog(syslog.LOG_DEBUG, f"Starting PADSI user service for user {uid} (GNOME Shell {shell_proc.pid})")
-            server=UserServer(self._gconf, self._host_fw, self._lock, self._usb_watcher, uid, gid)
+            server=UserServer(self._gconf, self._net_in_manager, self._traffic_shapers, self._host_fw, self._lock, self._usb_watcher, uid, gid)
             task=asyncio.create_task(server.serve_client([self._userservice_path,
                                      os.path.join(PadsiSystemService.users_run_dir, str(uid)),
                                      self._gconf.config_dir]))
@@ -1638,7 +1663,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
 
         # stop all traffic stapers
         loop=asyncio.get_running_loop()
-        for tshaper in self._traffic_shapers:
+        for tshaper in self._traffic_shapers.values():
             try:
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"Destroying traffic shaper {tshaper.name} (netns {tshaper.net_ns})")
@@ -1647,7 +1672,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                     syslog.syslog(syslog.LOG_DEBUG, f"Finished destroying traffic shaper {tshaper.name} (netns {tshaper.net_ns})")
             except Exception as e:
                 syslog.syslog(syslog.LOG_ERR, f"Could not destroy traffic shaper {tshaper.name} (netns {tshaper.net_ns}): {str(e)}")
-        self._traffic_shapers=set()
+        self._traffic_shapers={}
 
         # leave a clean FW
         self._cleanup_fw_rules()
@@ -1796,7 +1821,8 @@ async def main(config_dir:str):
         json.dump(config_data, config_file)
         config_file.flush()
 
-        server=UserServer(gconf, service.host_fw, service.lock, None, padsi_user.pw_uid, padsi_user.pw_gid)
+        server=UserServer(gconf, service.net_input_manager, service.traffic_shapers,
+            service.host_fw, service.lock, None, padsi_user.pw_uid, padsi_user.pw_gid)
         admin_service_task=asyncio.create_task(server.serve_client([
             os.path.join(_padsi_install_dir, "bin", "admin-service"),
             config_file.name

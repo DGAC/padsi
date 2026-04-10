@@ -26,9 +26,21 @@ import os
 import socket
 import syslog
 
+from dataclasses import dataclass
+
 import firewall
 import padsi.network as network
 
+_debug=False
+
+@dataclass
+class DNATRule:
+    dest_addr:ipaddress.IPv4Address
+    protocol_spec:str|None=None
+    port_spec:str|None=None
+
+    def __repr__(self) -> str:
+        return f"{str(self.dest_addr)}|{self.protocol_spec}|{self.port_spec}"
 
 class TrafficShaper:
     """Represent a special routing for one or more zones, to be inherited by each actual implementation e.g. like:
@@ -47,6 +59,10 @@ class TrafficShaper:
         self._name = name
         self._need_setup: bool=True
         self._init_veth_iface:str|None=None
+
+        self._fw_prefix:str|None=None
+        self._default_route_ifaces:set[str]=set() # set of network interfaces used as default route
+        self._dnat_rules:dict[str,DNATRule]={}
 
     @property
     def name(self) -> str:
@@ -76,12 +92,6 @@ class TrafficShaper:
         return network.netns_exists(self._netns_name)
 
     @property
-    def functionnal(self) -> bool | None:
-        """Tell if the traffic shaper is fully functionnal, or None if it can't be tested"""
-        # to be overridden by actual implementation
-        return None
-
-    @property
     def need_dns_resolution(self) -> bool:
         """Tell if DNS resolution will be needed in order to setup the traffic shaper"""
         return False
@@ -95,7 +105,7 @@ class TrafficShaper:
 
     @property
     def veth_iface_name(self) -> str|None:
-        """Name of the veth interface in the 'init' network NS, if need_veth if not None
+        """Name of the veth interface in the 'init' network NS, if need_veth is not None
         """
         return self._init_veth_iface
 
@@ -179,9 +189,64 @@ class TrafficShaper:
         finally:
             socket.setdefaulttimeout(to)
 
+    def add_incoming_dnat(self, fw_objects_prefix:str, dest_addr:ipaddress.IPv4Address, protocol_spec:str|None=None, port_spec:str|None=None):
+        """Add DNAT, limiting it to traffic coming from the default route
+        """
+        if self._fw_prefix is None:
+            self._fw_prefix=fw_objects_prefix
+        elif self._fw_prefix!=fw_objects_prefix:
+            raise Exception(f"CODEBUG: FW prefix changes to '{fw_objects_prefix}' after set to {self._fw_prefix}")
+
+        rule=DNATRule(dest_addr, protocol_spec, port_spec)
+        rule_id=str(rule)
+        if rule_id in self._dnat_rules:
+            return
+
+        self._dnat_rules[rule_id]=rule
+        fw_init_ns = firewall.Firewall(self.net_ns, objects_prefix=fw_objects_prefix)
+        for iface in self._default_route_ifaces:
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"TrafficShaper::add_incoming_dnat({iface=} {dest_addr=} {protocol_spec=} {port_spec=}) netns={self.net_ns}")
+            fw_init_ns.add_dnat(dest_addr, iface, protocol_spec, port_spec)
+
+    def declare_default_route_interface(self, iface:str):
+        """Declare an interface as used by a default route in the namespace of the traffic shaper
+        Does nothing if interface is already declared
+        """
+        if iface in self._default_route_ifaces:
+            return
+        self._default_route_ifaces.add(iface)
+        for rule in self._dnat_rules.values():
+            fw_init_ns = firewall.Firewall(self.net_ns, objects_prefix=self._fw_prefix)
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"TrafficShaper::declare_default_route_interface({iface=} dest_addr={rule.dest_addr} protocol_spec={rule.protocol_spec} port_spec={rule.port_spec}) netns={self.net_ns}")
+            fw_init_ns.add_dnat(rule.dest_addr, iface, rule.protocol_spec, rule.port_spec)
+
+    def undeclare_default_route_interface(self, iface:str):
+        """Un-declare an interface as used by a default route in the namespace of the traffic shaper
+        Does nothing if interface is not already declared
+        """
+        if iface not in self._default_route_ifaces:
+            return
+        self._default_route_ifaces.remove(iface)
+        fw_init_ns = firewall.Firewall(self.net_ns, objects_prefix=self._fw_prefix)
+        syslog.syslog(syslog.LOG_DEBUG, f"TrafficShaper::undeclare_default_route_interface({iface=}) netns={self.net_ns}")
+        if _debug:
+            fw_init_ns.clear_interface_rules(iface, firewall.FlowType.NAT_PREROUTING)
+
+    #
+    # To be implemented by sub classes
+    #
+    @property
+    def functionnal(self) -> bool | None:
+        """Tell if the traffic shaper is fully functionnal, or None if it can't be tested"""
+        # to be overridden by actual implementation
+        return None
+
     async def adapt(self, dns_resolvers_found: bool, host_fw: firewall.Firewall):
         """Function called whenever the /etc/resolv.conf file changes or the traffic shaper is not functional
         """
+        # to be overridden by actual implementation
         pass
 
 def load_from_file(path: str) -> TrafficShaper:

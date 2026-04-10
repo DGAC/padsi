@@ -84,8 +84,8 @@ def _find_table(data:dict, table_name:str, family:Family=Family.IPv4) -> int|Non
     Return: the table handle in the data if found and None if not found
     """
     for item in data["nftables"]:
-        if "table" in item:
-            data=item["table"]
+        data=item.get("table")
+        if data is not None:
             if data.get("name")==table_name and data.get("family")==family.value:
                 return data["handle"]
     return None
@@ -95,8 +95,8 @@ def _find_chain(data:dict, table_name:str, chain_name:str, family:Family=Family.
     Return: the chain handle in the data if found and the default policy, or (None, None) if not found
     """
     for item in data["nftables"]:
-        if "chain" in item:
-            data=item["chain"]
+        data=item.get("chain")
+        if data is not None:
             if data.get("table")==table_name and data.get("family")==family.value and data.get("name")==chain_name:
                return (data["handle"], Policy.from_keyword(data["policy"]))
     return (None, None)
@@ -476,8 +476,8 @@ class FwTool:
         (table_name, chain_name)=_get_table_and_chain_from_flow(flowtype, self._objects_prefix)
         current=self._get_ruleset()
         for item in current["nftables"]:
-            if "rule" in item:
-                rule=item["rule"]
+            rule=item.get("rule")
+            if rule is not None:
                 if rule.get("family")==family.value and rule.get("table")==table_name and rule.get("chain")==chain_name and \
                    rule.get("expr") is not None:
                     handle=None
@@ -668,8 +668,7 @@ class FwTool:
 
     def add_dnat(self, dest_addr:ipaddress.IPv4Address, in_iface:str|None, protocol_spec:str|None, port_spec:str|None, family:Family=Family.IPv4):
         """Add DNAT for traffic coming from the specified interface, protocol and port to the specified IP address
-        Limitations:
-            - in_iface and protocol_spec are mutually exclisive
+        Notes:
             - if protocol_spec is None, port_spec can't be None
             - at least in_iface or protocol_spec must not be None
         """
@@ -685,29 +684,30 @@ class FwTool:
         (table_name, chain_name)=_get_table_and_chain_from_flow(FlowType.NAT_PREROUTING, self._objects_prefix)
         h=_find_chain_deny_log_rule(self._get_ruleset(), table_name, chain_name, self._log_denied_spec)
 
-        # args. preparation
-        multiargs:list[list[str]]=[]
+        # in_iface handling
+        iface_args:list[str]=[]
         if in_iface is not None:
-            multiargs=[["meta", "iif", in_iface, "dnat", "to", str(dest_addr)]]
-        else:
-            # analysis of inputs
-            protocols=netflow.analyse_protocol_spec(protocol_spec)
-            if protocols is None:
-                raise Exception("CODEBUG: in_iface is None and protocol_spec did not yield any protocol")
+            iface_args=["meta", "iif", in_iface]
 
-            (ports, port_ranges)=netflow.analyse_port_spec(port_spec)
-            if ports is None:
-                ports=[]
-            if port_ranges is None:
-                port_ranges=[]
-            ports=ports+port_ranges
+        # analysis of inputs
+        protocols=netflow.analyse_protocol_spec(protocol_spec)
+        if protocols is None:
+            raise Exception("CODEBUG: in_iface is None and protocol_spec did not yield any protocol")
 
-            for proto in protocols:
-                if len(ports)>0:
-                    for item in ports:
-                        multiargs.append([proto, "dport", str(item), "dnat", str(dest_addr)])
-                else:
-                    multiargs.append([proto, "dnat", str(dest_addr)])
+        (ports, port_ranges)=netflow.analyse_port_spec(port_spec)
+        if ports is None:
+            ports=[]
+        if port_ranges is None:
+            port_ranges=[]
+        ports=ports+port_ranges
+
+        multiargs:list[list[str]]=[]
+        for proto in protocols:
+            if len(ports)>0:
+                for item in ports:
+                    multiargs.append(iface_args+[proto, "dport", str(item), "dnat", str(dest_addr)])
+            else:
+                multiargs.append(iface_args+[proto, "dnat", str(dest_addr)])
 
         # actual execution
         for args in multiargs:
@@ -728,3 +728,45 @@ class FwTool:
         # allow forwarding
         self.flow_set_policy(FlowType.FILTER_FORWARD, netflow.NetFlow.from_repr(f"*>>{str(dest_addr)}"),
             Policy.ALLOW, family=family)
+
+    def clear_interface_rules(self, iface:str|None, flowtype:FlowType, family:Family=Family.IPv4):
+        (table_name, chain_name)=_get_table_and_chain_from_flow(flowtype, self._objects_prefix)
+        current=self._get_ruleset()
+        for item in current["nftables"]:
+            rule=item.get("rule")
+            if rule is not None and rule.get("family")==family.value and rule.get("chain")==chain_name and rule.get("table")==table_name:
+                expr_items=rule.get("expr")
+                if expr_items is None:
+                    continue
+                for expr in expr_items:
+                    try:
+                        match=expr.get("match")
+                        if match is None:
+                            continue
+                        op=match.get("op")
+                        if op!="==":
+                            continue
+                        left=match.get("left")
+                        right=match.get("right")
+                        if iface is None:
+                            try:
+                                _=int(right)
+                            except:
+                                continue
+                        elif right!=iface:
+                            continue
+                        meta=left.get("meta")
+                        if meta is None:
+                            continue
+                        key=meta.get("key")
+                        if key in ("iif", "oif"):
+                            h=rule.get("handle")
+                            if h is not None:
+                                args=[self._bin_path, "delete", "rule", family.value, table_name, chain_name, "handle", str(h)]
+                                if _log_commands:
+                                    syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(args)}")
+                                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+                                if p.returncode!=0:
+                                    syslog.syslog(syslog.LOG_ERR, f"Could not clear usage of interface '{iface}' {self._with_netns()}: {p.stderr}")
+                    except:
+                        continue

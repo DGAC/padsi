@@ -121,7 +121,6 @@ def list_interfaces(netns: str | None = None) -> dict[str, ipaddress.IPv4Interfa
                         syslog.syslog(syslog.LOG_WARNING, f"Unhandled addr_info's contents {addr}")
     return res
 
-
 def interface_exists(name: str, netns: str | None = None) -> bool:
     """Tells if a network interface exists"""
     netns_check_exists(netns)
@@ -156,7 +155,6 @@ def interface_check_exists(name: str, netns: str | None = None):
     if not interface_exists(name, netns):
         raise Exception(f"Network interface {_with_netns(name, netns)} does not exist")
 
-
 def interface_delete(name: str, netns: str | None = None):
     """Delete a network interface
     Does nothing if the interface does not exist
@@ -166,7 +164,6 @@ def interface_delete(name: str, netns: str | None = None):
         (status, _out, err) = padsi.misc.exec_sync(args)
         if status != 0:
             raise Exception(f"Could not delete network interface {_with_netns(name, netns)}: {err}")
-
 
 def interface_is_up(name: str, netns: str | None = None) -> bool | None:
     """Tell if an interface is UP
@@ -183,7 +180,6 @@ def interface_is_up(name: str, netns: str | None = None) -> bool | None:
         except Exception as e:
             raise Exception(f"CODEBUG: Could not get state of interface {_with_netns(name, netns)}: {str(e)}")
     return None
-
 
 def interface_set_up(name: str, up: bool, netns: str | None = None, mtu:int|None=None):
     """Change the UP/DOWN state of an interface"""
@@ -209,7 +205,6 @@ def interface_attach_to_bridge(name: str, bridge: str, netns: str | None = None)
     if status != 0:
         raise Exception(f"Could not attach interface {_with_netns(name, netns)} to bridge {_with_netns(bridge, netns)}: {err}")
 
-
 def interface_move_to_namespace(name: str, new_netns: str, current_netns: str | None = None):
     """Move an existing network interface to a new namespace"""
     interface_check_exists(name, current_netns)
@@ -220,32 +215,15 @@ def interface_move_to_namespace(name: str, new_netns: str, current_netns: str | 
         # bring interface to the 'init' namespace
         if interface_exists(name):
             raise Exception("Network interface '{name}' already exists in the 'init' namespace, we can't use the 'init' namespace as a 'staging' namespace")
-        args = _ip_command(current_netns) + [
-            "netns",
-            "exec",
-            current_netns,
-            "ip",
-            "link",
-            "set",
-            "netns",
-            "1",
-            "dev",
-            name,
-        ]
+        args = _ip_command(current_netns) + ["netns", "exec", current_netns, "ip", "link", "set",
+            "netns", "1", "dev", name]
         (status, _out, err) = padsi.misc.exec_sync(args)
         if status != 0:
             raise Exception(f"Could not move network interface {_with_netns(name, current_netns)} to the 'init' namespace: {err} (status: {status})")
 
     if new_netns:
         # move to the new namespace
-        args = _ip_command(current_netns) + [
-            "link",
-            "set",
-            "netns",
-            new_netns,
-            "dev",
-            name,
-        ]
+        args = _ip_command(current_netns) + ["link", "set", "netns", new_netns, "dev", name]
         (status, _out, err) = padsi.misc.exec_sync(args)
         if status != 0:
             try:
@@ -253,6 +231,21 @@ def interface_move_to_namespace(name: str, new_netns: str, current_netns: str | 
             except Exception:
                 pass
             raise Exception(f"Could not move network interface {_with_netns(name, 'init')} to the '{new_netns}' namespace: {err} (status: {status})")
+
+def get_default_interfaces(netns: str|None=None) -> set[str]:
+    """Get the names of the interfaces for the default route, ordered by metric"""
+    args = _ip_command(netns) + ["-j", "route", "show", "default"]
+    proc = subprocess.run(args, capture_output=True, text=True)
+    if proc.returncode == 0:
+        try:
+            ifaces={}
+            for item in json.loads(proc.stdout):
+                ifaces[item.get("metric", 100)]=item["dev"]
+            ifaces={k: v for k, v in sorted(ifaces.items(), key=lambda item: item[1])}
+            return set(ifaces.values())
+        except Exception as e:
+            raise Exception(f"Could not get default route's interface of {_with_netns(netns, 'init')}: {str(e)}")
+    raise Exception(f"Could not get default route's interface of {_with_netns(netns, 'init')}: {proc.stderr} (status: {proc.returncode})")
 
 
 #

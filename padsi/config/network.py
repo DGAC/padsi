@@ -111,6 +111,9 @@ class FWRule:
     endpoint: firewall.Endpoint  # endpoint.is_ipv4 will be True
     chain: FWRuleChain = FWRuleChain.FORWARD
 
+    def __repr__(self) -> str:
+        return f"{self.action}|{self.endpoint}|{self.chain}"
+
     def format_for_component(self) -> dict:
         return {
             "action": self.action,

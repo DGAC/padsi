@@ -223,3 +223,12 @@ class Firewall:
             self._fwtool.add_dnat(dest_addr, in_iface, protocol_spec, port_spec)
         finally:
             self._lock.unlock()
+
+    def clear_interface_rules(self, iface:str|None, flowtype:FlowType):
+        """Remove any rule for the specified interface, or, if not specified, any rule for a stale interface (identified as numbers)
+        """
+        self._lock.lock()
+        try:
+            self._fwtool.clear_interface_rules(iface, flowtype)
+        finally:
+            self._lock.unlock()

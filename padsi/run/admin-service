@@ -194,7 +194,7 @@ class AdminService:
                                     "infra-init-pid": infra.bubble_init_pid,
                                     "infra-netns": infra.net_namespace_raw,
                                     "lower-net": str(infra.lower_net),
-                                    "lower-netns": tsp.net_ns if tsp is not None else None,
+                                    "traffic-shaper": None if tsp is None else tsp.name,
                                     "syslog-prefix": infra.syslog_prefix,
                                 }
                             )

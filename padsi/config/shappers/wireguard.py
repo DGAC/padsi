@@ -34,13 +34,7 @@ from ..trafficshaper import TrafficShaper
 class WireGuardTrafficShaper(TrafficShaper):
     """Traffic shaper which routes all the traffic through a WireGuard network interface
     """
-    def __init__(
-        self,
-        name: str,
-        config_file: str,
-        ping_test_ip: str | None,
-        wg_iface: str | None,
-    ):
+    def __init__(self, name: str, config_file: str, ping_test_ip: str | None, wg_iface: str | None):
         super().__init__(name)
         self._ts_type = "WireGuard"
 
@@ -150,6 +144,7 @@ class WireGuardTrafficShaper(TrafficShaper):
             return
 
         # remove any previously allowed flow
+        self.undeclare_default_route_interface(self._wg_iface_name)
         if self._allowed_flow is not None:
             try:
                 syslog.syslog(syslog.LOG_DEBUG, f"Removing previous Wireguard flow '{self._allowed_flow}' for interface '{self._wg_iface_name}'")
@@ -171,6 +166,7 @@ class WireGuardTrafficShaper(TrafficShaper):
             self._clean_namespace()
             try:
                 self._create_interface(wg_server_ip)
+                self.declare_default_route_interface(self._wg_iface_name)
                 self._wg_server_ip = wg_server_ip
             except Exception as e:
                 self._wg_server_ip = None
@@ -183,11 +179,7 @@ class WireGuardTrafficShaper(TrafficShaper):
             self._allowed_flow = firewall.NetFlow(None, firewall.Endpoint.from_repr(f"{wg_server_ip} ^ udp ^ {self._wg_port}"))
             try:
                 syslog.syslog(syslog.LOG_DEBUG, f"Allowing network flow to the WireGuard server '{self._allowed_flow=}'")
-                host_fw.flow_set_policy(
-                    firewall.FlowType.FILTER_OUTPUT,
-                    self._allowed_flow,
-                    firewall.Policy.ALLOW,
-                )
+                host_fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, self._allowed_flow, firewall.Policy.ALLOW)
             except Exception as e:
                 self._allowed_flow = None
                 msg=f"Could not allow network flow to the WireGuard server '{self._allowed_flow}': {str(e)}"
@@ -228,19 +220,13 @@ class WireGuardTrafficShaper(TrafficShaper):
         try:
             proc = subprocess.run(
                 ["ip", "link", "add", "dev", self._wg_iface_name, "type", "wireguard"],
-                capture_output=True,
-                text=True,
-                timeout=1,
-            )
+                capture_output=True, text=True, timeout=1)
             if proc.returncode != 0:
                 raise Exception(f"Could not create WireGuard interface '{self._wg_iface_name}': {proc.stderr}")
 
             proc = subprocess.run(
-                ["wg", "setconf", self._wg_iface_name, tmp.name],
-                capture_output=True,
-                text=True,
-                timeout=1,
-            )
+                [self._wg_iface_name, "setconf", self._wg_iface_name, tmp.name],
+                capture_output=True, text=True, timeout=1)
             if proc.returncode != 0:
                 raise Exception(f"Could not configure WireGuard interface '{self._wg_iface_name}' with config derived from '{self._config_file}': {proc.stderr}")
 

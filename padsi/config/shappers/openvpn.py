@@ -35,12 +35,7 @@ from ..trafficshaper import TrafficShaper
 class OpenVPNTrafficShaper(TrafficShaper):
     """Traffic shaper which routes all the traffic through an OpenVPN connection
     """
-    def __init__(
-        self,
-        name: str,
-        config_file: str,
-        ping_test_ip: str | None
-    ):
+    def __init__(self, name: str, config_file: str, ping_test_ip: str | None):
         super().__init__(name)
         self.net_ns = f"ovpnns-{self.name}"
         self._ts_type = "OpenVPN"
@@ -167,6 +162,7 @@ class OpenVPNTrafficShaper(TrafficShaper):
                                 fw.del_stale_masquerade(id)
                             except Exception:
                                 pass
+                            self.undeclare_default_route_interface(self._vpn_iface_name)
 
                         self._vpn_iface_idndex=id
                         try:
@@ -174,6 +170,7 @@ class OpenVPNTrafficShaper(TrafficShaper):
                             fw.add_masquerade(self._vpn_iface_name)
                         except Exception as e:
                             syslog.syslog(syslog.LOG_ERR, f"Failed to add masquerade to OpenVPN interface '{self._vpn_iface_name}': {str(e)}")
+                        self.declare_default_route_interface(self._vpn_iface_name)
                 else:
                     if self._vpn_iface_idndex is not None:
                         id=self._vpn_iface_idndex
@@ -183,6 +180,7 @@ class OpenVPNTrafficShaper(TrafficShaper):
                             fw.del_stale_masquerade(id)
                         except Exception:
                             pass
+                        self.undeclare_default_route_interface(self._vpn_iface_name)
             except asyncio.CancelledError:
                 return
             except Exception as e:
@@ -206,6 +204,7 @@ class OpenVPNTrafficShaper(TrafficShaper):
             self._proc=None
 
             # remove any previously allowed flow
+            self.undeclare_default_route_interface(self._vpn_iface_name)
             if self._allowed_flow is not None:
                 try:
                     syslog.syslog(syslog.LOG_DEBUG, f"Removing previous allowed VPN flow '{self._allowed_flow}'")
