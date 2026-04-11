@@ -649,8 +649,11 @@ class Bubble:
                 args+=["--dev-bind", "/dev/fuse", "/dev/fuse"]
 
         if self._features.with_pcscd:
-            if os.path.exists("/run/pcscd/pcscd.comm"):
-                args+=["--bind", "/run/pcscd/pcscd.comm", "/run/pcscd/pcscd.comm"]
+            if os.path.exists("/run/pcscd"):
+                # we need to mount the whole directory because the PCSCD daemon will stop and when it re-starts, it
+                # creates a new socket and there is not now any way to do this
+                args+=["--bind", "/run/pcscd", "/run/pcscd"]
+
                 # may be needed in some cases?
                 #if not self._features.bind_dev:
                 #    args+=["--dev-bind", "/dev/bus", "/dev/bus"]
