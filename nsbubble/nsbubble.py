@@ -604,7 +604,6 @@ class Bubble:
             "--proc", "/proc",
             "--ro-bind", self._init_prog, "/bubble/init",
             "--bind", self._run_dir, "/bubble/run",
-            "--dir", "/bubble/run/keyring",
             "--ro-bind", "/etc/machine-id", "/etc/machine-id",
             "--ro-bind", "/etc/fonts", "/etc/fonts",
             "--ro-bind", "/etc/xdg", "/etc/xdg",
