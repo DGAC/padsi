@@ -77,33 +77,27 @@ args=vars(parser.parse_args())
 #print("PARSED ARGS: %s"%args)
 if "cmde" not in args:
     parser.print_help()
-    sys.exit(1) # pyright: ignore
+    sys.exit(1)
 
 _indent="    "
 
 class PadsiServiceNotRunning(Exception):
     pass
 
-# test if the PADSI service is running
-try:
-    client_exception=None
-    client=Client()
-except Exception as e:
-    client_exception=PadsiServiceNotRunning(str(e))
-    client=None
-
-def require_zone_service():
-    if client is None:
-        raise client_exception # pyright: ignore
-
 #
 # Main
 #
 try:
-    verbose=args.get("verbose")
-    use_json=args.get("json")
+    # ensure the PADSI service is running (very weird if it was not)
+    try:
+        client=Client()
+    except Exception as e:
+        raise PadsiServiceNotRunning(str(e))
+
+    verbose=args.get("verbose", False)
+    use_json=args.get("json", False)
     cmde=args["cmde"]
-    require_zone_service()
+
     match cmde:
         case "vms":
             data=client.vms() # pyright: ignore
@@ -128,7 +122,8 @@ try:
                     print("No VM version specified")
 
         case "vm-status":
-            print_vm_status(client.get_vm_status(args["vm-id"], verbose), verbose, use_json, _indent, zone_filtered=True) # pyright: ignore
+            print_vm_status(client.get_vm_status(args["vm-id"], verbose), None,
+                verbose, use_json, _indent, zone_filtered=True)
 
         case "vm-start":
             data=client.vm_start(args["vm-id"], args.get("vm-name")) # pyright: ignore
@@ -159,7 +154,7 @@ except KeyboardInterrupt:
     pass
 except PadsiServiceNotRunning as e:
     print(f"Error: {str(e)}", file=sys.stderr)
-    sys.exit(2) # pyright: ignore
+    sys.exit(2)
 except Exception as e:
     if False:
         print("========== DEBUG ==========")

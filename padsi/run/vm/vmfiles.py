@@ -19,15 +19,7 @@
 
 
 #
-# Handling the VM artefacts of VMs defined in the configuration for a single user
-# respecting the VM workflow: each VM defined in a zone has its own directory
-# containing all the files related to that VM:
-# - a "base" image file and a version
-# - for each user using the VM:
-#   - a "user" image file which is a snapshot of a version of a base image file
-#   - zero or more "snapshot" image files which are snapshots of a version of a "user" image file
-#
-# all the files for a user are stored in a user/<uid> directory which belong to that user and is 700
+# Handling the VM artefacts of VMs defined in the configuration
 #
 
 from __future__ import annotations
@@ -59,10 +51,6 @@ class VMFiles:
       to be usable by the users)
     - zones/<zone name>/<UID>: per zone and per user directory to store both user-customized VM versions (type VMVersionType.USER) and
       user executed VM versions (type VMVersionType.SNAP)
-
-    Note:
-    - the files managed are limited to the user's privileges
-    - if used by root, then chown operations will also be permitted
     """
     def __init__(self, vm_dir:str, uid:int|None=None, gid:int|None=None, analyse:bool=True):
         if not os.path.isabs(vm_dir):
@@ -81,8 +69,8 @@ class VMFiles:
 
         self._staged_versions:dict[VMVersionType,VMVersion]={} # stating VM versions (at most one per VMVersionType)
         self._base_versions:dict[int, VMVersion]={} # list of all the base (VMVersionType.BASE) VM versions, indexed by version number
-        self._user_versions:dict[int, VMVersion]={} # list of all the user customized (VMVersionType.USER) VM versions, indexed by version number
-        self._snap_versions:dict[int, VMVersion]={} # list of all the user's snapshot (VMVersionType.SNAP) VM versions, indexed by version number
+        self._user_versions:dict[int, set[VMVersion]]={} # list of all the user customized (VMVersionType.USER) VM versions, indexed by version number
+        self._snap_versions:dict[int, set[VMVersion]]={} # list of all the user's snapshot (VMVersionType.SNAP) VM versions, indexed by version number
         self._obsolete_versions:list[VMVersion]=[] # list of all the VM versions which can safely be removed
         self._committable_versions:list[VMVersion]=[] # list of all the VM versions which can safely be committed (as they have a backing VM version)
 
@@ -127,18 +115,22 @@ class VMFiles:
         """
         return os.path.join(self._vm_dir, "zones", zone_name, str(self._uid))
 
-    def get_version(self, version_type:VMVersionType, version:int) -> VMVersion|None:
+    def get_vm_version(self, version_type:VMVersionType, version:int, zone_name:str|None) -> VMVersion|None:
         match version_type:
             case VMVersionType.BASE:
                 return self.get_base_version(version)
             case VMVersionType.USER:
-                return self.get_user_version(version)
+                if zone_name is None:
+                    raise Exception("no zone specified (user VM versions are bound to zones)")
+                return self.get_user_version(version, zone_name)
             case VMVersionType.SNAP:
-                return self.get_snapshot_version(version)
+                if zone_name is None:
+                    raise Exception("no zone specified (snapshot VM versions are bound to zones)")
+                return self.get_snapshot_version(version, zone_name)
             case _:
                 raise Exception(f"CODEBUG: unknown VMVersionType {version_type}") # pyright: ignore
 
-    def get_version_by_id(self, vmversion_id:str) -> VMVersion|None:
+    def get_vm_version_by_id(self, vmversion_id:str) -> VMVersion|None:
         return self._all_versions_by_id.get(vmversion_id)
 
     #
@@ -191,33 +183,42 @@ class VMFiles:
     #
     # manage user versions
     #
-    @property
-    def user_versions(self) -> list[VMVersion]:
-        """Get all the VM versions customized for the user
+    def get_all_user_versions(self, zone_name:str|None=None) -> list[VMVersion]:
+        """Get all the VM versions customized for the user, optionally for the specified zone
         """
-        res=list(self._user_versions.values())
+        res=[]
+        for vmv_set in self._user_versions.values():
+            if zone_name is None:
+                res+=vmv_set
+            else:
+                res+=[vm_version for vm_version in vmv_set if vm_version.zone_name==zone_name]
         res.sort(key=lambda x: x.version_number if x.version_number is not None else 0)
         return res
 
-    def get_user_version(self, version:int) -> VMVersion|None:
-        return self._user_versions.get(version)
+    def get_user_version(self, version:int, zone_name:str) -> VMVersion|None:
+        """Get a specific user version"""
+        for vmversion in self._user_versions.get(version, []):
+            if vmversion.zone_name==zone_name:
+                return vmversion
+        return None
 
     def is_user(self, vmversion:VMVersion) -> bool:
-        if vmversion.version_number is None:
+        if vmversion.version_number is None or vmversion.zone_name is None:
             return False
-        return vmversion==self.get_user_version(vmversion.version_number)
+        return vmversion==self.get_user_version(vmversion.version_number, vmversion.zone_name)
 
-    @property
-    def last_user_version(self) -> VMVersion|None:
+    def get_last_user_version(self, zone_name:str) -> VMVersion|None:
         """Get the last existing version of the user VM image files
         or None if the user VM image files don't yet exist
         """
         if len(self._user_versions)>0:
             v=max(self._user_versions)
-            return self._user_versions[v]
+            for vmversion in self._user_versions[v]:
+                if vmversion.zone_name==zone_name:
+                    return vmversion
         return None
 
-    def last_user_version_is_obsolete(self) -> bool|None:
+    def last_user_version_is_obsolete(self, zone_name:str) -> bool|None:
         """Tell if the last user version, if it exists, is based on the laset available base version
         of not.
         Returns:
@@ -225,7 +226,7 @@ class VMFiles:
         - True if it's based on the last available base version
         - False otherwise
         """
-        vmv=self.last_user_version
+        vmv=self.get_last_user_version(zone_name)
         if vmv is None:
             return None
         base_vmv=self.last_base_version
@@ -234,16 +235,15 @@ class VMFiles:
             return None
         return not vmv.derives_from(base_vmv)
 
-    @property
-    def next_user_version_number(self) -> int:
-        vmversion=self.last_user_version
+    def get_next_user_version_number(self, zone_name:str) -> int:
+        vmversion=self.get_last_user_version(zone_name)
         return 0 if vmversion is None or vmversion.version_number is None else vmversion.version_number+1
 
     def get_derived_user_versions(self, vmversion:VMVersion) -> list[VMVersion]:
         """Get the VM versions of type USER which are derived from a specific base version
         """
         res=[]
-        for vmv in self.user_versions:
+        for vmv in self.get_all_user_versions():
             if vmv.derives_from(vmversion):
                 res.append(vmv)
         return res
@@ -252,49 +252,58 @@ class VMFiles:
     #
     # manage snapshot versions
     #
-    @property
-    def snapshot_versions(self) -> list[VMVersion]:
-        """Get all the snapshot VM versions for the user
+    def get_all_snapshot_versions(self, zone_name:str|None=None) -> list[VMVersion]:
+        """Get all the snapshot VM versions, optionally for the specified zone
         """
-        res=list(self._snap_versions.values())
+        res=[]
+        for vmv_list in self._snap_versions.values():
+            if zone_name is None:
+                res+=vmv_list
+            else:
+                res+=[vm_version for vm_version in vmv_list if vm_version.zone_name==zone_name]
         res.sort(key=lambda x: x.version_number if x.version_number is not None else 0)
         return res
 
-    def get_snapshot_version(self, version:int) -> VMVersion|None:
-        return self._snap_versions.get(version)
+    def get_snapshot_version(self, version:int, zone_name:str) -> VMVersion|None:
+        """Get a specific user version"""
+        for vmversion in self._snap_versions.get(version, []):
+            if vmversion.zone_name==zone_name:
+                return vmversion
+        return None
 
     def is_snapshot(self, vmversion:VMVersion) -> bool:
-        if vmversion.version_number is None:
+        if vmversion.version_number is None or vmversion.zone_name is None:
             return False
-        return vmversion==self.get_snapshot_version(vmversion.version_number)
+        return vmversion==self.get_snapshot_version(vmversion.version_number, vmversion.zone_name)
 
-    @property
-    def last_snapshot_version(self) -> VMVersion|None:
+    def get_last_snapshot_version(self, zone_name:str) -> VMVersion|None:
         """Get the last existing version of the snapshot VM image files
         or None if there is none
         """
         if len(self._snap_versions)>0:
             v=max(self._snap_versions)
-            return self._snap_versions[v]
+            for vmversion in self._snap_versions[v]:
+                if vmversion.zone_name==zone_name:
+                    return vmversion
         return None
 
-    @property
-    def next_snapshot_version_number(self) -> int:
-        vmversion=self.last_snapshot_version
+    def get_next_snapshot_version_number(self, zone_name:str) -> int:
+        vmversion=self.get_last_snapshot_version(zone_name)
         return 0 if vmversion is None or vmversion.version_number is None else vmversion.version_number+1
 
-    def get_named_snapshot_version(self, nickname:str) -> VMVersion|None:
+    def get_named_snapshot_version(self, zone_name:str, nickname:str) -> VMVersion|None:
         """Get a VM version from its VM version or its nickname
         If more than one VM version have the same nickname (which should not happen under normal
         circumnstances), then an exception is raised
         """
         vmv:VMVersion|None=None
-        for vmversion in self._snap_versions.values():
-            if vmversion.nickname==nickname:
-                if vmv is None:
-                    vmv=vmversion
-                else:
-                    raise Exception(f"VM versions '{str(vmv)}' and '{str(vmversion)}' have the same nickname")
+        for vmvlist in self._snap_versions.values():
+            for vmversion in vmvlist:
+                if vmversion.nickname==nickname and vmversion.zone_name==zone_name:
+                    if vmv is None:
+                        vmv=vmversion
+                    else:
+                        raise Exception(f"VM versions '{str(vmv)}' and '{str(vmversion)}' have the same nickname")
         return vmv
 
     #
@@ -314,9 +323,10 @@ class VMFiles:
         return vmversion
 
     def stage_imported_files(self, hdd_file:str, vars_file:str, message:str|None=None) -> VMVersion:
-        """Create a new VM version by making a copy of some existing VM files
+        """Create a new staged VM version by making a copy of some existing VM files
         """
         vmversion=VMVersion(VMVersionType.BASE, self.staging_directory)
+        vmversion.staged=True
         if vmversion.state in (VMState.CREATED, VMState.DISCARDED):
             vmversion.discard_files()
         vmversion.import_files(hdd_file, vars_file, message)
@@ -366,7 +376,7 @@ class VMFiles:
             self._analyse()
             return target
 
-        raise Exception("For now, only BASE versions can be published")
+        raise Exception("Only BASE versions can be published")
 
     def create_user_version(self, zone_name:str, base_vmversion:VMVersion|None=None) -> VMVersion:
         """Create a VM version which will be customized for the user
@@ -382,7 +392,7 @@ class VMFiles:
         zonedir=self.get_zone_directory(zone_name)
         os.makedirs(zonedir, exist_ok=True)
 
-        target=VMVersion(VMVersionType.USER, zonedir, self.next_user_version_number)
+        target=VMVersion(VMVersionType.USER, zonedir, self.get_next_user_version_number(zone_name))
         target.zone_name=zone_name
         target=self._all_versions_by_id.get(target.id, target)
         vmversion.derive(target, os.geteuid(), os.getegid())
@@ -395,7 +405,7 @@ class VMFiles:
         """
         vmversion=user_vmversion
         if vmversion is None:
-            vmversion=self.last_user_version
+            vmversion=self.get_last_user_version(zone_name)
             if vmversion is None:
                 raise Exception("No user VM version exists yet")
         else:
@@ -404,7 +414,7 @@ class VMFiles:
         zonedir=self.get_zone_directory(zone_name)
         os.makedirs(zonedir, exist_ok=True)
 
-        target=VMVersion(VMVersionType.SNAP, zonedir, self.next_snapshot_version_number)
+        target=VMVersion(VMVersionType.SNAP, zonedir, self.get_next_snapshot_version_number(zone_name))
         target.zone_name=zone_name
         target=self._all_versions_by_id.get(target.id, target)
         vmversion.derive(target, os.geteuid(), os.getegid())
@@ -449,9 +459,16 @@ class VMFiles:
     def _analyse(self):
         # note: all the objects in the self._all_versions_by_id dict are kept and not replaced by any other similar object
 
-        all_versions=self._all_versions_by_id
-        def _replace_or_self(vmversion:VMVersion) -> VMVersion:
-            return all_versions.get(vmversion.id, vmversion)
+        past_versions=self._all_versions_by_id
+        def _replace_or_self(vmversion:VMVersion, new_versions:dict[str, VMVersion]) -> VMVersion:
+            # ensure we don't end up with VMVersion duplicate objects for the same actual files
+            vmv=past_versions.get(vmversion.id)
+            if vmv is not None:
+                return vmv
+            vmv=new_versions.get(vmversion.id)
+            if vmv is not None:
+                return vmv
+            return vmversion
 
         all_used_files:list[str]=[]
         self._all_versions_by_image={}
@@ -465,6 +482,7 @@ class VMFiles:
         self._unused_files=[]
         self._all_versions_by_id={}
         self._reverse_dependencies={}
+        all_zones:set[str]=set()
 
         # staging files
         for vtype in VMVersionType:
@@ -473,7 +491,7 @@ class VMFiles:
                 vmversion=VMVersion(vtype, self.staging_directory)
                 backing_image=vmversion.backing_image_file # make sure there is no error with this regards
                 if vmversion.is_complete:
-                    vmversion=_replace_or_self(vmversion)
+                    vmversion=_replace_or_self(vmversion, self._all_versions_by_id)
                     self._staged_versions[vtype]=vmversion
                     vmversion.staged=True
                     self._all_versions_by_id[vmversion.id]=vmversion
@@ -498,7 +516,7 @@ class VMFiles:
                             vmversion=VMVersion(VMVersionType.BASE, self._vm_dir, int(parts[1]))
                             backing_image=vmversion.backing_image_file # make sure there is no error with this regards
                             if vmversion.is_complete:
-                                vmversion=_replace_or_self(vmversion)
+                                vmversion=_replace_or_self(vmversion, self._all_versions_by_id)
                                 assert(vmversion.version_number is not None)
                                 self._base_versions[vmversion.version_number]=vmversion
                                 #print(f"+base {vmversion.version_number}: {vmversion.id}")
@@ -517,6 +535,7 @@ class VMFiles:
                 # directory
                 if fname=="zones":
                     for zone_name in os.listdir(fpath):
+                        all_zones.add(zone_name)
                         zone_dir=self.get_zone_directory(zone_name)
                         if os.path.exists(zone_dir):
                             for sfname in os.listdir(zone_dir):
@@ -530,13 +549,19 @@ class VMFiles:
                                             vmversion.zone_name=zone_name
                                             backing_image=vmversion.backing_image_file # make sure there is no error with this regards
                                             if vmversion.is_complete:
-                                                vmversion=_replace_or_self(vmversion)
+                                                vmversion=_replace_or_self(vmversion, self._all_versions_by_id)
                                                 assert(vmversion.version_number is not None)
                                                 if vtype==VMVersionType.USER:
-                                                    self._user_versions[vmversion.version_number]=vmversion
+                                                    if vmversion.version_number in self._user_versions:
+                                                        self._user_versions[vmversion.version_number].add(vmversion)
+                                                    else:
+                                                        self._user_versions[vmversion.version_number]={vmversion}
                                                     #print(f"+user {vmversion.version_number}: {vmversion.id}")
                                                 else:
-                                                    self._snap_versions[vmversion.version_number]=vmversion
+                                                    if vmversion.version_number in self._snap_versions:
+                                                        self._snap_versions[vmversion.version_number].add(vmversion)
+                                                    else:
+                                                        self._snap_versions[vmversion.version_number]={vmversion}
                                                     #print(f"+snap {vmversion.version_number}: {vmversion.id}")
                                                 self._all_versions_by_id[vmversion.id]=vmversion
                                                 all_used_files.append(vmversion.image_file)
@@ -586,15 +611,20 @@ class VMFiles:
         last_base_version=self.last_base_version
         if last_base_version is not None:
             assert(last_base_version.version_number is not None)
-        last_user_version=self.last_user_version
-        if last_user_version is not None:
-            assert(last_user_version.version_number is not None)
+
+        last_user_versions:dict[str, VMVersion]={} # indexed by zone name
+        for zone_name in all_zones:
+            vmv=self.get_last_user_version(zone_name)
+            if vmv is not None:
+                last_user_versions[zone_name]=vmv
+                assert(vmv.version_number is not None)
+
         for vmv in self._all_versions_by_id.values():
             if vmv.version_type==VMVersionType.BASE and vmv.version_number is not None and \
                vmv.version_number<last_base_version.version_number and len(self.get_children_versions(vmv))==0: # pyright: ignore
                 self._obsolete_versions.append(vmv)
             if vmv.version_type==VMVersionType.USER and vmv.version_number is not None and \
-               vmv.version_number<last_user_version.version_number and len(self.get_children_versions(vmv))==0: # pyright: ignore
+               vmv.version_number<last_user_versions[vmv.zone_name].version_number and len(self.get_children_versions(vmv))==0: # pyright: ignore
                 self._obsolete_versions.append(vmv)
             if vmv.version_type==VMVersionType.SNAP and vmv.state==VMState.DISCARDED:
                 self._obsolete_versions.append(vmv)
@@ -741,13 +771,13 @@ class VMFiles:
                 vtype.value: vmv.id for (vtype, vmv) in self._staged_versions.items()
             },
             "base-versions": {
-                id: vmv.id for (id, vmv) in self._base_versions.items()
+                vnum: vmv.id for (vnum, vmv) in self._base_versions.items()
             },
             "user-versions": {
-                id: vmv.id for (id, vmv) in self._user_versions.items()
+                vnum: [vmv.id for vmv in vmvlist] for (vnum, vmvlist) in self._user_versions.items()
             },
             "snap-versions": {
-                id: vmv.id for (id, vmv) in self._snap_versions.items()
+                vnum: [vmv.id for vmv in vmvlist] for (vnum, vmvlist) in self._snap_versions.items()
             },
             "committable-versions": [vmv.id for vmv in self._committable_versions],
             "obsolete-versions": [vmv.id for vmv in self._obsolete_versions],
@@ -756,17 +786,17 @@ class VMFiles:
 
     @classmethod
     def deserialize(cls, data:dict[str,Any]) -> VMFiles:
-        obj=cls(data["vm-dir"], data["uid"], data["gid"], analyse=False) # pyright: ignore
+        obj=cls(data["vm-dir"], data["uid"], data["gid"], analyse=False)
 
-        obj._all_versions_by_id={id:VMVersion.deserialize(ser) for (id, ser) in data["all-versions"].items()} # pyright: ignore
-        obj._all_versions_by_image={img:obj._all_versions_by_id[id] for (img, id) in data["by-images"].items()} # pyright: ignore
-        obj._reverse_dependencies={obj._all_versions_by_id[key]: {obj._all_versions_by_id[vmvid] for vmvid in vlist} for (key, vlist) in data["rev-deps"].items()} # pyright: ignore
-        obj._staged_versions={VMVersionType(vtype):obj._all_versions_by_id[id] for (vtype, id) in data["staged-versions"].items()} # pyright: ignore
-        obj._base_versions={int(version):obj._all_versions_by_id[id] for (version, id) in data["base-versions"].items()} # pyright: ignore
-        obj._user_versions={int(version):obj._all_versions_by_id[id] for (version, id) in data["user-versions"].items()} # pyright: ignore
-        obj._snap_versions={int(version):obj._all_versions_by_id[id] for (version, id) in data["snap-versions"].items()} # pyright: ignore
-        obj._obsolete_versions=[obj._all_versions_by_id[id] for id in data["obsolete-versions"]] # pyright: ignore
-        obj._committable_versions=[obj._all_versions_by_id[id] for id in data["committable-versions"]] # pyright: ignore
-        obj._unused_files=data["unused-files"] # pyright: ignore
+        obj._all_versions_by_id={id:VMVersion.deserialize(ser) for (id, ser) in data["all-versions"].items()}
+        obj._all_versions_by_image={img:obj._all_versions_by_id[id] for (img, id) in data["by-images"].items()}
+        obj._reverse_dependencies={obj._all_versions_by_id[key]: {obj._all_versions_by_id[vmvid] for vmvid in vlist} for (key, vlist) in data["rev-deps"].items()}
+        obj._staged_versions={VMVersionType(vtype):obj._all_versions_by_id[id] for (vtype, id) in data["staged-versions"].items()}
+        obj._base_versions={vnum:obj._all_versions_by_id[id] for (vnum, id) in data["base-versions"].items()}
+        obj._user_versions={vnum:{obj._all_versions_by_id[id] for id in idslist if obj._all_versions_by_id[id].version_number==vnum} for (vnum, idslist) in data["user-versions"].items()}
+        obj._snap_versions={vnum:{obj._all_versions_by_id[id] for id in idslist if obj._all_versions_by_id[id].version_number==vnum} for (vnum, idslist) in data["snap-versions"].items()}
+        obj._obsolete_versions=[obj._all_versions_by_id[id] for id in data["obsolete-versions"]]
+        obj._committable_versions=[obj._all_versions_by_id[id] for id in data["committable-versions"]]
+        obj._unused_files=data["unused-files"]
 
         return obj

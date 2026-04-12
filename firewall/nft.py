@@ -691,9 +691,6 @@ class FwTool:
 
         # analysis of inputs
         protocols=netflow.analyse_protocol_spec(protocol_spec)
-        if protocols is None:
-            raise Exception("CODEBUG: in_iface is None and protocol_spec did not yield any protocol")
-
         (ports, port_ranges)=netflow.analyse_port_spec(port_spec)
         if ports is None:
             ports=[]
@@ -702,12 +699,15 @@ class FwTool:
         ports=ports+port_ranges
 
         multiargs:list[list[str]]=[]
-        for proto in protocols:
-            if len(ports)>0:
-                for item in ports:
-                    multiargs.append(iface_args+[proto, "dport", str(item), "dnat", str(dest_addr)])
-            else:
-                multiargs.append(iface_args+[proto, "dnat", str(dest_addr)])
+        if protocols is not None:
+            for proto in protocols:
+                if len(ports)>0:
+                    for item in ports:
+                        multiargs.append(iface_args+[proto, "dport", str(item), "dnat", str(dest_addr)])
+                else:
+                    multiargs.append(iface_args+[proto, "dnat", str(dest_addr)])
+        else:
+            multiargs.append(iface_args+["dnat", str(dest_addr)])
 
         # actual execution
         for args in multiargs:
@@ -751,7 +751,7 @@ class FwTool:
                         if iface is None:
                             try:
                                 _=int(right)
-                            except:
+                            except Exception:
                                 continue
                         elif right!=iface:
                             continue
@@ -768,5 +768,5 @@ class FwTool:
                                 p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
                                 if p.returncode!=0:
                                     syslog.syslog(syslog.LOG_ERR, f"Could not clear usage of interface '{iface}' {self._with_netns()}: {p.stderr}")
-                    except:
+                    except Exception:
                         continue

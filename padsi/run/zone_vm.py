@@ -124,24 +124,10 @@ class ZoneVM(ZoneFoundations):
     If the VM's usage is INSTALL or UPPDATE, then only the zone's network settings are used, not the zone' mount points
     """
     prefix="VM-"
-    def __init__(
-        self,
-        global_conf: padsi.config.Configuration,
-        zone_conf: padsi.config.Zone,
-        uid: int,
-        run_dir: str,
-        logs_dir: str,
-        zone_infra: ZoneInfra|None,
-        zuf: ZoneUserFiles,
-        vm_conf: padsi.config.VirtualMachine,
-        vm_version: VMVersion,
-        vmm: VMManagementFiles,
-        ip_address: ipaddress.IPv4Interface|None,
-        gid: int,
-        boot_iso: str|None = None,
-        extra_isos: list[str]|None = None,
-        mtu: int|None = None
-    ):
+    def __init__(self, global_conf: padsi.config.Configuration, zone_conf: padsi.config.Zone, uid: int, run_dir: str,
+        logs_dir: str, zone_infra: ZoneInfra|None, zuf: ZoneUserFiles, vm_conf: padsi.config.VirtualMachine,
+        vm_version: VMVersion, vmm: VMManagementFiles, ip_address: ipaddress.IPv4Interface|None, gid: int,
+        boot_iso: str|None = None, extra_isos: list[str]|None = None, mtu: int|None = None):
         logs_vm_name=vm_version.nickname if vm_version.nickname is not None else str(vm_version)
         super().__init__("VM", global_conf, zone_conf, None,
             uid, run_dir, os.path.join(logs_dir, f"{ZoneVM.prefix}{logs_vm_name}"))
@@ -201,24 +187,15 @@ class ZoneVM(ZoneFoundations):
             if self._z_infra.resolv_rules is None:
                 resolv_rules=None
             else:
-                resolv_rules=self._vm_conf.network.resolv_rules if self._vm_conf.network.resolv_rules is not None else []
+                resolv_rules=self._vm_conf.network.resolv_rules.copy() if self._vm_conf.network.resolv_rules is not None else []
                 resolv_rules+=self._z_infra.resolv_rules
             resolver = padsi.config.network.DNSEndpoint.from_spec(str(self._z_infra.bridge_ip.ip)) # the resolver is the DNS server of the associated infra
-            comp = dns.DNSServer(
-                resolv_rules,
-                [resolver],
-                log_denied_spec=self._firewall_denied_spec,
-                log_only=log_only,
-            )
+            comp = dns.DNSServer(resolv_rules, [resolver], log_denied_spec=self._firewall_denied_spec, log_only=log_only)
             self.add_component(comp)
             self._dns_c=comp
 
             if self._web_infra_c is not None:
-                wpad_rule=padsi.config.ResolvRule(
-                    action="allow",
-                    descr="wpad",
-                    endpoint=firewall.Endpoint.from_repr("wpad."), resolv=[f"A/3600/{str(padsi.config.tap_ip)}"]
-                )
+                wpad_rule=padsi.config.ResolvRule(action="allow", descr="wpad", endpoint=firewall.Endpoint.from_repr("wpad."), resolv=[f"A/3600/{str(padsi.config.tap_ip)}"])
                 comp.add_extra_rules("wpad", [wpad_rule])
 
         # DHCP server
@@ -379,16 +356,8 @@ class ZoneVM(ZoneFoundations):
         return nsbubble.Features(with_syslog=True)
 
     def create_bubble(self, features:nsbubble.Features) -> nsbubble.Bubble:
-        return nsbubble.BubbleVM(
-            self._vm_v.image_file,
-            self._vm_v.vars_file,
-            self._vm_conf.specs,
-            features=features,
-            boot_iso=self._boot_iso,
-            extra_isos=self._extra_isos,
-            vfs_dirs=self._virtiofs_data,
-            run_dir=self.run_dir,
-        )
+        return nsbubble.BubbleVM(self._vm_v.image_file, self._vm_v.vars_file, self._vm_conf.specs,
+            features=features, boot_iso=self._boot_iso, extra_isos=self._extra_isos, vfs_dirs=self._virtiofs_data, run_dir=self.run_dir)
 
     def start(self):
         """Actually start the bubble (but not the VM)

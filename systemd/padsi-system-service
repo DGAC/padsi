@@ -222,8 +222,11 @@ class UserServer(Server):
         # 3. write the the aggregated data as JSON
         # 4. unlock the JSON file
         syslog.syslog(syslog.LOG_DEBUG, "Updating zones' infos with regards to namespaces")
-        colors:dict=args["colors"]
-        prefixes:dict=args["prefixes"]
+        try:
+            colors:dict=args["colors"]
+            prefixes:dict=args["prefixes"]
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
         prefix=self._gconf.zones_infos_dir
         os.makedirs(prefix, exist_ok=True)
         lock_file=f"{prefix}/infos.lock"
@@ -299,7 +302,10 @@ class UserServer(Server):
                     lockfd.close()
 
     async def _fuse_cleanup(self, cleanup_args:dict):
-        self._gconf.get_zone(cleanup_args["zone-name"])
+        try:
+            self._gconf.get_zone(cleanup_args["zone-name"])
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
         run_dir=self._gconf.get_user_run_dir(self._uid)
 
         # unmount resmaining FUSE mount points
@@ -368,21 +374,29 @@ class UserServer(Server):
                     except Exception as e:
                         syslog.syslog(syslog.LOG_ERR, f"Could not remove user run dir '{user_run_dir}': {str(e)}")
 
-    async def _zone_userfiles_setup(self, setup_args:dict) -> Message:
-        zone_conf=self._gconf.get_zone(setup_args["zone-name"])
+    async def _zone_userfiles_setup(self, args:dict) -> Message:
+        try:
+            zone_conf=self._gconf.get_zone(args["zone-name"])
+            syslog_prefix=args["syslog-prefix"]
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
         run_dir=self._gconf.get_user_run_dir(self._uid)
         loop=asyncio.get_event_loop()
-        res=await loop.run_in_executor(None, ZoneUserFiles.setup, self._gconf, zone_conf, self._uid, self._gid, run_dir, setup_args["syslog-prefix"])
+        res=await loop.run_in_executor(None, ZoneUserFiles.setup, self._gconf, zone_conf, self._uid, self._gid, run_dir, syslog_prefix)
         if isinstance(res, Exception):
             raise res
         return Message(MessageType.REPLY, res)
 
-    async def _zone_userfiles_cleanup(self, cleanup_args:dict) -> Message:
-        zone_conf=self._gconf.get_zone(cleanup_args["zone-name"])
+    async def _zone_userfiles_cleanup(self, args:dict) -> Message:
+        try:
+            zone_conf=self._gconf.get_zone(args["zone-name"])
+            syslog_prefix=args["syslog-prefix"]
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
         run_dir=self._gconf.get_user_run_dir(self._uid)
         loop=asyncio.get_event_loop()
         try:
-            res=await loop.run_in_executor(None, ZoneUserFiles.cleanup, self._gconf, zone_conf, self._uid, self._gid, run_dir, cleanup_args["syslog-prefix"])
+            res=await loop.run_in_executor(None, ZoneUserFiles.cleanup, self._gconf, zone_conf, self._uid, self._gid, run_dir, syslog_prefix)
             if isinstance(res, Exception):
                 syslog.syslog(syslog.LOG_ERR, f"Could not cleanup zone userfiles: {str(res)}")
                 raise res
@@ -392,11 +406,15 @@ class UserServer(Server):
             raise e
 
     async def _vm_management_priv(self, is_setup:bool, args:dict):
-        zone_conf=self._gconf.get_zone(args["zone-name"])
-        run_dir=self._gconf.get_user_run_dir(self._uid)
-        vm_id=args["vm-id"]
-        vm_conf=_get_vm_conf_for_usage(self._gconf, vm_id, self._uid, [VMUsage(args["vm-usage"])])
-        discriminant=args["discriminant"]
+        try:
+            zone_conf=self._gconf.get_zone(args["zone-name"])
+            run_dir=self._gconf.get_user_run_dir(self._uid)
+            vm_id=args["vm-id"]
+            vm_conf=_get_vm_conf_for_usage(self._gconf, vm_id, self._uid, [VMUsage(args["vm-usage"])])
+            discriminant=args["discriminant"]
+            z_homedir=args["zone-home-dir"]
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
 
         loop=asyncio.get_event_loop()
         avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
@@ -408,7 +426,7 @@ class UserServer(Server):
         vm_version=args.get("vm-version")
         if vm_version is None:
             raise Exception("CODEBUG: 'vm-version' not specified")
-        vm_version=vmf.get_version_by_id(vm_version)
+        vm_version=vmf.get_vm_version_by_id(vm_version)
         if vm_version is None:
             msg=f"Unexpected None VM version in _vm_management_priv(), args['vm-version']={args['vm-version']}"
             syslog.syslog(syslog.LOG_WARNING, msg)
@@ -418,10 +436,10 @@ class UserServer(Server):
             _check_privileges_on_vm_version(self._gconf, vm_id, vm_version, self._uid)
             if is_setup:
                 await loop.run_in_executor(None, VMManagementFiles.priv_setup, zone_conf, vm_conf, vm_version,
-                                           args["zone-home-dir"], self._uid, self._gid, run_dir, discriminant)
+                                           z_homedir, self._uid, self._gid, run_dir, discriminant)
             else:
                 await loop.run_in_executor(None, VMManagementFiles.priv_cleanup, zone_conf, vm_conf, vm_version,
-                                           args["zone-home-dir"], self._uid, self._gid, run_dir, discriminant)
+                                           z_homedir, self._uid, self._gid, run_dir, discriminant)
 
     async def _infra_setup(self, setup_args:dict):
         tsp_name:TrafficShaper|None=setup_args.get("traffic-shaper")
@@ -433,6 +451,8 @@ class UserServer(Server):
             setup_args["init-pid"], ipaddress.IPv4Interface(setup_args["bridge-ip"]),
             setup_args["bridge-name"], ipaddress.IPv4Network(setup_args["lower-net"]),
             setup_args["syslog-prefix"], setup_args["mtu"])
+        if isinstance(res, KeyError):
+            raise Exception(f"CODEBUG: no '{str(res)}' key present")
         if isinstance(res, Exception):
             raise res
 
@@ -445,6 +465,8 @@ class UserServer(Server):
             cleanup_args["lower-iface"], cleanup_args["run-dir"],
             cleanup_args["components"], ipaddress.IPv4Network(cleanup_args["lower-net"]),
             cleanup_args["syslog-prefix"])
+        if isinstance(res, KeyError):
+            raise Exception(f"CODEBUG: no '{str(res)}' key present")
         if isinstance(res, Exception):
             raise res
 
@@ -455,6 +477,8 @@ class UserServer(Server):
                                        attach_args["infra-netns"], attach_args["infra-init-pid"],
                                        ipaddress.IPv4Interface(attach_args["infra-bridge-ip"]),
                                        attach_args["infra-bridge-name"], attach_args["syslog-prefix"], attach_args["mtu"])
+        if isinstance(res, KeyError):
+            raise Exception(f"CODEBUG: no '{str(res)}' key present")
         if isinstance(res, Exception):
             raise res
 
@@ -465,6 +489,8 @@ class UserServer(Server):
                                        attach_args["infra-netns"], attach_args["infra-init-pid"],
                                        ipaddress.IPv4Interface(attach_args["infra-bridge-ip"]),
                                        attach_args["infra-bridge-name"], attach_args["syslog-prefix"], attach_args["mtu"])
+        if isinstance(res, KeyError):
+            raise Exception(f"CODEBUG: no '{str(res)}' key present")
         if isinstance(res, Exception):
             raise res
 
@@ -481,6 +507,8 @@ class UserServer(Server):
             endpoint, ipaddress.IPv4Interface(args["final-ip"]),
             args["infra-netns"], args["infra-init-pid"],
             ipaddress.IPv4Network(args["lower-net"]), tsp, args["syslog-prefix"])
+        if isinstance(res, KeyError):
+            raise Exception(f"CODEBUG: no '{str(res)}' key present")
         if isinstance(res, Exception):
             raise res
 
@@ -503,7 +531,7 @@ class UserServer(Server):
     async def _vm_files_analyse(self, args:dict) -> Message:
         def _vm_versions_list_to_str_list(vmversions:list[VMVersion]) -> list[str]:
             return [str(x) for x in vmversions]
-        def _base_staged_to_str(vmversion:VMVersion|None) -> str|None:
+        def _state_to_str(vmversion:VMVersion|None) -> str|None:
             if vmversion is None:
                 return None
             if vmversion.is_complete:
@@ -518,7 +546,7 @@ class UserServer(Server):
                     if ouid!=uid:
                         staged=avmf.get_staged(VMVersionType.BASE, ouid)
                         other_vm_versions[ouid]={
-                            "base-staged": _base_staged_to_str(staged),
+                            "staged": _state_to_str(staged),
                             "user-versions": _vm_versions_list_to_str_list(avmf.user_versions(ouid)),
                             "snapshot-versions": _vm_versions_list_to_str_list(avmf.snapshot_versions(ouid))
                         }
@@ -550,7 +578,7 @@ class UserServer(Server):
                 "directory-exists": True,
                 "base-vm-versions": _vm_versions_list_to_str_list(avmf.base_versions),
                 "self-vm-versions": {
-                    "base-staged": _base_staged_to_str(avmf.get_staged(VMVersionType.BASE, uid)),
+                    "staged": _state_to_str(avmf.get_staged(VMVersionType.BASE, uid)),
                     "user-versions": _vm_versions_list_to_str_list(avmf.user_versions(uid)),
                     "snapshot-versions": _vm_versions_list_to_str_list(avmf.snapshot_versions(uid))
                 },
@@ -561,9 +589,12 @@ class UserServer(Server):
                 "vm-versions-infos": infos
             }
 
-        vm_id=args["vm-id"]
-        verbose=args["verbose"]
-        zone_name=args.get("zone")
+        try:
+            vm_id=args["vm-id"]
+            verbose=args["verbose"]
+            zone_name=args.get("zone")
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
         vm:VirtualMachine|None=None
         for usage in VMUsage:
             vm_conf=self._gconf.get_vm(usage, vm_id)
@@ -590,9 +621,13 @@ class UserServer(Server):
         return AdminVMFiles(vm_dir, uid)
 
     async def _vm_create_common_dirs(self, args:dict):
-        vm_id=args["vm-id"]
-        usage=VMUsage(args["usage"])
-        vm_conf=self._gconf.get_vm(usage, vm_id)
+        try:
+            vm_id=args["vm-id"]
+            usage=VMUsage(args["usage"])
+            vm_conf=self._gconf.get_vm(usage, vm_id)
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+
         if vm_conf is None:
             raise Exception(f"No declared virtual machine with '{vm_id}' ID")
         if not vm_conf.is_user_allowed(self._uid):
@@ -601,8 +636,12 @@ class UserServer(Server):
         vmf.create_common_dirs()
 
     async def _vm_create_stage_dir(self, args:dict):
-        vm_id=args["vm-id"]
-        usage=VMUsage(args["usage"])
+        try:
+            vm_id=args["vm-id"]
+            usage=VMUsage(args["usage"])
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+
         vm_conf=self._gconf.get_vm(usage, vm_id)
         if vm_conf is None:
             raise Exception(f"No declared virtual machine with '{vm_id}' ID")
@@ -613,14 +652,17 @@ class UserServer(Server):
         os.chown(vmf.staging_directory, self._uid, self._gid)
 
     async def _vm_commit(self, args:dict):
-        vmversion_uid=args["vmversion-uid"]
-        vm_id=args["vm-id"]
-        vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
-        if vm_conf is None:
-            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
-        if vmversion_uid is not None and vmversion_uid!=self._uid and not vm_conf.is_user_allowed(self._uid):
-            raise Exception(f"User {self._uid} has no admin privilege on VM '{vm_id}'")
-        message=args["message"]
+        try:
+            vmversion_uid=args["vmversion-uid"]
+            vm_id=args["vm-id"]
+            vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
+            if vm_conf is None:
+                raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+            if vmversion_uid is not None and vmversion_uid!=self._uid and not vm_conf.is_user_allowed(self._uid):
+                raise Exception(f"User {self._uid} has no admin privilege on VM '{vm_id}'")
+            message=args["message"]
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
 
         if not vm_conf.is_user_allowed(self._uid):
             raise Exception(f"User {self._uid} is not allowed to update VM '{vm_id}'")
@@ -632,7 +674,7 @@ class UserServer(Server):
         vmf=avmf.get_vm_files(vmversion_uid)
         if vmf is None:
             raise Exception(f"No VM files for {vmversion_uid}")
-        vmversion=vmf.get_version_by_id(args["vm-version"])
+        vmversion=vmf.get_vm_version_by_id(args["vm-version"])
         if vmversion is None:
             raise Exception(f"No VM version '{args['vm-version']}'")
 
@@ -641,14 +683,17 @@ class UserServer(Server):
             raise res
 
     async def _vm_publish(self, args:dict) -> Message:
-        vmversion_uid=args["vmversion-uid"]
-        vm_id=args["vm-id"]
-        vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
-        if vm_conf is None:
-            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
-        if vmversion_uid is not None and vmversion_uid!=self._uid and not vm_conf.is_user_allowed(self._uid):
-            raise Exception(f"Permission denied for user {self._uid} on VM '{vm_id}'")
-        message=args["message"]
+        try:
+            vmversion_uid=args["vmversion-uid"]
+            vm_id=args["vm-id"]
+            vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
+            if vm_conf is None:
+                raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+            if vmversion_uid is not None and vmversion_uid!=self._uid and not vm_conf.is_user_allowed(self._uid):
+                raise Exception(f"Permission denied for user {self._uid} on VM '{vm_id}'")
+            message=args["message"]
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
 
         loop=asyncio.get_event_loop()
         avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
@@ -657,7 +702,7 @@ class UserServer(Server):
         vmf=avmf.get_vm_files(vmversion_uid)
         if vmf is None:
             raise Exception(f"No VM files for {vmversion_uid}")
-        vmversion=vmf.get_version_by_id(args["vm-version"])
+        vmversion=vmf.get_vm_version_by_id(args["vm-version"])
         if vmversion is None:
             raise Exception(f"No VM version '{args['vm-version']}'")
 
@@ -666,7 +711,13 @@ class UserServer(Server):
         return Message(MessageType.REPLY, res.serialize())
 
     async def _vm_cleanup(self, args:dict) -> Message:
-        vm_id=args["vm-id"]
+        """Returns a list of VM versions which have been removed"""
+        try:
+            vm_id=args["vm-id"]
+            zone_name=args["zone"]
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+
         vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
         if vm_conf is None:
             raise Exception(f"No declared virtual machine with '{vm_id}' ID")
@@ -678,23 +729,30 @@ class UserServer(Server):
         res:list[str]=[]
         for vmversion in avmf.obsolete_versions:
             try:
-                _check_privileges_on_vm_version(self._gconf, vm_id, vmversion, self._uid)
+                if zone_name is None or vmversion.zone_name==zone_name:
+                    _check_privileges_on_vm_version(self._gconf, vm_id, vmversion, self._uid)
             except Exception:
                 pass
             else:
                 if vmversion.state!=VMState.RUNNING: # just in case
-                    syslog.syslog(syslog.LOG_INFO, f"Discarding files of VM version '{vmversion.id}'")
+                    syslog.syslog(syslog.LOG_INFO, f"Discarding files of VM version '{vmversion.id}' in zone {vmversion.zone_name}")
                     vmversion.discard_files()
                     res.append(vmversion.id)
         return Message(MessageType.REPLY, res)
 
     async def _vm_discard_files(self, args:dict) -> Message:
-        vmversion_uid=args["vmversion-uid"]
-        vm_id=args["vm-id"]
-        vtype=VMVersionType(args["vtype"])
-        vnum=args["vnum"]
-        staged=args["staged"]
-        nickname=args["nickname"]
+        """Returns a list with the single VM version which has been removed"""
+        try:
+            zone_name=args["zone"]
+            vmversion_uid=args["vmversion-uid"]
+            vm_id=args["vm-id"]
+            vtype=VMVersionType(args["vtype"])
+            vnum=args["vnum"]
+            staged=args["staged"]
+            nickname=args["nickname"]
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+
         force=args.get("force", False)
         vm_conf=_get_vm_conf_for_usage(self._gconf, vm_id, self._uid, None)
         vm_upd_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
@@ -711,7 +769,7 @@ class UserServer(Server):
         if staged:
             vmversion=avmf.get_staged(VMVersionType.BASE, vmversion_uid)
             if vmversion is None:
-                raise Exception("No staging version for this VM")
+                raise Exception("No staged version for this VM")
         else:
             if vtype==VMVersionType.BASE:
                 vm_conf=_get_vm_conf_for_usage(self._gconf, vm_id, self._uid, [VMUsage.INSTALL, VMUsage.UPDATE])
@@ -724,12 +782,16 @@ class UserServer(Server):
                 case VMVersionType.BASE:
                     vmversion=avmf.get_base_version(vnum)
                 case VMVersionType.USER:
-                    vmversion=avmf.get_user_version(vnum, vmversion_uid)
+                    if zone_name is None:
+                        raise Exception("no zone specified (user VM versions are bound to zones)")
+                    vmversion=avmf.get_user_version(vnum, zone_name, vmversion_uid)
                 case VMVersionType.SNAP:
+                    if zone_name is None:
+                        raise Exception("no zone specified (snapshot VM versions are bound to zones)")
                     if nickname is None:
-                        vmversion=avmf.get_snapshot_version(vnum, vmversion_uid)
+                        vmversion=avmf.get_snapshot_version(vnum, zone_name, vmversion_uid)
                     else:
-                        vmversion=avmf.get_named_snapshot_version(nickname, vmversion_uid)
+                        vmversion=avmf.get_named_snapshot_version(zone_name, nickname, vmversion_uid)
                 case _:
                     raise Exception(f"Unhandled VMVersionType {vtype}")
             if vmversion is None:
@@ -754,9 +816,12 @@ class UserServer(Server):
     async def _vm_load(self, args:dict) -> Message:
         extract_dir=None
         try:
-            vm_id=args["vm-id"]
-            extract_id=args["extract-id"]
-            message=args["message"]
+            try:
+                vm_id=args["vm-id"]
+                extract_id=args["extract-id"]
+                message=args["message"]
+            except KeyError as e:
+                raise Exception(f"CODEBUG: no '{str(e)}' key present")
 
             vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
             if vm_conf is None:
@@ -886,10 +951,13 @@ class UserServer(Server):
             de_name=f"padsi-vm-viewer.{vm_id}.{nickname if nickname is not None else 'default'}.desktop"
             return os.path.join(de_path, de_name)
 
-        action=args["action"]
-        zone_name=args["zone"]
-        vm_id=args["vm-id"]
-        nickname=args["nickname"]
+        try:
+            action=args["action"]
+            zone_name=args["zone"]
+            vm_id=args["vm-id"]
+            nickname=args["nickname"]
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
 
         match action:
             case "create":
@@ -952,7 +1020,11 @@ class UserServer(Server):
 
     async def _pcscd_access(self, args:dict):
         """Grant or revoke access to the PCSCD daemon"""
-        grant=args["action"]=="grant"
+        try:
+            grant=args["action"]=="grant"
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+
         polkit_rules_file=os.path.join("/etc/polkit-1/rules.d", f"00-padsi-pcscd-{self._uid}.rules")
         if grant:
             tmpl="""polkit.addRule(function(action, subject) {{
@@ -973,7 +1045,11 @@ class UserServer(Server):
 
     async def _usbredir_access(self, args:dict):
         """Grant or revoke access to Spice's USB redirection"""
-        grant=args["action"]=="grant"
+        try:
+            grant=args["action"]=="grant"
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+
         polkit_rules_file=os.path.join("/etc/polkit-1/rules.d", f"00-padsi-usbredir-{self._uid}.rules")
         if grant:
             tmpl="""polkit.addRule(function(action, subject) {{
@@ -995,7 +1071,11 @@ class UserServer(Server):
     async def _usb_device_state(self, args:dict) -> Message:
         if self._usb_devices_watcher is None:
             raise Exception("CODEBUG: self._usb_devices_watcher should not be None")
-        states=self._usb_devices_watcher.get_devices_states(args["devices"])
+        try:
+            states=self._usb_devices_watcher.get_devices_states(args["devices"])
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+
         data={}
         for (dev_id, dev_data) in states.items():
             data[dev_id]={
@@ -1007,7 +1087,10 @@ class UserServer(Server):
     async def _usb_device_reserve(self, args:dict):
         if self._usb_devices_watcher is None:
             raise Exception("CODEBUG: self._usb_devices_watcher should not be None")
-        self._usb_devices_watcher.reserve_device(args["device-id"], self._uid)
+        try:
+            self._usb_devices_watcher.reserve_device(args["device-id"], self._uid)
+        except KeyError as e:
+            raise Exception(f"CODEBUG: no '{str(e)}' key present")
 
 @dataclass
 class UsbDevice:
@@ -1426,10 +1509,12 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                 except Exception as e:
                     syslog.syslog(syslog.LOG_ERR, f"Failed to adapt inbound network rules: {str(e)}")
 
-                syslog.syslog(syslog.LOG_INFO, "Adapting traffic shapers: updating list of DNS resolvers")
+                if _debug:
+                    syslog.syslog(syslog.LOG_INFO, "Adapting traffic shapers: updating list of DNS resolvers")
                 current_dns_resolvers=self._dns_resolvers
                 self._update_dns_resolvers_list()
-                syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: updated DNS resolvers list to {self._dns_resolvers} vs previously {current_dns_resolvers}")
+                if _debug:
+                    syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: updated DNS resolvers list to {self._dns_resolvers} vs previously {current_dns_resolvers}")
 
                 # check if anything needs to be done
                 action_required=current_dns_resolvers!=self._dns_resolvers
@@ -1460,7 +1545,8 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                             flow=None
                             try:
                                 flow=firewall.NetFlow(None, firewall.Endpoint.from_repr(f"{str(ip)}^udp^53"))
-                                syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: allow tmp DNS resolution: {flow}")
+                                if _debug:
+                                    syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: allow tmp DNS resolution: {flow}")
                                 self._host_fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, flow, firewall.Policy.ALLOW)
                                 allowed_dns_flows.append(flow)
                             except Exception as e:
@@ -1478,11 +1564,13 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                     # de-allow temporary DNS resolution
                     for flow in allowed_dns_flows:
                         try:
-                            syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: remove tmp DNS resolution: {flow}")
+                            if _debug:
+                                syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: remove tmp DNS resolution: {flow}")
                             self._host_fw.flow_delete_policy(firewall.FlowType.FILTER_OUTPUT, flow)
                         except Exception as e:
                             syslog.syslog(syslog.LOG_ERR, f"Could not block outboud DNS flow '{flow}': {str(e)}")
-                syslog.syslog(syslog.LOG_INFO, "Adapting traffic shapers: done")
+                if _debug:
+                    syslog.syslog(syslog.LOG_INFO, "Adapting traffic shapers: done")
             except asyncio.exceptions.CancelledError:
                 break
             except Exception as e:
@@ -1797,8 +1885,8 @@ async def main(config_dir:str):
 
     admin_service_task:asyncio.Task|None=None
 
-    # start admin NS if any defined
-    if len(gconf.admin_ns_list)>0:
+    # start admin service if any NS is defined or if a VM is defined
+    if len(gconf.admin_ns_list)>0 or len(gconf.get_vms_for_usage(VMUsage.RUN))>0:
         try:
             padsi_user=pwd.getpwnam("padsi")
         except KeyError:

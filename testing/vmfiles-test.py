@@ -494,7 +494,7 @@ class AdminVMTest(unittest.TestCase):
             self.assertEqual(vmf1.last_base_version, base2)
             assert(vmf1.last_base_version is not None)
             vmf1.create_user_version("thezone", vmf1.last_base_version)
-            vmf1.create_snaphot_version("thezone", vmf1.last_user_version)
+            vmf1.create_snaphot_version("thezone", vmf1.get_last_user_version("thezone"))
             staged=vmf1.stage_existing_version(vmf1.last_base_version)
             base3=vmf1.publish_staged(staged)
 
@@ -525,8 +525,8 @@ class AdminVMTest(unittest.TestCase):
             self.assertEqual(vmf2.base_versions, avmf.base_versions)
 
             # verify user versions
-            self.assertEqual(vmf1.user_versions, avmf.user_versions(1000))
-            self.assertEqual(vmf2.user_versions, avmf.user_versions(2000))
+            self.assertEqual(vmf1.get_all_user_versions(), avmf.user_versions(1000))
+            self.assertEqual(vmf2.get_all_user_versions(), avmf.user_versions(2000))
 
             # snapshot user versions
             self.assertEqual(vmf1.snapshot_versions, avmf.snapshot_versions(1000))

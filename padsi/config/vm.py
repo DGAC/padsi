@@ -24,6 +24,7 @@ import json
 import os
 import pwd
 import re
+import syslog
 
 import nsbubble
 
@@ -50,22 +51,8 @@ class VMScript(str, enum.Enum):
 class VirtualMachine:
     """Represent a VM configuration (not a running VM instance)"""
 
-    def __init__(
-        self,
-        vm_id: str,
-        os_variant: str,
-        os_version: str | None,
-        vm_descr: str,
-        vm_dir: str,
-        usage: VMUsage,
-        specs: nsbubble.VMSpecs,
-        show_ui: bool,
-        read_only: bool,
-        mounts: list[MountPoint],
-        network: NetworkSpec|None,
-        allowed_users: list[str]|None,
-        scripts: dict[VMScript, str],
-    ):
+    def __init__(self, vm_id: str, os_variant: str, os_version: str | None, vm_descr: str, vm_dir: str, usage: VMUsage, specs: nsbubble.VMSpecs,
+        show_ui: bool, read_only: bool, mounts: list[MountPoint], network: NetworkSpec|None, allowed_users: list[str]|None, scripts: dict[VMScript, str]):
         """NB: the zone argument is used to copy the resolution and firewall rules from the zone itself"""
         if vm_dir is None:
             raise Exception(f"Invalid VM directory{vm_dir}")
@@ -86,9 +73,7 @@ class VirtualMachine:
     def __repr__(self):
         return f"VirtualMachine {self._id}/{self._usage}"
 
-    def specialize(
-        self, data: dict, named_netres: dict[str, NetworkRessources] | None
-    ) -> VirtualMachine:
+    def specialize(self, data: dict, named_netres: dict[str, NetworkRessources] | None) -> VirtualMachine:
         """Create a new VirtualMachine object as a specialization of the current VM"""
         # VM specifications overrides
         show_ui = self._show_ui
@@ -195,7 +180,7 @@ class VirtualMachine:
         if self._network is None or self._network.resolv_rules is None:
             return (True, None)
         if other_network is None or other_network.resolv_rules is None:
-            return (False, "no resolution")
+            return (False, "no network access or no DNS resolution")
 
         # resolv. rules
         for rule in self._network.resolv_rules:
@@ -230,13 +215,20 @@ class VirtualMachine:
     def is_user_allowed(self, uid: int) -> bool:
         """Determine if user is allowed to use the VM (for the associated usage)"""
         if uid == 0:
-            return True
+            return True # root is always allowed
         try:
             username = pwd.getpwuid(uid).pw_name
         except Exception as e:
             raise e
         if self._allowed_users is None or username in self._allowed_users:
             return True
+
+        # check if user is "padsi"
+        try:
+            if pwd.getpwnam("padsi").pw_uid==uid:
+                return True
+        except Exception:
+            syslog.syslog(syslog.LOG_WARNING, "It seems the 'padsi' user is not present in the system")
         return False
 
     def check_user_allowed(self, uid: int):
@@ -251,9 +243,7 @@ class VirtualMachine:
         return self._scripts.get(script_usage)
 
 
-def load_vm_file(
-    path: str, root_path: str, named_netres: dict[str, NetworkRessources] | None
-) -> tuple[str, dict[VMUsage, VirtualMachine | None]]:
+def load_vm_file(path: str, root_path: str, named_netres: dict[str, NetworkRessources] | None) -> tuple[str, dict[VMUsage, VirtualMachine | None]]:
     """Load the contents of a .vm file as a dictionary indexed by VMUsage"""
     with open(path, "r") as fd:
         data = json.load(fd)
@@ -351,3 +341,11 @@ def load_vm_file(
             else:
                 res[usage] = None
         return (vm_id, res)
+
+def strip_vm_id(vm_id: str) -> str:
+    if vm_id is None:
+        raise Exception("virtual machine not specified")
+    vm_id = vm_id.strip()
+    if vm_id == "":
+        raise Exception("invalid empty VM ID")
+    return vm_id

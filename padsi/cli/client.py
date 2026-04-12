@@ -44,11 +44,11 @@ class VMVersionsSet:
 
     @classmethod
     def from_data(cls, data:dict) -> VMVersionsSet:
-        return cls(data["base-staged"], data["user-versions"], data["snapshot-versions"])
+        return cls(data["staged"], data["user-versions"], data["snapshot-versions"])
 
     def serialize(self) -> dict:
         return {
-            "base-staged": self.base_staged,
+            "staged": self.base_staged,
             "user-versions": self.user_versions,
             "snapshot-versions": self.snapshot_versions
         }
@@ -134,7 +134,7 @@ class VMStatus:
             raise Exception(f"Unknown VM version '{vmversion}'")
         return vmversion if infos.nickname is None else f"{infos.nickname} ({vmversion})"
 
-    def get_vm_version_description(self, vmversion:str, zone_filtered:bool=False) -> str:
+    def get_vm_version_description(self, vmversion:str, zone_name:str|None, zone_filtered:bool) -> str:
         infos:VMVersionInfo|None=self.infos_vm_versions.get(vmversion)
         if infos is None:
             raise Exception(f"Unknown VM version '{vmversion}'")
@@ -144,7 +144,7 @@ class VMStatus:
             parts.append(infos.dependencies)
         if infos.state is not None:
             parts.append(infos.state)
-        if infos.zone is not None and not zone_filtered:
+        if infos.zone is not None and not zone_filtered and infos.zone!=zone_name:
             parts.append(f"in zone '{infos.zone}'")
         return ", ".join(parts)
 
@@ -221,12 +221,13 @@ class BaseClient:
                 raise Exception(exp)
         return data
 
-def print_vm_status(status:VMStatus, verbose:bool, use_json:bool, indent:str="    ", zone_filtered:bool=False):
+def print_vm_status(status:VMStatus, zone_name:str|None, verbose:bool, use_json:bool, indent:str="    ", zone_filtered:bool=False):
     if use_json:
         data=status.serialize()
         print(f"{json.dumps(data, indent=4)}")
         return
 
+    is_admin=os.geteuid()<1000
     base_versions=status.base_vm_versions
     user_versions=status.vm_versions.user_versions
     snap_versions=status.vm_versions.snapshot_versions
@@ -236,7 +237,7 @@ def print_vm_status(status:VMStatus, verbose:bool, use_json:bool, indent:str="  
             print(f"{indent}staged ({status.vm_versions.base_staged})")
         for vmversion in base_versions+user_versions+snap_versions:
             name=status.get_vm_version_display_name(vmversion)
-            descr=status.get_vm_version_description(vmversion, zone_filtered)
+            descr=status.get_vm_version_description(vmversion, zone_name, zone_filtered)
             if descr is not None:
                 print(f"{indent}{name}: {descr}")
             else:
@@ -247,7 +248,7 @@ def print_vm_status(status:VMStatus, verbose:bool, use_json:bool, indent:str="  
                     for event in hist:
                         print(f"{indent*2}{event}")
 
-    if len(base_versions)==0:
+    if not is_admin and len(base_versions)==0:
         if status.vm_versions.base_staged is None or status.vm_versions.base_staged!=padsi.run.VMState.STOPPED:
             print("No base VM version defined yet, use 'padsi-cli vm-install' to create one")
         else:
@@ -258,22 +259,22 @@ def print_vm_status(status:VMStatus, verbose:bool, use_json:bool, indent:str="  
         header_done=False
         user_versions=userset.user_versions
         snap_versions=userset.snapshot_versions
-        if len(user_versions)>0 or len(snap_versions)>0:
-            if userset.base_staged is not None:
-                if not header_done:
-                    print(f"For user {uid:}")
-                    header_done=True
-                print(f"{indent}{uid}/staged ({userset.base_staged})")
-            for vmversion in user_versions+snap_versions:
-                name=status.get_vm_version_display_name(vmversion)
-                descr=status.get_vm_version_description(vmversion, zone_filtered)
-                if not header_done:
-                    print(f"For user {uid:}")
-                    header_done=True
-                if descr is not None:
-                    print(f"{indent}{name}: {descr}")
-                else:
-                    print(f"{indent}{name}")
+
+        if userset.base_staged is not None:
+            if not header_done:
+                print(f"For user {uid:}")
+                header_done=True
+            print(f"{indent}{uid}/staged ({userset.base_staged})")
+        for vmversion in user_versions+snap_versions:
+            name=status.get_vm_version_display_name(vmversion)
+            descr=status.get_vm_version_description(vmversion, zone_name, zone_filtered)
+            if not header_done:
+                print(f"For user {uid:}")
+                header_done=True
+            if descr is not None:
+                print(f"{indent}{name}: {descr}")
+            else:
+                print(f"{indent}{name}")
 
     if not zone_filtered:
         # possible commits

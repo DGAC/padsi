@@ -133,6 +133,8 @@ class VMVersion:
 
     @property
     def zone_name(self) -> str|None:
+        """Associated zone name, if (exterbally) defined
+        """
         return self._zone_name
 
     @zone_name.setter
@@ -384,7 +386,9 @@ class VMVersion:
         """Copy the specified files, and initialize a new infos. file
         """
         if self.is_complete:
-            raise Exception("Can't import files: VM version already exists")
+            if self.staged:
+                raise Exception("A staged VM version already exists")
+            raise Exception(f"VM version {str(self)} already exists")
         try:
             os.makedirs(os.path.dirname(self.image_file), exist_ok=True)
             shutil.copyfile(hdd_file, self.image_file)

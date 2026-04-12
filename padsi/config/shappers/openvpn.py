@@ -79,7 +79,8 @@ class OpenVPNTrafficShaper(TrafficShaper):
                     res=proc.returncode == 0
             except subprocess.TimeoutExpired:
                 res=False
-        syslog.syslog(syslog.LOG_INFO, f"OpenVPN tshaper {self.name} is {res}")
+        if not res:
+            syslog.syslog(syslog.LOG_INFO, f"OpenVPN tshaper {self.name} is {'functional' if res else 'NOT functionnal'}")
         return res
 
     @property

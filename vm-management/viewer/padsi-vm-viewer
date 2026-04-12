@@ -145,7 +145,7 @@ class VMViewerApplication(Gtk.Application):
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
-        self.hold()  # don't close the application when the user closes the top window (user self.release() to actually quit)
+        self.hold()  # don't close the application when the user closes the top window (use self.release() to actually quit)
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self.handle_usr1_signal)
 
         self._http_thread=threading.Thread(target=self._check_vm_session_opened)

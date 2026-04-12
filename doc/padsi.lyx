@@ -826,7 +826,7 @@ name "VM-version"
 
 \begin_layout Standard
 As stated above,
- VM in PADSI are meant to be short lived (depending of course on the user's use cases),
+ virtual machines in PADSI are meant to be short lived (depending of course on the user's use cases),
  which is why PADSI distinguishes a VM's definition as presented section 
 \begin_inset CommandInset ref
 LatexCommand ref
@@ -838,7 +838,7 @@ nolink "false"
 
 \end_inset
 
- and all the different versions in terms of actual VM disk image files which can exist at any given time.
+ from all the different versions in terms of actual VM disk image files which can exist at any given time.
  Specifically,
  a 
 \begin_inset Quotes eld
@@ -918,24 +918,7 @@ running
 
 ,
  PADSI actually uses the files associated to a specific VM version.
-\end_layout
-
-\begin_layout Standard
-Then,
- based on this notion of VM version,
- PADSI defines a VM version's life cycle with which:
-\end_layout
-
-\begin_layout Itemize
-administrators can install and update a VM;
-\end_layout
-
-\begin_layout Itemize
-end users can run one or more VM simultaneously all the while administrators update the VM.
-\end_layout
-
-\begin_layout Standard
-This is done is a way such that the disk space used by the VM versions is kept to a minimum and that users and administrators can do their jobs at the same time (thus without requiring any sort of coordination).
+ This is done is a way such that the disk space used by the VM versions is kept to a minimum and that users and administrators can do their jobs at the same time (thus without requiring any sort of coordination).
 \end_layout
 
 \begin_layout Subsubsection
@@ -957,12 +940,13 @@ VM master
 \series bold
 user customization
 \series default
- phase of the VM.
- This phase at least:
+ phase of the VM,
+ which,
+ at least:
 \end_layout
 
 \begin_layout Itemize
-creates the user in the VM (with the same name and possibly UID as in the host);
+creates the user in the VM (with the same name and possibly UID/GID as in the host);
  and
 \end_layout
 
@@ -1383,11 +1367,21 @@ Zone service
 \end_layout
 
 \begin_layout Standard
-PADSI also allows to use a trimmed down version of the 
+The 
+\series bold
+PADSI zone service
+\series default
+ (the 
+\family typewriter
+zone-service
+\family default
+ process),
+ of which an instance is spawned by the PADSI user service for each zone which is started,
+ is a small service available for processes running in a zone (and its associated infrastructure) which allows to use a trimmed down version of the 
 \family typewriter
 padsi-cli
 \family default
- tool from within a zone for example to start virtual machines in the zone or to perform web redirection (refer to section 
+ tool from within the zone (for example to start virtual machines) or to perform web redirection (refer to section 
 \begin_inset CommandInset ref
 LatexCommand ref
 reference "Web-redirection"
@@ -1399,22 +1393,10 @@ nolink "false"
 \end_inset
 
 ).
- This is performed by the 
-\series bold
-PADSI zone service
-\series default
- process (the 
-\family typewriter
-zone-service
-\family default
- process) of which an instance is spawned by the PADSI user service for each zone which is started.
 \end_layout
 
 \begin_layout Standard
-More specifically,
- depending on when the process accessing the services of the PADSI zone service are located,
- they may have access to only a subset of the features.
- The following diagram shows the associated architecture:
+The following diagram shows the associated architecture:
 \end_layout
 
 \begin_layout Standard
@@ -1455,7 +1437,18 @@ admin.
 \family typewriter
 admin-service
 \family default
- process) which sets up the administration namespaces according to the configuration.
+ process) which:
+\end_layout
+
+\begin_layout Itemize
+creates the administration namespaces according to the configuration;
+\end_layout
+
+\begin_layout Itemize
+allows system administrators to perform virtual machine's files manipulations (import,
+ load,
+ save,
+ ...)
 \end_layout
 
 \begin_layout Standard
@@ -1469,7 +1462,7 @@ padsi
 \end_inset
 
  system user,
- also communicates with the systemd service in the same way as the user service does,
+ also communicates with the system service in the same way as the user service does,
  for the same purposes.
  It also offers some REST API which can only be used by the root user or the 
 \begin_inset Quotes eld
@@ -5558,13 +5551,16 @@ literal "false"
 \end_inset
 
  process and not via libvirt or other kind of VM management.
- End users are not however by default allowed to install themselves VM,
+ End users are not however by default allowed to install themselves virtual machines,
  this role is dedicated to system administrators which:
 \end_layout
 
-\begin_layout Itemize
-install a VM from traditional boot medias provided by the selected OS's manufacturer,
- leading to the creation of a 
+\begin_layout Enumerate
+install a VM from traditional boot medias provided by the selected OS's manufacturer;
+\end_layout
+
+\begin_layout Enumerate
+import that newly created VM (via its disk image and UEFI firmware files) to create a 
 \begin_inset Quotes eld
 \end_inset
 
@@ -5576,11 +5572,7 @@ base
 \begin_inset Quotes erd
 \end_inset
 
- VM;
-\end_layout
-
-\begin_layout Itemize
-make that 
+ VM (a 
 \begin_inset Quotes eld
 \end_inset
 
@@ -5588,14 +5580,14 @@ base
 \begin_inset Quotes erd
 \end_inset
 
- VM available to users;
+ VM can also be saved on a PADSI system and loaded into another one);
 \end_layout
 
-\begin_layout Itemize
-update the VM when deemed necessary for instance to apply security patches or modify the VM's configuration;
+\begin_layout Enumerate
+update the VM when deemed necessary (for instance to apply security patches or modify the VM's configuration);
 \end_layout
 
-\begin_layout Itemize
+\begin_layout Enumerate
 make that updated 
 \begin_inset Quotes eld
 \end_inset
@@ -5757,7 +5749,8 @@ read-only
 \end_inset
 
 .
- This is what is deployed by system administrators;
+ This is what is deployed by system administrators.
+ A base version is not associated to any zone or any end user.
 \end_layout
 
 \begin_layout Itemize
@@ -5769,7 +5762,7 @@ USER
  a VM version which has been customized for a specific user (user name,
  ID,
  etc.).
- A USER VM version is always a snapshot of a BASE VM version and also must be considered as 
+ A user VM version is always a snapshot of a BASE VM version and also must be considered as 
 \begin_inset Quotes eld
 \end_inset
 
@@ -5779,7 +5772,9 @@ read-only
 
  as,
  once created,
- it is never directly used to run a VM;
+ it is never directly used to run a VM.
+ A user version is always associated to a zone (i.e.
+ the customization processus will occur once per zone and per base VM version) and an end user.
 \end_layout
 
 \begin_layout Itemize
@@ -5789,12 +5784,12 @@ SNAPSHOT
 \series default
 :
  a VM version which is actually run by the end user.
- A SNAPSHOT VM version is always a snapshot of a USER VM version and can be given a nickname as the end user is allowed to run several SNAPSHOT VMs at the same time.
+ A snapshot VM version is always a snapshot of a user VM version and can be given a nickname as the end user is allowed to run several snapshot VMs at the same time.
+ A snapshot version is also always associated to a zone and an end user.
 \end_layout
 
 \begin_layout Standard
-To make sure end users can run VMs while at the same time an administrator can update the VM (or,
- more specifically can create a VM version and run the VM based on that VM version),
+To make sure end users can run VMs while at the same time an administrator can update the base VM,
  PADSI introduces the notion of a 
 \begin_inset Quotes eld
 \end_inset
@@ -5820,7 +5815,8 @@ published
 \end_inset
 
  and declared usable by the end user.
- 
+ The staging area is not associated to any zone,
+ but is associated to an end user.
 \end_layout
 
 \begin_layout Standard
@@ -5933,29 +5929,36 @@ VM version installation / import
 \end_layout
 
 \begin_layout Standard
-VM versions can be installed from an OS's manufacturer ISO image or imported from an existing VM disk image (a VM version also be loaded from an archive of an already existing VM version possibly on another PADSI instance).
+VM versions can be installed from an OS's manufacturer ISO image (like any virtual machine can be installed) or imported from an existing VM disk image (a VM version also be loaded from an archive of an already existing VM version possibly on another PADSI system,
+ refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "VM-save-load"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+).
 \end_layout
 
 \begin_layout Standard
-The workflow is as follows:
+The installation workflow is as follows:
 \end_layout
 
 \begin_layout Enumerate
-The process (installation,
- import or load) creates a staged VM version (replacing any previous one unless that VM version was not marked as discarded);
+The installation process creates a staged VM version (replacing any previous one unless that VM version was not marked as discarded);
 \end_layout
 
 \begin_layout Enumerate
 If deemed Ok by the administrator,
- the VM version is then published to create a 
-\begin_inset Quotes eld
-\end_inset
+ the VM version is then published to create a base VM version.
+\end_layout
 
-base
-\begin_inset Quotes erd
-\end_inset
-
- VM version.
+\begin_layout Standard
+The import workflow is more direct as the import process directly creates a base VM version.
 \end_layout
 
 \begin_layout Standard
@@ -5975,10 +5978,10 @@ VM version run
 
 \begin_layout Standard
 When a user wants to run a new VM,
- PADSI will automatically create a USER VM version (based on the last BASE VM version available) if there is not yet one,
- and only then create a SNAPSHOT VM version to actually run the VM on.
- If the USER VM version for that user already exists,
- then a SNAPSHOT VM version will simply be created from it.
+ PADSI will automatically create a user VM version (based on the last base VM version available) if there is not yet one,
+ and only then create a snapshot VM version to actually run the VM on.
+ If the user VM version for that user already exists,
+ then a snapshot VM version will simply be created from it.
 \end_layout
 
 \begin_layout Standard
@@ -5993,14 +5996,14 @@ When a user wants to run a new VM,
 \end_layout
 
 \begin_layout Subsubsection
-VM version Update
+VM version update
 \end_layout
 
 \begin_layout Standard
 To update an existing VM version,
- PADSI simply creates a new staged VM version based on the last available BASE VM version and run the VM with this VM version.
+ PADSI simply creates a new staged VM version based on the last available base VM version and run the VM with this VM version.
  Once the administrator is satisfied with the updated VM version,
- he can ppublish it as a new BASE VM version:
+ he can publish it as a new base VM version:
 \end_layout
 
 \begin_layout Standard
@@ -6015,11 +6018,18 @@ To update an existing VM version,
 \end_layout
 
 \begin_layout Standard
-Note that the new BASE VM version ends up being a snapshot of the previous BASE VM version.
+Note that the new BASE VM version ends up being a snapshot of the previous base VM version.
 \end_layout
 
 \begin_layout Subsubsection
 VM version save and load
+\begin_inset CommandInset label
+LatexCommand label
+name "VM-save-load"
+
+\end_inset
+
+
 \end_layout
 
 \begin_layout Standard
@@ -6194,24 +6204,24 @@ VM versions merge and cleanups
 
 \begin_layout Standard
 Because of the way PADSI uses snapshots during the lifetime of VM versions,
- there can be quite long string of actual QEMU image files linked together associated to BASE VM versions.
+ there can be quite long string of actual QEMU image files linked together associated to base VM versions.
  At some point though,
- the SNAPSHOT VM versions will all be snapshots of USER VM versions based on the latest BASE VM version,
- with some USER VM versions having become useless.
+ the snapshot VM versions will all be snapshots of user VM versions based on the latest base VM version,
+ with some user VM versions having become useless.
  To avoid clutter,
  PADSI then proposes to:
 \end_layout
 
 \begin_layout Itemize
-remove discarded SNAPSHOT VM versions;
+remove discarded snapshot VM versions;
 \end_layout
 
 \begin_layout Itemize
-remove unused (non referenced by any SNAPSHOT VM version) USER VM versions;
+remove unused (non referenced by any snapshot VM version) user VM versions;
 \end_layout
 
 \begin_layout Itemize
-merge BASE VM versions with the BASE VM version of which it is a snapshot.
+merge base VM versions with the base VM version of which it is a snapshot.
  Note that this operation is only possible when no other VM version references the 
 \begin_inset Quotes eld
 \end_inset
@@ -7269,6 +7279,22 @@ Both versions are installed in the
 \family default
 ,
  the actual version depends on the execution environment.
+\end_layout
+
+\begin_layout Standard
+The following diagram shows which program is run depending on the context,
+ and to which actual service it connects to:
+\end_layout
+
+\begin_layout Standard
+\align center
+\begin_inset Graphics
+	filename cli-variants.png
+	width 90col%
+
+\end_inset
+
+
 \end_layout
 
 \begin_layout Subsubsection
@@ -13661,6 +13687,56 @@ virtiofs
 
 \begin_layout Itemize
 VM monitor
+\end_layout
+
+\begin_layout Subsection
+Command line tools
+\end_layout
+
+\begin_layout Subsubsection
+
+\family typewriter
+padsi-cli
+\end_layout
+
+\begin_layout Standard
+Refer to 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "padsi-cli"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+ for the variants of the 
+\family typewriter
+padsi-cli
+\family default
+ tool depending on the environment in which it is executed.
+ All the variants use the same structure as they all use a 
+\begin_inset Quotes eld
+\end_inset
+
+Client
+\begin_inset Quotes erd
+\end_inset
+
+ object to actually connect to and use the API of the various services (user service,
+ admin service or zone service):
+\end_layout
+
+\begin_layout Standard
+\align center
+\begin_inset Graphics
+	filename cli-implementations.png
+	width 70col%
+
+\end_inset
+
+
 \end_layout
 
 \begin_layout Subsection

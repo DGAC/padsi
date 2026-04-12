@@ -44,7 +44,7 @@ class AdminVMFiles:
         self._uid=uid
 
         self._users:set[int]=set()
-        self._vmfs:dict[int,VMFiles]={}
+        self._vmfs:dict[int,VMFiles]={} # indexec by UID
         self._all_versions:set[VMVersion]=set()
         self._all_versions_by_backing_image:dict[str,set[VMVersion]]={} # key=backing image file
 
@@ -56,7 +56,7 @@ class AdminVMFiles:
             self._analyse()
 
     def get_staged(self, vtype:VMVersionType, uid:int|None=None) -> VMVersion|None:
-        """Tell if there is a staging version for the specified user (or the object's user if user is not specified)
+        """Tell if there is a staging version for the specified user (or this object's default user if user is not specified)
         """
         vmf=self._vmfs.get(self._uid if uid is None else uid)
         return vmf.get_staged(vtype) if vmf is not None else None
@@ -68,21 +68,28 @@ class AdminVMFiles:
     def get_vm_files(self, uid:int|None=None) -> VMFiles|None:
         return self._vmfs.get(self._uid if uid is None else uid)
 
-    def get_version(self, version_type:VMVersionType, version:int, uid:int|None=None) -> VMVersion|None:
+    def get_vm_version(self, version_type:VMVersionType, version:int, zone_name:str|None, uid:int|None=None) -> VMVersion|None:
         match version_type:
             case VMVersionType.BASE:
                 return self.get_base_version(version)
             case VMVersionType.USER:
-                return self.get_user_version(version, uid)
+                if zone_name is None:
+                    raise Exception("no zone specified (user VM versions are bound to zones)")
+                return self.get_user_version(version, zone_name, uid)
             case VMVersionType.SNAP:
-                return self.get_snapshot_version(version, uid)
+                if zone_name is None:
+                    raise Exception("no zone specified (snapshot VM versions are bound to zones)")
+                return self.get_snapshot_version(version, zone_name, uid)
             case _:
                 raise Exception(f"CODEBUG: unknown VMVersionType {version_type}") # pyright: ignore
 
     @property
-    def base_versions(self):
-        vmf=self._vmfs.get(self._uid)
-        return vmf.base_versions if vmf is not None else []
+    def base_versions(self) -> list[VMVersion]:
+        res:set[VMVersion]=set()
+        for (_, vmf) in self._vmfs.items():
+            for vmversion in vmf.base_versions:
+                res.add(vmversion)
+        return list(res)
 
     def get_base_version(self, version:int) -> VMVersion|None:
         vmf=self._vmfs.get(self._uid)
@@ -90,23 +97,23 @@ class AdminVMFiles:
 
     def user_versions(self, uid:int|None=None) -> list[VMVersion]:
         vmf=self._vmfs.get(self._uid if uid is None else uid)
-        return vmf.user_versions if vmf is not None else []
+        return vmf.get_all_user_versions() if vmf is not None else []
 
-    def get_user_version(self, version:int, uid:int|None=None) -> VMVersion|None:
+    def get_user_version(self, version:int, zone_name:str, uid:int|None=None) -> VMVersion|None:
         vmf=self._vmfs.get(self._uid if uid is None else uid)
-        return vmf.get_user_version(version) if vmf is not None else None
+        return vmf.get_user_version(version, zone_name) if vmf is not None else None
 
     def snapshot_versions(self, uid:int|None=None) -> list[VMVersion]:
         vmf=self._vmfs.get(self._uid if uid is None else uid)
-        return vmf.snapshot_versions if vmf is not None else []
+        return vmf.get_all_snapshot_versions() if vmf is not None else []
 
-    def get_snapshot_version(self, version:int, uid:int|None=None) -> VMVersion|None:
+    def get_snapshot_version(self, version:int, zone_name:str, uid:int|None=None) -> VMVersion|None:
         vmf=self._vmfs.get(self._uid if uid is None else uid)
-        return vmf.get_snapshot_version(version) if vmf is not None else None
+        return vmf.get_snapshot_version(version, zone_name) if vmf is not None else None
 
-    def get_named_snapshot_version(self, nickname:str, uid:int|None=None) -> VMVersion|None:
+    def get_named_snapshot_version(self, zone_name:str, nickname:str, uid:int|None=None) -> VMVersion|None:
         vmf=self._vmfs.get(self._uid if uid is None else uid)
-        return vmf.get_named_snapshot_version(nickname) if vmf is not None else None
+        return vmf.get_named_snapshot_version(zone_name, nickname) if vmf is not None else None
 
 
     @property
@@ -246,9 +253,13 @@ class AdminVMFiles:
             raise e
 
     def get_version_info(self, vmversion:VMVersion) -> VMVersionInfo:
-        vmf=self._vmfs.get(self._uid if vmversion.uid is None else vmversion.uid)
+        vmf=None
+        for (uid, vmfiles) in self._vmfs.items():
+            if vmfiles.get_vm_version_by_id(vmversion.id) is not None:
+                vmf=vmfiles
+                break
         if vmf is None:
-            raise Exception(f"No VM version '{vmversion}' found")
+            raise Exception(f"Could not determine the VMFiles containing '{vmversion}'")
 
         parent_vmversion=vmf.get_parent_version(vmversion)
 
@@ -289,7 +300,7 @@ class AdminVMFiles:
     def deserialize(cls, data:dict[str,Any]) -> AdminVMFiles:
         def _get_vmversion(vmfs:list[VMFiles], vmvid:str) -> VMVersion:
             for vmf in vmfs:
-                vmversion=vmf.get_version_by_id(vmvid)
+                vmversion=vmf.get_vm_version_by_id(vmvid)
                 if vmversion is not None:
                     return vmversion
             raise Exception(f"VMVersion with id '{vmvid}' not found")

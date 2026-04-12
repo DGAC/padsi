@@ -30,10 +30,12 @@ from .zone_apps import ZoneApps
 from .zone_infra import ZoneInfra
 from .zone_userfiles import ZoneUserFiles
 from .zone_vm import ZoneVM, zone_vm_setup
+from .vm_proxy import create_vm_dirs, stage_imported_files, vm_load, vm_publish, vm_merge
 
 __all__=[
     "network_infra_setup", "network_infra_cleanup", "network_infra_attach_zone_apps",
     "network_infra_create_attach_netns", "network_infra_delete_netns", "network_infra_dnat_incoming", "external_zone_iface",
     "ZoneDBusRouter", "ZoneInfra", "ZoneApps", "ZoneVM", "zone_vm_setup", "ZoneUserFiles",
-    "AdminVMFiles", "VMArchive", "VMManagementFiles", "parse_vm_version", "VMVersionType", "VMVersion", "VMState", "VMVersionInfo", "VMFiles"
+    "AdminVMFiles", "VMArchive", "VMManagementFiles", "parse_vm_version", "VMVersionType", "VMVersion", "VMState", "VMVersionInfo", "VMFiles",
+    "create_vm_dirs", "stage_imported_files", "vm_load", "vm_publish", "vm_merge"
 ]

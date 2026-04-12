@@ -19,7 +19,7 @@
 # along with this software.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-VERSION=0.9.28
+VERSION=0.9.29-pre
 
 set -e
 
@@ -240,6 +240,6 @@ echo -n "building Windows VM padsi-agent package "
 vm_win_pkg=$(build_padsi_vm_agent_package_windows)
 echo "=> $vm_win_pkg"
 
-echo -n "building complete padsi package "
+echo -n "building main padsi package "
 pkg=$(create_main_package "$vm_lx_pkg" "$vm_win_pkg")
 echo "=> $pkg"

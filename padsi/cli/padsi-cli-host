@@ -48,6 +48,7 @@ import padsi.misc
 from firewall import Endpoint, NetFlow
 from padsi.cli.client import print_vm_status
 from padsi.cli.client_host import Client, GlobalStatus
+from padsi.cli.client_admin import ClientAdmin
 from padsi.config import ResolvRule, TrafficShaper
 from padsi.config.network import FWRule
 
@@ -158,21 +159,24 @@ subparser.set_defaults(cmde="vm-discard")
 subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to discard")
 subparser.add_argument("vm-name", type=str, nargs=argparse.REMAINDER,
                        help="VM name(s)/version(s) in the form '[<user ID>/]<base|user|snapshot>.[version]' or '[<user ID>/]staged' or a nickname")
+subparser.add_argument("--zone-name", type=str, help="Zone in which the VM version is (must be specified for user and snapshot VM versions)")
 subparser.add_argument("--force", action="store_true", help="Force the removal")
 
 subparser=subparsers.add_parser("vm-clean", help="Discard all the VM versions which can safely be discarded")
 subparser.set_defaults(cmde="vm-clean")
 subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to discard")
+subparser.add_argument("--zone-name", type=str, help="Zone to clean (defaults to all zones if not specified")
 
 subparser=subparsers.add_parser("vm-merge", help="Merge the contents of a VM version with the VM version it comes from")
 subparser.set_defaults(cmde="vm-merge")
 subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to merge")
 subparser.add_argument("vm-name", type=str, help="VM version in the form '[<user ID>/]<base|user|snapshot>.<version>'")
+subparser.add_argument("--zone-name", type=str, help="Zone in which the VM version is (must be specified for user and snapshot VM versions)")
 subparser.add_argument("--message", "-m", type=str, help="Merge comment")
 
 subparser=subparsers.add_parser("vm-status", help="List the status of a VM (files, ...)")
 subparser.set_defaults(cmde="vm-status")
-subparser.add_argument("zone-name", type=str, help="Zone in which the virtual machine is used")
+subparser.add_argument("--zone-name", type=str, help="Zone to clean (defaults to all zones if not specified")
 subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to filter")
 
 subparser=subparsers.add_parser("vm-start", help="Run a new or existing virtual machine in a specific zone. If the VM is already running, it will be shown")
@@ -791,8 +795,8 @@ def print_user_zone_infos(gconf:padsi.config.Configuration, zone:padsi.config.Zo
     print("Clipboard sharing restrictions")
     pzones=gconf.get_clipboard_allowed_zones(zone.name)
     if zone.name not in pzones:
-        pzones.append(zone.name)
-    pzones.sort()
+        pzones.add(zone.name)
+    pzones=sorted(pzones)
     print(f"{_indent}can paste data copied from zones: {', '.join(pzones)}")
     czones:list[str]=[zone.name]
     for zname in gconf.get_zones_names():
@@ -899,7 +903,8 @@ def print_net_access(conf:padsi.config.Configuration, endpoint:str, text_match:b
 
 def require_padsi_service():
     if client is None:
-        raise client_exception # pyright: ignore
+        assert(client_exception)
+        raise client_exception
 
 def prepare_extra_isos(resources:list[str]|None) -> tuple[list[str],str|None]:
     """For each file name in the specified list:
@@ -943,19 +948,6 @@ def prepare_extra_isos(resources:list[str]|None) -> tuple[list[str],str|None]:
         raise Exception(f"Invalid extra list of files: {str(e)}")
     return (res1, res2)
 
-def _bytes_to_human(nb_bytes:int) -> str:
-    if nb_bytes<1000:
-        return "< 1 Kb"
-    elif nb_bytes<1000_000:
-        size=nb_bytes/1000
-        return f"{size:.2f} Kb"
-    elif nb_bytes<1000_000_000:
-        size=nb_bytes/1000_000
-        return f"{size:.2f} Mb"
-    else:
-        size=nb_bytes/1000_000_000
-        return f"{size:.2f} Gb"
-
 #
 # Main
 #
@@ -994,10 +986,14 @@ try:
             print_vms(load_config(), verbose, use_json)
 
         case "vm-discard":
-            require_padsi_service()
+            try:
+                require_padsi_service()
+            except PadsiServiceNotRunning:
+                client=ClientAdmin()
+            assert(client is not None)
             versions:list[str]=[]
             for vm_name in args["vm-name"]:
-                data=client.vm_discard(args["vm-id"], vm_name, force=args["force"]) # pyright: ignore
+                data=client.vm_discard(args["vm-id"], vm_name, args.get("zone_name"), force=args["force"])
                 versions+=data
             if use_json:
                 print(f"{json.dumps(versions, indent=4)}")
@@ -1009,8 +1005,11 @@ try:
                     print("No VM version specified")
 
         case "vm-clean":
-            require_padsi_service()
-            data=client.vm_clean(args["vm-id"]) # pyright: ignore
+            try:
+                require_padsi_service()
+            except PadsiServiceNotRunning:
+                client=ClientAdmin()
+            data=client.vm_clean(args["vm-id"], args.get("zone_name")) # pyright: ignore
             if use_json:
                 print(f"{json.dumps(data, indent=4)}")
             else:
@@ -1018,7 +1017,11 @@ try:
                     print(f"{vmversion}")
 
         case "vm-merge":
-            data=client.vm_merge(args["vm-id"], args.get("vm-name"), args["message"]) # pyright: ignore
+            try:
+                require_padsi_service()
+            except PadsiServiceNotRunning:
+                client=ClientAdmin()
+            data=client.vm_merge(args["vm-id"], args.get("vm-name"), args.get("zone_name"), args["message"]) # pyright: ignore
             if use_json:
                 print(f"{json.dumps(data, indent=4)}")
             else:
@@ -1045,23 +1048,47 @@ try:
                 print(f"VM version: {data['vm-version']}") # pyright: ignore
 
         case "vm-import":
-            require_padsi_service()
-            data=client.vm_import(args["vm-id"], args.get("hdd-file"), args.get("vars-file"), args["message"]) # pyright: ignore
+            try:
+                require_padsi_service()
+            except PadsiServiceNotRunning:
+                client=ClientAdmin()
+            assert(client is not None)
+
+            hdd_file=args["hdd-file"]
+            if not os.path.isabs(hdd_file):
+                hdd_file=os.path.join(os.path.realpath(os.path.curdir), hdd_file)
+            vars_file=args["vars-file"]
+            if not os.path.isabs(vars_file):
+                vars_file=os.path.join(os.path.realpath(os.path.curdir), vars_file)
+
+            data=client.vm_import(args["vm-id"], hdd_file, vars_file, args["message"])
             if use_json:
                 print(f"{json.dumps(data, indent=4)}")
             else:
-                print(f"VM version: {data['task']}") # pyright: ignore
+                print(f"VM version: {data}")
 
         case "vm-save":
-            # find the correct VM version to save
             conf=load_config()
-            require_padsi_service()
-            client.vm_save(conf, args["vm-id"], args["vm-name"], args["archive-file"], args.get("depend_at")) # pyright: ignore
+            try:
+                require_padsi_service()
+            except PadsiServiceNotRunning:
+                client=ClientAdmin()
+            assert(client is not None)
+
+            client.vm_save(conf, args["vm-id"], args["vm-name"], args["archive-file"], args.get("depend_at"))
 
         case "vm-load":
             conf=load_config()
-            require_padsi_service()
-            client.vm_load(conf, args["archive-file"], args["vm_id"], args["message"]) # pyright: ignore
+            try:
+                require_padsi_service()
+            except PadsiServiceNotRunning:
+                client=ClientAdmin()
+            assert(client is not None)
+
+            ar_file=args["archive-file"]
+            if not os.path.isabs(ar_file):
+                ar_file=os.path.join(os.path.realpath(os.path.curdir), ar_file)
+            client.vm_load(conf, ar_file, args["vm_id"], args["message"])
 
         case "vm-update":
             require_padsi_service()
@@ -1083,9 +1110,14 @@ try:
                 print(f"{json.dumps(data, indent=4)}") # TODO
 
         case "vm-status":
-            require_padsi_service()
-            print_vm_status(client.get_vm_status(args["vm-id"], args.get("zone-name"), verbose), verbose, use_json, _indent) # pyright: ignore
+            try:
+                require_padsi_service()
+            except PadsiServiceNotRunning:
+                client=ClientAdmin()
+            assert(client is not None)
 
+            zone_name=args.get("zone_name")
+            print_vm_status(client.get_vm_status(args["vm-id"], zone_name, verbose), zone_name, verbose, use_json, _indent)
         case "vm-start":
             if len(args)==0:
                 raise Exception("Invalid arguments")

@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import ipaddress
-import json
 import os
 import pwd
 import signal
@@ -45,6 +44,7 @@ import padsi.config
 import padsi.misc
 import padsi.namesgenerator as namesgenerator
 import padsi.run
+import padsi.run.vm_proxy as vm_proxy
 from padsi.simple_comm import Client, Message, MessageType, ServerProcessDied
 
 _debug = False
@@ -283,14 +283,6 @@ class Task:
     descr: str
     asyncio_task: asyncio.Task | None = None  # to keep the asyncio.Task alive
 
-
-def _strip_vm_id(vm_id: str) -> str:
-    if vm_id is None:
-        raise Exception("virtual machine not specified")
-    vm_id = vm_id.strip()
-    if vm_id == "":
-        raise Exception("invalid empty VM ID")
-    return vm_id
 
 
 class PadsiUserService:
@@ -1011,32 +1003,6 @@ class PadsiUserService:
     #
     # REST API
     #
-    def _check_privileges_on_vm_version(
-        self, vm_id: str, vmversion: padsi.run.VMVersion
-    ):
-        """Check the user has a right to manipulate a VM version"""
-        match vmversion.version_type:
-            case padsi.run.VMVersionType.BASE:
-                self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.UPDATE])
-            case padsi.run.VMVersionType.USER:
-                self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.RUN])
-            case padsi.run.VMVersionType.SNAP:
-                self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.RUN])
-            case _:
-                raise Exception(f"CODEBUG: Unhandled VMVersionType {vmversion.version_type}")  # pyright: ignore
-
-    def _get_vm_conf_for_usage(self, vm_id: str, usages: list[padsi.config.VMUsage] | None) -> padsi.config.VirtualMachine:
-        """Get the VM configuration for the specified usage(s), and check is user is actually allowed that usage"""
-        for usage in padsi.config.VMUsage if usages is None else usages:
-            vm_conf = self._gconf.get_vm(usage, vm_id)
-            if vm_conf is None:
-                raise Exception(f"Unknown VM '{vm_id}' or permission denied for user {self._uid}")
-            if vm_conf.is_user_allowed(self._uid):
-                return vm_conf
-        if usages is None:
-            raise Exception(f"Unknown VM '{vm_id}' or permission denied for user {self._uid}")
-        raise Exception(f"Unknown VM '{vm_id}' or permission denied for user {self._uid} to {', '.join([u.value for u in usages])}")
-
     def _get_zone_infos(self, izone: padsi.run.ZoneApps | padsi.run.ZoneVM, is_privileged: bool) -> dict:
         ready = izone.ready
         info = {
@@ -1229,31 +1195,14 @@ class PadsiUserService:
                 if not zone.get_virtual_machine(vm.id):
                     raise Exception(f"Virtual machine '{vm_id}' can't be used in zone")
 
-            if not os.path.exists(vm.directory):
-                result = {
-                    "vm-id": vm_id,
-                    "directory-exists": False,
-                    "base-vm-versions": [],
-                    "self-vm-versions": {
-                        "base-staged": None,
-                        "user-versions": [],
-                        "snapshot-versions": [],
-                    },
-                    "other-vm-versions": {},
-                    "commitable-vm-versions": [],
-                    "obsolete-vm-versions": [],
-                    "unused-files": [],
-                    "vm-versions-infos": {},
+            result = await self._call_system_service(
+                {
+                    "cmde": "vm-files-analyse",
+                    "vm-id": vm.id,
+                    "zone": zone_name,
+                    "verbose": verbose,
                 }
-            else:
-                result = await self._call_system_service(
-                    {
-                        "cmde": "vm-files-analyse",
-                        "vm-id": vm.id,
-                        "zone": zone_name,
-                        "verbose": verbose,
-                    }
-                )
+            )
             return json_response(result)
 
         except Exception as e:
@@ -1270,86 +1219,37 @@ class PadsiUserService:
         if izone.vm_viewer_host_pid is not None:
             os.kill(izone.vm_viewer_host_pid, signal.SIGUSR1)
 
-    async def _import_vm_version(
-        self,
-        task: Task,
-        vm_conf: padsi.config.VirtualMachine,
-        hdd_file: str,
-        vars_file: str,
-        message: str | None = None,
-    ):
+    async def _import_vm_version(self, task: Task, vm_id:str,
+        hdd_file: str, vars_file: str, message: str | None = None):
         try:
             syslog.syslog(syslog.LOG_INFO, f"Importing VM version with task {task.id}")
-            loop = asyncio.get_running_loop()
-            vm_files = await loop.run_in_executor(None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid)
-            await loop.run_in_executor(None, vm_files.stage_imported_files, hdd_file, vars_file, message)
+            return await vm_proxy.stage_imported_files(self._gconf, self._call_system_service,
+                vm_id, self._uid, self._gid, hdd_file, vars_file, message)
         except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Failed to import VM version with task {task.id}: {str(e)}")
+            msg=f"Failed to import VM version with task {task.id}: {str(e)}"
+            syslog.syslog(syslog.LOG_ERR, msg)
+            raise Exception(msg)
         finally:
             await self._mark_task_finished(task)
 
     async def _vm_post_import(self, vm_id: str, hdd_file: str, vars_file: str, message: str):
         # check request already being handled
-        task = Task(
-            f"vm_post:{vm_id}:import",
-            f"Importing VM '{vm_id}' from '{hdd_file}' and '{vars_file}' (msg: '{message}')",
-        )
+        task = Task(f"vm_post:{vm_id}:import",
+            f"Importing VM '{vm_id}' from '{hdd_file}' and '{vars_file}' (msg: '{message}')")
         try:
             await self._mark_task_started(task, ensure_unique=True, unique_descr="VM is already being imported")
-
-            vm_conf = self._gconf.get_vm(padsi.config.VMUsage.INSTALL, vm_id)
-            if vm_conf is None:
-                raise Exception(f"Unknown VM {vm_id}")
-            vm_conf.check_user_allowed(self._uid)
-
-            # ensure VM's common directories are created
-            await self._call_system_service(
-                {
-                    "cmde": "vm-create-common-dirs",
-                    "vm-id": vm_id,
-                    "usage": padsi.config.VMUsage.INSTALL.value,
-                }
-            )
-
-            # create the staging directory for the user
-            await self._call_system_service(
-                {
-                    "cmde": "vm-create-stage-dir",
-                    "vm-id": vm_conf.id,
-                    "usage": padsi.config.VMUsage.INSTALL.value,
-                }
-            )
-
-            # prepare VM version which will be returned
-            vm_files = padsi.run.VMFiles(vm_conf.directory, self._uid, self._gid, analyse=False)
-            vm_version = padsi.run.VMVersion(padsi.run.VMVersionType.BASE, vm_files.staging_directory)
-
-            # create an asyncio task to import the VM
-            task.asyncio_task = asyncio.create_task(self._import_vm_version(task, vm_conf, hdd_file, vars_file, message))
-
-            return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": task.descr})
+            task.asyncio_task = asyncio.create_task(self._import_vm_version(task, vm_id, hdd_file, vars_file, message))
+            return json_response({"vm-id": vm_id, "task": task.descr})
         except Exception as e:
             await self._mark_task_finished(task)
             raise e
 
-    async def _load_vm_versions(
-        self,
-        task: Task,
-        vm_conf: padsi.config.VirtualMachine,
-        extract_id: str,
-        message: str | None,
-    ):
+    async def _load_vm_versions(self, task: Task, vm_id:str, extract_id: str, message: str | None):
         """Actual asyncio task to load VM versions"""
         try:
             # identify all the VM versions which will be loaded and the dependencies if any
-            await self._call_system_service(
-                {
-                    "cmde": "vm-load",
-                    "vm-id": vm_conf.id,
-                    "extract-id": extract_id,
-                    "message": message,
-                }
-            )
+            await vm_proxy.vm_load(self._gconf, self._call_system_service, vm_id,
+                self._uid, self._gid, extract_id, message)
         except Exception as e:
             syslog.syslog(syslog.LOG_ERR, f"Failed to load VM versions with task {task.id}: {str(e)}")
         finally:
@@ -1362,69 +1262,13 @@ class PadsiUserService:
         )
         try:
             await self._mark_task_started(task, ensure_unique=True, unique_descr="VM is already being loaded")
-
-            vm_conf = self._gconf.get_vm(padsi.config.VMUsage.INSTALL, vm_id)
-            if vm_conf is None:
-                raise Exception(f"Unknown VM {vm_id}")
-            vm_conf.check_user_allowed(self._uid)
-
-            # ensure VM's common directories are created
-            await self._call_system_service(
-                {
-                    "cmde": "vm-create-common-dirs",
-                    "vm-id": vm_id,
-                    "usage": padsi.config.VMUsage.INSTALL.value,
-                }
-            )
-
-            # create the staging directory for the user
-            await self._call_system_service(
-                {
-                    "cmde": "vm-create-stage-dir",
-                    "vm-id": vm_conf.id,
-                    "usage": padsi.config.VMUsage.INSTALL.value,
-                }
-            )
-
-            # analyse and use the available files
-            vm_files = padsi.run.VMFiles(vm_conf.directory, self._uid, self._gid, analyse=False)
-            extract_dir = os.path.join(vm_files.staging_directory, extract_id)
-            if not os.path.isdir(extract_dir):
-                raise Exception(f"Resources directory '{extract_dir}' does not exist")
-
-            # analyse directory where the extracted files are to determine a target VM version and return
-            # it at this stage to the user before actually loading VM versions
-            try:
-                nb_vm_versions = 0
-                # VM versions to load
-                for fname in os.listdir(extract_dir):
-                    if fname.startswith("vm-version-"):
-                        nb_vm_versions += 1
-                # manifest
-                with open(os.path.join(extract_dir, "manifest.json"), "r") as fd:
-                    manifest = json.load(fd)
-                    if manifest.get("dependency-size") is not None:
-                        nb_vm_versions += 1
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Invalid saved VM versions' files structure or contents: {str(e)}")
-                raise Exception("Invalid saved VM versions' files structure or contents")
-
-            # prepare VM version which will be returned
-            vm_version = padsi.run.VMVersion(
-                padsi.run.VMVersionType.BASE,
-                vm_files.directory,
-                vm_files.next_base_version_number + nb_vm_versions - 1,
-            )
-
-            # create an asyncio task to import the VM
-            task.asyncio_task = asyncio.create_task(self._load_vm_versions(task, vm_conf, extract_id, message))
-
-            return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": task.descr})
+            task.asyncio_task = asyncio.create_task(self._load_vm_versions(task, vm_id, extract_id, message))
+            return json_response({"vm-id": vm_id, "task": task.descr})
         except Exception as e:
             await self._mark_task_finished(task)
             raise e
 
-    async def _vm_run_usage(self, vm_id: str, nickname: str | None, zone_name: str):
+    async def _vm_run(self, vm_id: str, nickname: str | None, zone_name: str):
         task: Task | None = None
         try:
             # determine VM and zone configs to use
@@ -1448,7 +1292,7 @@ class PadsiUserService:
             if nickname is None:
                 while True:
                     nname = namesgenerator.get_random_name()
-                    if vm_files.get_named_snapshot_version(nname) is None:
+                    if vm_files.get_named_snapshot_version(zone_name, nname) is None:
                         # nickname not used!
                         break
             elif not padsi.run.VMVersion.nickname_is_valid(nickname):
@@ -1459,18 +1303,10 @@ class PadsiUserService:
             # check request already being handled
             task = Task(
                 f"vm_post:{vm_id}:{padsi.config.VMUsage.RUN.value}:{nname}",
-                f"Starting VM '{vm_id}' with nickname '{nname}' ('{padsi.config.VMUsage.RUN}' usage)",
+                f"Starting VM '{vm_id}' with nickname '{nname}' ('{padsi.config.VMUsage.RUN.value}' usage)",
             )
             await self._mark_task_started(task, ensure_unique=True, unique_descr=f"VM {vm_id} '{nname}' is already being started")
-
-            # ensure VM versions' common directories are created
-            await self._call_system_service(
-                {
-                    "cmde": "vm-create-common-dirs",
-                    "vm-id": vm_id,
-                    "usage": padsi.config.VMUsage.RUN.value,
-                }
-            )
+            await vm_proxy.create_vm_dirs(self._call_system_service, vm_id)
 
             # comply with network requirements
             if zone_conf.network_spec is not None:
@@ -1480,7 +1316,7 @@ class PadsiUserService:
             await self._prepare_zone_dirs(zone_conf, vm_conf=vm_conf)
 
             # determine actual VM version to use
-            vm_version: padsi.run.VMVersion | None = vm_files.get_named_snapshot_version(nname)
+            vm_version: padsi.run.VMVersion | None = vm_files.get_named_snapshot_version(zone_name, nname)
             if vm_version is not None and vm_version.state==padsi.run.VMState.DISCARDED:
                 # get rid of that VM version
                 if _debug:
@@ -1505,7 +1341,7 @@ class PadsiUserService:
                 try:
                     (userid, _vtype, vnum, staged, pnname) = padsi.run.parse_vm_version(nname)
                     if vnum is not None:
-                        vm_version = vm_files.get_snapshot_version(vnum)
+                        vm_version = vm_files.get_snapshot_version(vnum, zone_name)
                         if vm_version is None:
                             raise Exception
                         # check we have a correct VM version
@@ -1525,7 +1361,7 @@ class PadsiUserService:
                     await self._mark_task_finished(task)
                     return json_response(None)
                 else:
-                    task.asyncio_task = asyncio.create_task(self._vm_run(task, zone_conf, vm_conf, vm_version))
+                    task.asyncio_task = asyncio.create_task(self._vm_run_raw(task, zone_conf, vm_conf, vm_version))
                     return json_response(
                         {
                             "vm-id": vm_id,
@@ -1537,8 +1373,8 @@ class PadsiUserService:
                     )
             else:
                 # start a new snapshot based on the last user VMVersion (creating one if none exist)
-                user_vmversion = vm_files.last_user_version
-                if user_vmversion is None or vm_files.last_user_version_is_obsolete():
+                user_vmversion = vm_files.get_last_user_version(zone_name)
+                if user_vmversion is None or vm_files.last_user_version_is_obsolete(zone_name):
                     # instanciate a USER VM version, customization will be done elsewhere
                     if vm_files.last_base_version is None:
                         raise Exception("No BASE VM version available")
@@ -1570,7 +1406,7 @@ class PadsiUserService:
                 else:
                     vm_version = vm_files.create_snaphot_version(zone_conf.name, user_vmversion)
                     vm_version.nickname = nname
-                    task.asyncio_task = asyncio.create_task(self._vm_run(task, zone_conf, vm_conf, vm_version))
+                    task.asyncio_task = asyncio.create_task(self._vm_run_raw(task, zone_conf, vm_conf, vm_version))
                     return json_response(
                         {
                             "vm-id": vm_id,
@@ -1585,16 +1421,8 @@ class PadsiUserService:
                 await self._mark_task_finished(task)
             raise e
 
-    async def _vm_install_or_update_usage(
-        self,
-        usage: padsi.config.VMUsage,
-        vm_id: str,
-        nickname: str | None,
-        zone_name: str,
-        boot_iso: str | None,
-        extra_isos: list[str] | None,
-        iso_file: str | None,
-    ):
+    async def _vm_install_or_update(self, usage: padsi.config.VMUsage, vm_id: str, zone_name: str,
+        boot_iso: str | None, extra_isos: list[str] | None, iso_file: str | None):
         task: Task | None = None
         try:
             # determine VM and zone configs to use
@@ -1607,17 +1435,11 @@ class PadsiUserService:
 
             # check user has the permission
             vm_conf.check_user_allowed(self._uid)
-
-            # ensure VM versions' common directories are created
-            await self._call_system_service(
-                {"cmde": "vm-create-common-dirs", "vm-id": vm_id, "usage": usage.value}
-            )
+            await vm_proxy.create_vm_dirs(self._call_system_service, vm_id)
 
             # compute VMFiles for the specified VM configuration
             loop = asyncio.get_event_loop()
-            vm_files = await loop.run_in_executor(
-                None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid
-            )
+            vm_files = await loop.run_in_executor(None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid)
 
             # check request already being handled
             task = Task(
@@ -1659,27 +1481,15 @@ class PadsiUserService:
             vm_version: padsi.run.VMVersion | None = None
             if vm_conf.usage == padsi.config.VMUsage.INSTALL:
                 # we are installing a new base VM
-                vm_version = await loop.run_in_executor(
-                    None,
-                    vm_files.stage_from_scratch,
-                    padsi.run.VMVersionType.BASE,
-                    vm_conf.specs.disk_size_mb,
-                    vm_conf.specs.secure_boot,
-                    self._uid,
-                    self._gid,
-                )
+                vm_version = await loop.run_in_executor(None, vm_files.stage_from_scratch, padsi.run.VMVersionType.BASE,
+                    vm_conf.specs.disk_size_mb, vm_conf.specs.secure_boot, self._uid, self._gid)
             elif vm_conf.usage == padsi.config.VMUsage.UPDATE:
                 # we are updating a base VM
                 base_mvversion = vm_files.last_base_version
                 if base_mvversion is None:
                     raise Exception("VM has no base version to update")
-                vm_version = await loop.run_in_executor(
-                    None,
-                    vm_files.stage_existing_version,
-                    base_mvversion,
-                    self._uid,
-                    self._gid,
-                )
+                vm_version = await loop.run_in_executor(None, vm_files.stage_existing_version, base_mvversion,
+                    self._uid, self._gid)
 
             assert vm_version is not None
             if self._is_vmversion_used(vm_version):
@@ -1689,11 +1499,7 @@ class PadsiUserService:
                 return json_response(None)
 
             # actually run the VM
-            task.asyncio_task = asyncio.create_task(
-                self._vm_run(
-                    task, zone_conf, vm_conf, vm_version, boot_iso, extra_isos, iso_file
-                )
-            )
+            task.asyncio_task = asyncio.create_task(self._vm_run_raw(task, zone_conf, vm_conf, vm_version, boot_iso, extra_isos, iso_file))
 
             return json_response(
                 {
@@ -1710,26 +1516,19 @@ class PadsiUserService:
             raise e
 
     async def _api_vm_post(self, request: web.Request):
-        """Start a new VM in the specified zone, for any usage (install, update or run), actually always instanciate a new ZoneApps, OR
-        import a VM from its HDD and VARS files
+        """Start a new VM in the specified zone, for any usage (install, update or run),
+        actually always instanciate a new ZoneApps, OR import/load a VM from its HDD and VARS files
         """
+        # analyse arguments
         try:
             data = await request.json()
-            vm_id = _strip_vm_id(data.get("vm-id"))
+            vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
             nickname = data.get("nickname")
+            hdd_file="" # safe init value for the linter
+            vars_file="" # safe init value for the linter
 
             message = data.get("message")
             match data.get("action"):
-                case "create-staged-dir":
-                    # create the staging directory for the user
-                    await self._call_system_service(
-                        {
-                            "cmde": "vm-create-stage-dir",
-                            "vm-id": vm_id,
-                            "usage": padsi.config.VMUsage.UPDATE.value,  # require UPDATE privileges
-                        }
-                    )
-                    return json_response(None)
                 case "import" | "load":
                     usage = None
                     hdd_file = data.get("hdd-file")
@@ -1764,16 +1563,17 @@ class PadsiUserService:
         except Exception as e:
             return web.Response(text=f"Invalid input ({str(e)})", status=400)
 
+        # do the job
         try:
-            if usage is None:
-                if data.get("action") == "import":
-                    return await self._vm_post_import(vm_id, hdd_file, vars_file, message) # pyright: ignore
-                else:
-                    return await self._vm_post_load(vm_id, extract_id, message) # pyright: ignore
+            if data.get("action") == "import":
+                return await self._vm_post_import(vm_id, hdd_file, vars_file, message)
+            elif data.get("action") == "load":
+                return await self._vm_post_load(vm_id, extract_id, message) # pyright: ignore
             elif usage == padsi.config.VMUsage.RUN:
-                return await self._vm_run_usage(vm_id, nickname, zone_name)
+                return await self._vm_run(vm_id, nickname, zone_name)
             elif usage in (padsi.config.VMUsage.INSTALL, padsi.config.VMUsage.UPDATE):
-                return await self._vm_install_or_update_usage(usage, vm_id, nickname, zone_name, boot_iso, extra_isos, iso_file)
+                assert(usage is not None)
+                return await self._vm_install_or_update(usage, vm_id, zone_name, boot_iso, extra_isos, iso_file)
             else:
                 raise Exception(f"Unnown '{usage}' VM usage")
         except Exception as e:
@@ -1788,7 +1588,7 @@ class PadsiUserService:
         """Display the VM viewer for a running VM"""
         try:
             data = await request.json()
-            vm_id = _strip_vm_id(data.get("vm-id"))
+            vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
             nickname = data.get("nickname")
             zone_name = data.get("zone")
             if zone_name is not None and not isinstance(zone_name, str):
@@ -1813,17 +1613,15 @@ class PadsiUserService:
 
             # comput VMFiles for the specified VM configuration
             loop = asyncio.get_event_loop()
-            vm_files = await loop.run_in_executor(
-                None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid
-            )
+            vm_files = await loop.run_in_executor(None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid)
 
             # determine actual VM version to use
-            vm_version: padsi.run.VMVersion | None = vm_files.get_named_snapshot_version(nickname)
+            vm_version: padsi.run.VMVersion | None = vm_files.get_named_snapshot_version(zone_name, nickname)
             if vm_version is None:
                 try:
                     (userid, vtype, vnum, staged, nickname) = padsi.run.parse_vm_version(nickname)
                     if vnum is not None:
-                        vm_version = vm_files.get_snapshot_version(vnum)
+                        vm_version = vm_files.get_snapshot_version(vnum, zone_name)
                 except Exception:
                     raise Exception(f"Invalid nickname '{nickname}'")
 
@@ -1835,16 +1633,8 @@ class PadsiUserService:
         except Exception as e:
             return web.Response(text=f"Could not display the VM: ({str(e)})", status=400)
 
-    async def _vm_run(
-        self,
-        task: Task,
-        zone_conf: padsi.config.Zone,
-        vm_conf: padsi.config.VirtualMachine,
-        vm_version: padsi.run.VMVersion,
-        boot_iso: str | None = None,
-        extra_isos: list[str] | None = None,
-        iso_file: str | None = None,
-    ):
+    async def _vm_run_raw(self, task: Task, zone_conf: padsi.config.Zone, vm_conf: padsi.config.VirtualMachine,
+        vm_version: padsi.run.VMVersion, boot_iso: str | None = None, extra_isos: list[str] | None = None, iso_file: str | None = None):
         try:
             syslog.syslog(syslog.LOG_INFO, f"Actual VM starting with task {task.id}")
             izone = await self._start_vm_zone(zone_conf, vm_conf, vm_version,
@@ -1856,34 +1646,29 @@ class PadsiUserService:
         finally:
             await self._mark_task_finished(task)
 
-    async def _vm_customize_and_run(
-        self,
-        task: Task,
-        zone_conf: padsi.config.Zone,
-        vm_conf: padsi.config.VirtualMachine,
-        vm_version: padsi.run.VMVersion,
-        vm_files: padsi.run.VMFiles,
-        nickname: str,
-    ):
+    async def _vm_customize_and_run(self, task: Task, zone_conf: padsi.config.Zone, vm_conf: padsi.config.VirtualMachine,
+        vm_version: padsi.run.VMVersion, vm_files: padsi.run.VMFiles, nickname: str):
         """User VM customization before actually running the VM"""
-        cust_task = Task(
-            f"vm_customize:{vm_conf.id}:{vm_version}",
-            f"Customizing VM '{vm_conf.id}' for user {self._uid}",
-        )
+        cust_task = Task(f"vm_customize:{vm_conf.id}:{vm_version}",
+            f"Customizing VM '{vm_conf.id}' for user {self._uid}")
         cust_failed: bool = False
         try:
             waited = await self._mark_task_started(cust_task)
             if not waited:
                 syslog.syslog(syslog.LOG_INFO, f"Starting USER VM customization ({vm_version})")
                 izone = await self._start_vm_zone(zone_conf, vm_conf, vm_version)
-                izone.api.auto_stop = True # pyright: ignore
+                if izone.api is None:
+                    raise Exception("CODEBUG: izone.api should not be None")
+                izone.api.auto_stop = True
+                await asyncio.sleep(5)
                 loop = asyncio.get_running_loop()
                 while True:
                     await asyncio.sleep(0.5)
-                    state = await loop.run_in_executor(None, izone.bubble.get_state) # pyright: ignore
+                    if izone.bubble is None:
+                        raise Exception("CODEBUG: izone.bubble should not be None")
+                    state = await loop.run_in_executor(None, izone.bubble.get_state)
                     if state != nsbubble.BubbleState.RUNNING:
-                        syslog.syslog(syslog.LOG_INFO,
-                            f"Finised USER VM customization with state {vm_version.state}")
+                        syslog.syslog(syslog.LOG_INFO, f"Finished USER VM customization with state {vm_version.state}")
                         if vm_version.state != padsi.run.VMState.STOPPED:
                             raise Exception("USER VM customization has been aborted")
                         break
@@ -1898,110 +1683,24 @@ class PadsiUserService:
         else:
             final_vmversion = vm_files.create_snaphot_version(zone_conf.name, vm_version)
             final_vmversion.nickname = nickname
-            await self._vm_run(task, zone_conf, vm_conf, final_vmversion)
+            await self._vm_run_raw(task, zone_conf, vm_conf, final_vmversion)
 
-    async def _vm_publish_or_commit(
-        self,
-        task: Task,
-        commit: bool,
-        vm_id: str,
-        userid: int,
-        vtype: padsi.run.VMVersionType,
-        vnum: int | None,
-        message: str,
-    ):
+    async def _vm_publish(self, task: Task, vm_id: str, userid: int, message: str):
+        """Actually publish a VM version"""
+        try:
+            return await vm_proxy.vm_publish(self._gconf, self._call_system_service,
+                vm_id, userid, message)
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Task {task.id} failed: {str(e)}")
+        finally:
+            await self._mark_task_finished(task)
+
+    async def _vm_merge(self, task: Task, vm_id: str, zone_name:str, userid: int,
+        vtype: padsi.run.VMVersionType, vnum: int | None, message: str):
         """Actually publish or commit a VM version"""
         try:
-            match vtype:
-                case padsi.run.VMVersionType.BASE | None:
-                    vm_conf = self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.UPDATE])
-                case padsi.run.VMVersionType.USER:
-                    vm_conf = self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.RUN])
-                case padsi.run.VMVersionType.SNAP:
-                    vm_conf = self._get_vm_conf_for_usage(vm_id, [padsi.config.VMUsage.RUN])
-                case _:
-                    raise Exception(f"CODEBUG: unknown VMVersionType {vtype}")
-
-            result = await self._call_system_service(
-                {"cmde": "vm-files-list", "vm-dir": vm_conf.directory}
-            )
-            if result is None:
-                raise Exception("CODEBUG: 'vm-files-list' returned None")
-            avmf: padsi.run.AdminVMFiles = padsi.run.AdminVMFiles.deserialize(result)
-
-            if commit:
-                # commit
-                if vnum is None:
-                    raise Exception("CODEBUG: vnum is None")
-                vmversion = avmf.get_version(vtype, vnum, userid)
-                if vmversion is None:
-                    raise Exception("VM version not found")
-                if vmversion not in avmf.committable_versions:
-                    raise Exception("VM version cannot be merged yet")
-                self._check_privileges_on_vm_version(vm_id, vmversion)
-
-                vmf = avmf.get_vm_files(userid)
-                if vmf is None:
-                    raise Exception(f"CODEBUG: no VMFiles for user {userid}")
-                match vtype:
-                    case padsi.run.VMVersionType.BASE:
-                        await self._call_system_service(
-                            {
-                                "cmde": "vm-commit",
-                                "vmversion-uid": userid,
-                                "vm-id": vm_id,
-                                "vm-version": vmversion.id,
-                                "message": message,
-                            }
-                        )
-                    case padsi.run.VMVersionType.USER:
-                        loop = asyncio.get_running_loop()
-                        await loop.run_in_executor(
-                            None,
-                            vmf.commit_version,
-                            vmversion,
-                            None,
-                            None,
-                            None,
-                            message,
-                        )
-                    case padsi.run.VMVersionType.SNAP:
-                        new_user_vmversion = padsi.run.VMVersion(
-                            padsi.run.VMVersionType.USER,
-                            vmversion.directory,
-                            vmf.next_user_version_number,
-                        )
-                        loop = asyncio.get_running_loop()
-                        await loop.run_in_executor(
-                            None,
-                            vmf.commit_version,
-                            vmversion,
-                            new_user_vmversion,
-                            None,
-                            None,
-                            message,
-                        )
-                        vnum = new_user_vmversion.version_number
-            else:
-                # publish
-                vmversion = avmf.get_staged(padsi.run.VMVersionType.BASE, userid)
-                if vmversion is not None:
-                    vmf = avmf.get_vm_files(userid)
-                    if vmf is None:
-                        raise Exception(f"CODEBUG: VMFiles is None for user {userid}")
-                    self._check_privileges_on_vm_version(vm_id, vmversion)
-
-                    await self._call_system_service(
-                        {
-                            "cmde": "vm-publish",
-                            "vmversion-uid": userid,
-                            "vm-id": vm_id,
-                            "vm-version": vmversion.id,
-                            "message": message,
-                        }
-                    )
-                else:
-                    raise Exception("No staging version for this VM")
+            await vm_proxy.vm_merge(self._gconf, self._call_system_service, vm_id, zone_name, userid,
+                vtype, vnum, message)
         except Exception as e:
             syslog.syslog(syslog.LOG_ERR, f"Task {task.id} failed: {str(e)}")
         finally:
@@ -2011,46 +1710,48 @@ class PadsiUserService:
         """Publish a staged VM version or merge a VM version with its backing VM version
         User must be allowed to either install of update the VM
         """
+        # analyse arguments
         try:
             data = await request.json()
             action = data.get("action")
-            if action not in ("publish", "commit"):
+            if action not in ("publish", "merge"):
                 raise Exception(f"Unknown action '{action}'")
-            commit = action == "commit"
+            merge = action == "merge"
+            zone_name = data.get("zone")
             message = data.get("message")
-
-            vm_id = _strip_vm_id(data.get("vm-id"))
-            (userid, vtype, vnum, _staged, _nickname) = (
-                (None, None, None, None, None)
-                if not commit
-                else padsi.run.parse_vm_version(data.get("vm-version"))
-            )
+            vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
+            (userid, vtype, vnum, _staged, _nickname)=\
+                padsi.run.parse_vm_version(data.get("vm-version")) if merge \
+                else (None, None, None, None, None)
             if userid is None:
                 userid = self._uid
         except Exception as e:
             return web.Response(text=f"Invalid input ({str(e)})", status=400)
 
         # check request already being handled
-        usermsg = f"for user {userid}"
-        if commit:
-            task = Task(
-                f"vm_modify:{vm_id}:{commit}:{userid}",
-                f"Merging VM '{vm_id}' {vtype.value}.{vnum} {usermsg}",  # pyright: ignore
-            )
-        else:
-            task = Task(
-                f"vm_modify:{vm_id}:{commit}:{userid}",
-                f"Publishing VM '{vm_id}' {usermsg}",
-            )
+        try:
+            usermsg = f"for user {userid}"
+            if merge:
+                if vtype is None:
+                    raise Exception("Could not determine VM version type")
+                task = Task(f"vm_modify:{vm_id}:{merge}:{userid}",
+                    f"Merging VM '{vm_id}' {vtype.value}.{vnum} {usermsg}")
+            else:
+                task = Task(f"vm_modify:{vm_id}:{merge}:{userid}",
+                    f"Publishing VM '{vm_id}' {usermsg}")
+        except Exception as e:
+            return web.Response(text=str(e), status=400)
 
+        # do the job
         try:
             if await self._mark_task_started(task, ensure_unique=True):
                 # was already done by another task
                 return json_response({"task": None})
-
-            task.asyncio_task = asyncio.create_task(
-                self._vm_publish_or_commit(task, commit, vm_id, userid, vtype, vnum, message)  # pyright: ignore
-            )
+            if merge:
+                assert(vtype is not None)
+                task.asyncio_task = asyncio.create_task(self._vm_merge(task, vm_id, zone_name, userid, vtype, vnum, message))
+            else:
+                task.asyncio_task = asyncio.create_task(self._vm_publish(task, vm_id, userid, message))
             return json_response({"task": task.descr})
         except Exception as e:
             await self._mark_task_finished(task)
@@ -2058,61 +1759,49 @@ class PadsiUserService:
 
     async def _api_vm_delete(self, request: web.Request):
         """Delete the resources associated to a VM version, or all the obsolete VM versions"""
+        # analyse arguments
         try:
             data = await request.json()
             action = data.get("action")
             if action not in ("discard", "clean"):
                 raise Exception(f"Unknown action '{action}'")
             cleanup = action == "clean"
-            vm_id = _strip_vm_id(data.get("vm-id"))
+            vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
             force = data.get("force", False)
-            (userid, vtype, vnum, staged, nickname) = (
-                (None, None, None, None, None)
-                if cleanup
-                else padsi.run.parse_vm_version(data.get("vm-version"))
-            )
+            vm_version=data.get("vm-version")
+            zone_name = data.get("zone")
         except Exception as e:
             return web.Response(text=f"Invalid input ({str(e)})", status=400)
 
-        # actual delete
-        try:
-            if cleanup:
+        # do the job
+        if cleanup:
+            try:
                 # discard all the obsolete (unused anymore) VM versions
-                res = await self._call_system_service(
-                    {"cmde": "vm-cleanup", "vm-id": vm_id}
-                )
-            else:
-                # discard a specific version only
-                res = await self._call_system_service(
-                    {
-                        "cmde": "vm-discard-files",
-                        "vmversion-uid": userid,
-                        "vm-id": vm_id,
-                        "vtype": vtype.value,  # pyright: ignore
-                        "vnum": vnum,
-                        "staged": staged,
-                        "nickname": nickname,
-                        "force": force,
-                    }
-                )
-            return json_response(res)
-        except Exception as e:
-            if cleanup:
+                res = await vm_proxy.vm_cleanup(self._gconf, self._call_system_service, vm_id, zone_name)
+                return json_response(res)
+            except Exception as e:
                 return web.Response(text=f"Could not clean VM: ({str(e)})", status=400)
-            return web.Response(text=f"Could not discard VM version ({str(e)})", status=400)
+        else:
+            try:
+                res= await vm_proxy.vm_discard(self._gconf, self._call_system_service, vm_id, vm_version, zone_name, force)
+                return json_response(res)
+            except Exception as e:
+                return web.Response(text=f"Could not discard VM version ({str(e)})", status=400)
 
     async def _api_launcher_post(self, request: web.Request):
+        # analyse arguments
         try:
             data = await request.json()
-            vm_id = _strip_vm_id(data.get("vm-id"))
+            vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
             nickname = data.get("nickname")
             zone_name = data.get("zone")
             if zone_name is not None and not isinstance(zone_name, str):
                 raise Exception("Invalid zone name")
         except Exception as e:
             return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        # do the job
         try:
-            # ask the system service
             try:
                 await self._call_system_service(
                     {
@@ -2132,17 +1821,19 @@ class PadsiUserService:
             return web.Response(text=f"Could not create VM launcher: ({str(e)})", status=400)
 
     async def _api_launcher_delete(self, request: web.Request):
+        # analyse arguments
         try:
             data = await request.json()
-            vm_id = _strip_vm_id(data.get("vm-id"))
+            vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
             nickname = data.get("nickname")
             zone_name = data.get("zone")
             if zone_name is not None and not isinstance(zone_name, str):
                 raise Exception("Invalid zone name")
         except Exception as e:
             return web.Response(text=f"Invalid input ({str(e)})", status=400)
+
+        # do the job
         try:
-            # ask the system service
             try:
                 await self._call_system_service(
                     {

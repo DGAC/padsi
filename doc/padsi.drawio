@@ -1,4 +1,4 @@
-<mxfile host="Electron" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.6.6 Chrome/144.0.7559.236 Electron/40.8.4 Safari/537.36" version="29.6.6" pages="26">
+<mxfile host="Electron" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.6.6 Chrome/144.0.7559.236 Electron/40.8.4 Safari/537.36" version="29.6.6" pages="27">
   <diagram id="dcn4ceioBTCLyHnTNK3a" name="nsbubble">
     <mxGraphModel dx="2891" dy="1202" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
@@ -4064,106 +4064,106 @@
     </mxGraphModel>
   </diagram>
   <diagram id="XHng85ApZvFihhPZjbdR" name="VM lifecycle">
-    <mxGraphModel dx="1434" dy="2008" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="2037" dy="2546" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="-MyexHzmpBfktQcxta-H-1" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
-          <mxGeometry x="553" y="-42" width="250" height="165" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" value="" vertex="1">
+          <mxGeometry height="165" width="250" x="553" y="-42" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;curved=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" parent="1" source="-MyexHzmpBfktQcxta-H-3" target="-MyexHzmpBfktQcxta-H-21" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-2" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;curved=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" target="-MyexHzmpBfktQcxta-H-21">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-3" value="Installation of&lt;div&gt;the VM&lt;/div&gt;&lt;div&gt;&lt;b&gt;padsi-cli vm-install&lt;/b&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
-          <mxGeometry x="875.5" y="276" width="120" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="Installation of&lt;div&gt;the VM&lt;/div&gt;&lt;div&gt;&lt;b&gt;padsi-cli vm-install&lt;/b&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="875.5" y="276" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;curved=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" parent="1" source="-MyexHzmpBfktQcxta-H-5" target="-MyexHzmpBfktQcxta-H-3" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-4" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;curved=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" target="-MyexHzmpBfktQcxta-H-3">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-5" value="install&lt;div&gt;ISO&lt;/div&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" parent="1" vertex="1">
-          <mxGeometry x="820" y="123" width="60" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-5" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="install&lt;div&gt;ISO&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="60" x="820" y="123" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;curved=1;" parent="1" source="-MyexHzmpBfktQcxta-H-7" target="-MyexHzmpBfktQcxta-H-3" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-6" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;curved=1;" target="-MyexHzmpBfktQcxta-H-3">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-7" value="Drivers" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" parent="1" vertex="1">
-          <mxGeometry x="905.5" y="123" width="60" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-7" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="Drivers" vertex="1">
+          <mxGeometry height="80" width="60" x="905.5" y="123" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;curved=1;startArrow=none;startFill=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" parent="1" source="-MyexHzmpBfktQcxta-H-9" target="-MyexHzmpBfktQcxta-H-3" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-8" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;curved=1;startArrow=none;startFill=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" target="-MyexHzmpBfktQcxta-H-3">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-9" value="Internet" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;" parent="1" vertex="1">
-          <mxGeometry x="970" y="123" width="120" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-9" parent="1" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;" value="Internet" vertex="1">
+          <mxGeometry height="80" width="120" x="970" y="123" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" target="-MyexHzmpBfktQcxta-H-24" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-10" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="-MyexHzmpBfktQcxta-H-24" value="">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="1050.5" y="730" as="sourcePoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;curved=1;" parent="1" source="-MyexHzmpBfktQcxta-H-12" target="-MyexHzmpBfktQcxta-H-15" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-11" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;curved=1;" target="-MyexHzmpBfktQcxta-H-15">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-12" value="BASE VM version X" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" parent="1" vertex="1">
-          <mxGeometry x="295" y="123" width="60" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-12" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="BASE VM version X" vertex="1">
+          <mxGeometry height="80" width="60" x="295" y="123" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-13" value="User allowed to&lt;div&gt;install the VM&lt;/div&gt;" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" parent="1" vertex="1">
-          <mxGeometry x="835" y="276" width="30" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-13" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" value="User allowed to&lt;div&gt;install the VM&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="30" x="835" y="276" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-15" value="VM update&lt;div&gt;(patches, soft. install, ...)&lt;/div&gt;&lt;div&gt;&lt;b&gt;padsi-cli vm-update&lt;/b&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
-          <mxGeometry x="360" y="276" width="120" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-15" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="VM update&lt;div&gt;(patches, soft. install, ...)&lt;/div&gt;&lt;div&gt;&lt;b&gt;padsi-cli vm-update&lt;/b&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="360" y="276" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;curved=1;" parent="1" source="-MyexHzmpBfktQcxta-H-17" target="-MyexHzmpBfktQcxta-H-15" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-16" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;curved=1;" target="-MyexHzmpBfktQcxta-H-15">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-17" value="Drivers" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" parent="1" vertex="1">
-          <mxGeometry x="390" y="123" width="60" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-17" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="Drivers" vertex="1">
+          <mxGeometry height="80" width="60" x="390" y="123" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;curved=1;startArrow=none;startFill=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" parent="1" source="-MyexHzmpBfktQcxta-H-19" target="-MyexHzmpBfktQcxta-H-15" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-18" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;curved=1;startArrow=none;startFill=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" target="-MyexHzmpBfktQcxta-H-15">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-19" value="Internet" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;" parent="1" vertex="1">
-          <mxGeometry x="450" y="123" width="120" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-19" parent="1" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;" value="Internet" vertex="1">
+          <mxGeometry height="80" width="120" x="450" y="123" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="-MyexHzmpBfktQcxta-H-21" target="-MyexHzmpBfktQcxta-H-44" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-20" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;curved=1;" target="-MyexHzmpBfktQcxta-H-44">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-21" value="staged&lt;div&gt;VM version&lt;/div&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" parent="1" vertex="1">
-          <mxGeometry x="1020.5" y="432.5" width="60" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-21" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="staged&lt;div&gt;VM version&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="60" x="1020" y="420" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-22" value="User allowed to&lt;div&gt;update the VM&lt;/div&gt;" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" parent="1" vertex="1">
-          <mxGeometry x="314.99999999999994" y="276" width="30" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-22" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" value="User allowed to&lt;div&gt;update the VM&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="30" x="314.99999999999994" y="276" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-23" value="snapshot" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="-MyexHzmpBfktQcxta-H-24" target="-MyexHzmpBfktQcxta-H-28" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-23" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-24" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="-MyexHzmpBfktQcxta-H-28" value="snapshot">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-24" value="Customization for a specific user U and zone Z&lt;div&gt;&lt;b&gt;padsi-cli vm-start&lt;/b&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
-          <mxGeometry x="990.5" y="780" width="120" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-24" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="Customization for a specific user U and zone Z&lt;div&gt;&lt;b&gt;padsi-cli vm-start&lt;/b&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="990.5" y="780" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-28" value="USER VM version X" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" parent="1" vertex="1">
-          <mxGeometry x="1020.5" y="890" width="60" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-28" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="USER VM version X" vertex="1">
+          <mxGeometry height="80" width="60" x="1020.5" y="890" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-29" value="references" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;curved=1;dashed=1;exitX=0;exitY=0;exitDx=0;exitDy=27.5;exitPerimeter=0;" parent="1" source="-MyexHzmpBfktQcxta-H-28" target="-MyexHzmpBfktQcxta-H-54" edge="1">
-          <mxGeometry x="0.1659" y="-10" relative="1" as="geometry">
+        <mxCell id="-MyexHzmpBfktQcxta-H-29" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-28" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;curved=1;dashed=1;exitX=0;exitY=0;exitDx=0;exitDy=27.5;exitPerimeter=0;" target="-MyexHzmpBfktQcxta-H-54" value="references">
+          <mxGeometry relative="1" x="0.1659" y="-10" as="geometry">
+            <mxPoint y="1" as="offset" />
             <Array as="points">
               <mxPoint x="871" y="918" />
               <mxPoint x="871" y="693" />
             </Array>
-            <mxPoint y="1" as="offset" />
             <mxPoint x="1020.5" y="690" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-30" value="snapshot" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;curved=1;" parent="1" source="-MyexHzmpBfktQcxta-H-28" target="-MyexHzmpBfktQcxta-H-34" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-30" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-28" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;curved=1;" target="-MyexHzmpBfktQcxta-H-34" value="snapshot">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="981.5" y="1163.75" as="sourcePoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-32" value="User allowed&lt;div&gt;to run the VM&lt;/div&gt;" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" parent="1" vertex="1">
-          <mxGeometry x="940" y="780" width="30" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-32" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" value="User allowed&lt;div&gt;to run the VM&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="30" x="940" y="780" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-34" value="SNAPSHOT VM version X" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" parent="1" vertex="1">
-          <mxGeometry x="1015" y="1060" width="70" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-34" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="SNAPSHOT VM version X" vertex="1">
+          <mxGeometry height="80" width="70" x="1015" y="1060" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-35" value="References" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;curved=1;dashed=1;" parent="1" source="-MyexHzmpBfktQcxta-H-34" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-35" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-34" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;curved=1;dashed=1;" value="References">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="870" y="1100" />
@@ -4172,96 +4172,96 @@
             <mxPoint x="1020.5" y="946.25" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-36" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;dashPattern=1 2;endArrow=none;endFill=0;" parent="1" source="-MyexHzmpBfktQcxta-H-37" target="-MyexHzmpBfktQcxta-H-24" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-36" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-37" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;dashPattern=1 2;endArrow=none;endFill=0;" target="-MyexHzmpBfktQcxta-H-24">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="158" y="390" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-37" value="&lt;div&gt;The USER VM version is generated each time a BASE VM version is run and the USER VM version does not exist&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;If the &lt;b&gt;padsi-guest&lt;/b&gt; package is installed:&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;Apply some minor, user-related settings:&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;- set the user name, UID, GID&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;- mount the host FS at the correct path&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;- set some licence keys&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;&lt;br&gt;&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;Note:&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;- can be done without starting the VM for Linux?&lt;/div&gt;" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#fff2cc;strokeColor=#000000;size=11;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;spacingLeft=5;" parent="1" vertex="1">
-          <mxGeometry x="1300" y="790" width="330" height="180" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-37" parent="1" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#fff2cc;strokeColor=#000000;size=11;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;spacingLeft=5;" value="&lt;div&gt;The USER VM version is generated each time a BASE VM version is run and the USER VM version does not exist&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;If the &lt;b&gt;padsi-guest&lt;/b&gt; package is installed:&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;Apply some minor, user-related settings:&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;- set the user name, UID, GID&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;- mount the host FS at the correct path&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;- set some licence keys&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;&lt;br&gt;&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;Note:&lt;/div&gt;&lt;div style=&quot;text-align: left;&quot;&gt;- can be done without starting the VM for Linux?&lt;/div&gt;" vertex="1">
+          <mxGeometry height="180" width="330" x="1300" y="790" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-38" value="&lt;span style=&quot;color: rgb(0, 0, 0); font-family: Helvetica; font-size: 14px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: center; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; background-color: rgb(251, 251, 251); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; float: none; display: inline !important;&quot;&gt;Most of the scripts require the guest to run a local SSH server (on a dedicated port, e.g. 26 (unused) to be able to filter the network access) and some scripts (bash, powershell, cmd) =&amp;gt; &lt;/span&gt;&lt;span style=&quot;color: rgb(0, 0, 0); font-family: Helvetica; font-size: 14px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; letter-spacing: normal; orphans: 2; text-align: center; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; background-color: rgb(251, 251, 251); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; float: none; display: inline !important;&quot;&gt;&lt;b style=&quot;font-size: 14px;&quot;&gt;padsi-guest&amp;nbsp;&lt;/b&gt;package&lt;/span&gt;" style="rounded=0;whiteSpace=wrap;html=1;fontSize=14;" parent="1" vertex="1">
-          <mxGeometry x="563" y="-32" width="230" height="145" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-38" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontSize=14;" value="&lt;span style=&quot;color: rgb(0, 0, 0); font-family: Helvetica; font-size: 14px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: center; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; background-color: rgb(251, 251, 251); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; float: none; display: inline !important;&quot;&gt;Most of the scripts require the guest to run a local SSH server (on a dedicated port, e.g. 26 (unused) to be able to filter the network access) and some scripts (bash, powershell, cmd) =&amp;gt; &lt;/span&gt;&lt;span style=&quot;color: rgb(0, 0, 0); font-family: Helvetica; font-size: 14px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; letter-spacing: normal; orphans: 2; text-align: center; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; background-color: rgb(251, 251, 251); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; float: none; display: inline !important;&quot;&gt;&lt;b style=&quot;font-size: 14px;&quot;&gt;padsi-guest&amp;nbsp;&lt;/b&gt;package&lt;/span&gt;" vertex="1">
+          <mxGeometry height="145" width="230" x="563" y="-32" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-39" value="snapshot" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" parent="1" source="-MyexHzmpBfktQcxta-H-40" target="-MyexHzmpBfktQcxta-H-41" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-39" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-40" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" target="-MyexHzmpBfktQcxta-H-41" value="snapshot">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="1176.06" y="1120" as="sourcePoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-40" value="User starting the VM&lt;div&gt;in zone Z&lt;/div&gt;&lt;div&gt;&lt;b&gt;padsi-cli vm-start&lt;/b&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
-          <mxGeometry x="1126.06" y="1060" width="120" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-40" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="User starting the VM&lt;div&gt;in zone Z&lt;/div&gt;&lt;div&gt;&lt;b&gt;padsi-cli vm-start&lt;/b&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="1126.06" y="1060" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-41" value="SNAPSHOT VM version Y" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" parent="1" vertex="1">
-          <mxGeometry x="1151.06" y="1170" width="70" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-41" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="SNAPSHOT VM version Y" vertex="1">
+          <mxGeometry height="80" width="70" x="1151.06" y="1170" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-44" value="publish the staged version as a BASE version&lt;div&gt;&lt;b&gt;padsi-cli vm-publish&lt;/b&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
-          <mxGeometry x="990.5" y="552.5" width="120" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-44" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="publish the staged version as a BASE version&lt;div&gt;&lt;b&gt;padsi-cli vm-publish&lt;/b&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="990.5" y="552.5" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-7" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-28" target="-MyexHzmpBfktQcxta-H-40">
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-7" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-28" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;" target="-MyexHzmpBfktQcxta-H-40">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="1050.5" y="986.25" as="sourcePoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-54" value="BASE VM version X" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" parent="1" vertex="1">
-          <mxGeometry x="1020" y="652.5" width="60" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-54" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="BASE VM version X" vertex="1">
+          <mxGeometry height="80" width="60" x="1020" y="652.5" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-55" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="-MyexHzmpBfktQcxta-H-44" target="-MyexHzmpBfktQcxta-H-54" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-55" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-44" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" target="-MyexHzmpBfktQcxta-H-54">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-59" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="-MyexHzmpBfktQcxta-H-60" target="-MyexHzmpBfktQcxta-H-61" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-59" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-60" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="-MyexHzmpBfktQcxta-H-61">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-60" value="&lt;div&gt;Merge the base VM version X+1 and X &lt;b&gt;padsi-cli vm-merge&lt;/b&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
-          <mxGeometry x="380.5" y="980" width="120" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-60" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="&lt;div&gt;Merge the base VM version X+1 and X &lt;b&gt;padsi-cli vm-merge&lt;/b&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="380.5" y="980" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-61" value="BASE VM version X+1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" parent="1" vertex="1">
-          <mxGeometry x="410.5" y="1090" width="60" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-61" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="BASE VM version X+1" vertex="1">
+          <mxGeometry height="80" width="60" x="410.5" y="1090" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-65" value="User allowed to&lt;div&gt;update the VM&lt;/div&gt;" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" parent="1" vertex="1">
-          <mxGeometry x="1126.06" y="547.5" width="30" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-65" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" value="User allowed to&lt;div&gt;update the VM&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="30" x="940" y="547.5" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-66" value="User allowed to&lt;div&gt;update the VM&lt;/div&gt;" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" parent="1" vertex="1">
-          <mxGeometry x="516.56" y="980" width="30" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-66" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" value="User allowed to&lt;div&gt;update the VM&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="30" x="516.56" y="980" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-67" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;dashPattern=1 2;endArrow=none;endFill=0;" parent="1" source="-MyexHzmpBfktQcxta-H-68" target="-MyexHzmpBfktQcxta-H-60" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-67" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-68" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;dashPattern=1 2;endArrow=none;endFill=0;" target="-MyexHzmpBfktQcxta-H-60">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="790.5" y="1321" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-68" value="Only possible when no USER VM version reference the BASE VM version X" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#fff2cc;strokeColor=#000000;size=11;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;spacingLeft=5;" parent="1" vertex="1">
-          <mxGeometry x="615.5" y="960" width="160" height="70" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-68" parent="1" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#fff2cc;strokeColor=#000000;size=11;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;spacingLeft=5;" value="Only possible when no USER VM version reference the BASE VM version X" vertex="1">
+          <mxGeometry height="70" width="160" x="615.5" y="960" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-79" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="-MyexHzmpBfktQcxta-H-80" target="-MyexHzmpBfktQcxta-H-81" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-79" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-80" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="-MyexHzmpBfktQcxta-H-81">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-80" value="installed&lt;div&gt;VM&lt;/div&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" parent="1" vertex="1">
-          <mxGeometry x="1120" y="123" width="60" height="80" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-80" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="installed&lt;div&gt;VM&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="60" x="1120" y="123" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-81" value="VM import&lt;div&gt;&lt;b&gt;padsi-cli vm-import&lt;/b&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
-          <mxGeometry x="1090" y="276" width="120" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-81" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="VM import&lt;div&gt;&lt;b&gt;padsi-cli vm-import&lt;/b&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="1090" y="276" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-82" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" parent="1" source="-MyexHzmpBfktQcxta-H-81" target="-MyexHzmpBfktQcxta-H-21" edge="1">
+        <mxCell id="-MyexHzmpBfktQcxta-H-82" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-81" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryPerimeter=0;" target="-MyexHzmpBfktQcxta-H-54">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="-MyexHzmpBfktQcxta-H-83" value="User allowed to&lt;div&gt;install the VM&lt;/div&gt;" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" parent="1" vertex="1">
-          <mxGeometry x="1050" y="276" width="30" height="60" as="geometry" />
+        <mxCell id="-MyexHzmpBfktQcxta-H-83" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" value="User allowed to&lt;div&gt;install the VM&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="30" x="1050" y="276" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-1" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-2" target="rQR7UDjCzwFNF72AlHVR-3">
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-1" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-2" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="rQR7UDjCzwFNF72AlHVR-3">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-2" value="archive" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
-          <mxGeometry x="1472" y="120" width="60" height="80" as="geometry" />
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-2" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="archive" vertex="1">
+          <mxGeometry height="80" width="60" x="1472" y="120" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-3" value="VM load&lt;div&gt;&lt;b&gt;padsi-cli vm-load&lt;/b&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
-          <mxGeometry x="1410" y="273" width="120" height="60" as="geometry" />
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="VM load&lt;div&gt;&lt;b&gt;padsi-cli vm-load&lt;/b&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="1410" y="273" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-4" value="User allowed to&lt;div&gt;update the VM&lt;/div&gt;" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
-          <mxGeometry x="1370" y="273" width="30" height="60" as="geometry" />
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-4" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" value="User allowed to&lt;div&gt;update the VM&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="30" x="1370" y="273" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;curved=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-3" target="TVbaddRQx8vHztCr8O6U-1">
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-5" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;curved=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" target="TVbaddRQx8vHztCr8O6U-1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-8" value="References" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1;entryY=0;entryDx=0;entryDy=52.5;entryPerimeter=0;curved=1;dashed=1;" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-41" target="-MyexHzmpBfktQcxta-H-28">
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-8" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-41" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1;entryY=0;entryDx=0;entryDy=52.5;entryPerimeter=0;curved=1;dashed=1;" target="-MyexHzmpBfktQcxta-H-28" value="References">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="1320" y="1210" />
@@ -4271,63 +4271,63 @@
             <mxPoint x="1030.5" y="956.25" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-9" value="User allowed&lt;div&gt;to run the VM&lt;/div&gt;" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
-          <mxGeometry x="1250" y="1060" width="30" height="60" as="geometry" />
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-9" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" value="User allowed&lt;div&gt;to run the VM&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="30" x="1250" y="1060" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-16" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-10" target="rQR7UDjCzwFNF72AlHVR-12">
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-16" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-10" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="rQR7UDjCzwFNF72AlHVR-12">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-10" value="staged&lt;div&gt;VM version&lt;/div&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
-          <mxGeometry x="390" y="390" width="60" height="80" as="geometry" />
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-10" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="staged&lt;div&gt;VM version&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="60" x="390" y="390" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-11" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-15" target="rQR7UDjCzwFNF72AlHVR-10">
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-11" edge="1" parent="1" source="-MyexHzmpBfktQcxta-H-15" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" target="rQR7UDjCzwFNF72AlHVR-10">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-12" value="publish the staged version as a BASE version&lt;div&gt;&lt;b&gt;padsi-cli vm-publish&lt;/b&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
-          <mxGeometry x="360.28" y="517.5" width="120" height="60" as="geometry" />
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-12" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="publish the staged version as a BASE version&lt;div&gt;&lt;b&gt;padsi-cli vm-publish&lt;/b&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="360.28" y="517.5" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-13" value="BASE VM version X+1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
-          <mxGeometry x="389.78" y="617.5" width="60" height="80" as="geometry" />
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-13" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="BASE VM version X+1" vertex="1">
+          <mxGeometry height="80" width="60" x="389.78" y="617.5" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-14" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-12" target="rQR7UDjCzwFNF72AlHVR-13">
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-14" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-12" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" target="rQR7UDjCzwFNF72AlHVR-13">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-15" value="User allowed to&lt;div&gt;update the VM&lt;/div&gt;" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
-          <mxGeometry x="495.8399999999999" y="512.5" width="30" height="60" as="geometry" />
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-15" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" value="User allowed to&lt;div&gt;update the VM&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="30" x="495.8399999999999" y="512.5" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-22" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-17" target="-MyexHzmpBfktQcxta-H-60">
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-22" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-17" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="-MyexHzmpBfktQcxta-H-60">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-17" value="BASE VM version X" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
-          <mxGeometry x="328" y="830" width="60" height="80" as="geometry" />
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-17" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="BASE VM version X" vertex="1">
+          <mxGeometry height="80" width="60" x="328" y="830" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-20" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-18" target="-MyexHzmpBfktQcxta-H-60">
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-20" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-18" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;" target="-MyexHzmpBfktQcxta-H-60">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-18" value="BASE VM version X+1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
-          <mxGeometry x="493" y="830" width="60" height="80" as="geometry" />
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-18" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="BASE VM version X+1" vertex="1">
+          <mxGeometry height="80" width="60" x="493" y="830" as="geometry" />
         </mxCell>
-        <mxCell id="rQR7UDjCzwFNF72AlHVR-19" value="references" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;dashed=1;" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-18" target="rQR7UDjCzwFNF72AlHVR-17">
+        <mxCell id="rQR7UDjCzwFNF72AlHVR-19" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-18" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;dashed=1;" target="rQR7UDjCzwFNF72AlHVR-17" value="references">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="TVbaddRQx8vHztCr8O6U-1" value="BASE VM version&lt;div&gt;X+2&lt;/div&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
-          <mxGeometry x="1540" y="432.5" width="60" height="80" as="geometry" />
+        <mxCell id="TVbaddRQx8vHztCr8O6U-1" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="BASE VM version&lt;div&gt;X+2&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="60" x="1540" y="432.5" as="geometry" />
         </mxCell>
-        <mxCell id="TVbaddRQx8vHztCr8O6U-3" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="TVbaddRQx8vHztCr8O6U-2" target="rQR7UDjCzwFNF72AlHVR-3">
+        <mxCell id="TVbaddRQx8vHztCr8O6U-3" edge="1" parent="1" source="TVbaddRQx8vHztCr8O6U-2" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="rQR7UDjCzwFNF72AlHVR-3">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="1470" y="270" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="TVbaddRQx8vHztCr8O6U-2" value="BASE VM version X" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
-          <mxGeometry x="1402" y="120" width="60" height="80" as="geometry" />
+        <mxCell id="TVbaddRQx8vHztCr8O6U-2" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="BASE VM version X" vertex="1">
+          <mxGeometry height="80" width="60" x="1402" y="120" as="geometry" />
         </mxCell>
-        <mxCell id="TVbaddRQx8vHztCr8O6U-4" value="BASE VM version&lt;div&gt;X+1&lt;/div&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
-          <mxGeometry x="1350" y="432.5" width="60" height="80" as="geometry" />
+        <mxCell id="TVbaddRQx8vHztCr8O6U-4" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" value="BASE VM version&lt;div&gt;X+1&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="60" x="1350" y="432.5" as="geometry" />
         </mxCell>
-        <mxCell id="TVbaddRQx8vHztCr8O6U-5" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-3" target="TVbaddRQx8vHztCr8O6U-4">
+        <mxCell id="TVbaddRQx8vHztCr8O6U-5" edge="1" parent="1" source="rQR7UDjCzwFNF72AlHVR-3" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" target="TVbaddRQx8vHztCr8O6U-4">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="TVbaddRQx8vHztCr8O6U-6" value="references" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;exitX=0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;dashed=1;" edge="1" parent="1" source="TVbaddRQx8vHztCr8O6U-4" target="TVbaddRQx8vHztCr8O6U-2">
+        <mxCell id="TVbaddRQx8vHztCr8O6U-6" edge="1" parent="1" source="TVbaddRQx8vHztCr8O6U-4" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;exitX=0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;dashed=1;" target="TVbaddRQx8vHztCr8O6U-2" value="references">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="1300" y="473" />
@@ -4335,7 +4335,7 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="TVbaddRQx8vHztCr8O6U-7" value="references" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;dashed=1;" edge="1" parent="1" source="TVbaddRQx8vHztCr8O6U-1" target="TVbaddRQx8vHztCr8O6U-4">
+        <mxCell id="TVbaddRQx8vHztCr8O6U-7" edge="1" parent="1" source="TVbaddRQx8vHztCr8O6U-1" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;dashed=1;" target="TVbaddRQx8vHztCr8O6U-4" value="references">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
       </root>
@@ -6140,6 +6140,102 @@
               <mxPoint x="980" y="1093" />
             </Array>
           </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="Heby-YMSHdgqEjOEmqv1" name="CLI">
+    <mxGraphModel dx="1620" dy="941" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-26" parent="1" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=9;" value="padsi-cli-zone" vertex="1">
+          <mxGeometry height="117" width="230" x="104" y="710" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-20" parent="1" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=9;" value="padsi-cli-host" vertex="1">
+          <mxGeometry height="117" width="230" x="104" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-4" edge="1" parent="1" source="Q5z8pPJ-koGwDRwXfq39-1" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;" target="Q5z8pPJ-koGwDRwXfq39-3" value="if executed in the&lt;div&gt;&quot;init&quot; namespace,&lt;/div&gt;&lt;div&gt;actually executes&lt;/div&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-5" edge="1" parent="1" source="Q5z8pPJ-koGwDRwXfq39-1" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;" target="Q5z8pPJ-koGwDRwXfq39-2" value="if executed in a&lt;div&gt;zone,&lt;/div&gt;&lt;div&gt;actually executes&lt;/div&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="padsi-cli" vertex="1">
+          <mxGeometry height="60" width="120" x="30" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-7" edge="1" parent="1" source="Q5z8pPJ-koGwDRwXfq39-2" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="Q5z8pPJ-koGwDRwXfq39-6" value="connects&lt;div&gt;to&lt;/div&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="padsi-cli-zone" vertex="1">
+          <mxGeometry height="60" width="120" x="310" y="300" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-10" edge="1" parent="1" source="Q5z8pPJ-koGwDRwXfq39-3" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="Q5z8pPJ-koGwDRwXfq39-9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-12" connectable="0" parent="Q5z8pPJ-koGwDRwXfq39-10" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="if root&lt;div&gt;and/or no&lt;/div&gt;&lt;div&gt;user logged in,&lt;/div&gt;&lt;div&gt;connects to&lt;/div&gt;" vertex="1">
+          <mxGeometry relative="1" x="-0.1805" y="-1" as="geometry">
+            <mxPoint x="14" y="-2" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-11" edge="1" parent="1" source="Q5z8pPJ-koGwDRwXfq39-3" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="Q5z8pPJ-koGwDRwXfq39-8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-13" connectable="0" parent="Q5z8pPJ-koGwDRwXfq39-11" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="if run by&lt;div&gt;connected user,&lt;/div&gt;&lt;div&gt;connects to&lt;/div&gt;" vertex="1">
+          <mxGeometry relative="1" x="0.014" y="-1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="padsi-cli-host" vertex="1">
+          <mxGeometry height="60" width="120" x="310" y="157" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="zone-service" vertex="1">
+          <mxGeometry height="60" width="120" x="590" y="300" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="user-service" vertex="1">
+          <mxGeometry height="60" width="120" x="590" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="admin-service" vertex="1">
+          <mxGeometry height="60" width="120" x="590" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-14" edge="1" parent="1" source="Q5z8pPJ-koGwDRwXfq39-27" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="Q5z8pPJ-koGwDRwXfq39-21" value="connects&lt;div&gt;to&lt;/div&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="340" y="768.5" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-16" edge="1" parent="1" source="Q5z8pPJ-koGwDRwXfq39-24" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="Q5z8pPJ-koGwDRwXfq39-23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-17" connectable="0" parent="Q5z8pPJ-koGwDRwXfq39-16" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="if root&lt;div&gt;and/or no&lt;/div&gt;&lt;div&gt;user logged in,&lt;/div&gt;&lt;div&gt;connects to&lt;/div&gt;" vertex="1">
+          <mxGeometry relative="1" x="-0.1805" y="-1" as="geometry">
+            <mxPoint x="14" y="-2" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-18" edge="1" parent="1" source="Q5z8pPJ-koGwDRwXfq39-25" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="Q5z8pPJ-koGwDRwXfq39-22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-19" connectable="0" parent="Q5z8pPJ-koGwDRwXfq39-18" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="if run by&lt;div&gt;connected user,&lt;/div&gt;&lt;div&gt;connects to&lt;/div&gt;" vertex="1">
+          <mxGeometry relative="1" x="0.014" y="-1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-21" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="zone-service" vertex="1">
+          <mxGeometry height="60" width="120" x="500" y="738.5" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-22" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="user-service" vertex="1">
+          <mxGeometry height="60" width="120" x="500" y="525" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-23" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="admin-service" vertex="1">
+          <mxGeometry height="60" width="120" x="500" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-24" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;div&gt;client_admin.&lt;/div&gt;ClientAdmin" vertex="1">
+          <mxGeometry height="40" width="80" x="240" y="620" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-25" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;div&gt;client_host.&lt;/div&gt;Client" vertex="1">
+          <mxGeometry height="40" width="80" x="240" y="570" as="geometry" />
+        </mxCell>
+        <mxCell id="Q5z8pPJ-koGwDRwXfq39-27" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;div&gt;client_zone.&lt;/div&gt;Client" vertex="1">
+          <mxGeometry height="40" width="80" x="240" y="748.5" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>

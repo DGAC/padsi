@@ -27,11 +27,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from client import BaseClient, VMStatus
-
-import padsi.config
-import padsi.run
-
+from client_admin import ClientAdmin
 
 @dataclass
 class ZoneStatus:
@@ -88,7 +84,7 @@ class GlobalStatus:
         return self._active_zones.get(zone_name)
 
 
-class Client(BaseClient):
+class Client(ClientAdmin):
     """Object to interact with a PADSI user service"""
     def __init__(self, uid:int|None=None):
         uid=os.getuid() if uid is None else uid
@@ -108,18 +104,6 @@ class Client(BaseClient):
             "args": args
         }
         return self.post("/procs", data)
-
-    def get_vm_status(self, vm_id:str, zone_name:str, verbose:bool=False) -> VMStatus:
-        """Get a status of a VM"""
-        data={
-            "vm-id": vm_id,
-            "zone": zone_name,
-            "verbose": verbose
-        }
-        data=self.get("/vm", data)
-        if data is None:
-            raise Exception(f"CODEBUG: invalid /vm data {data}")
-        return VMStatus.from_data(data)
 
     def vm_install(self, vm_id:str, boot_iso:str|None=None, extra_isos:list[str]|None=None, iso_file:str|None=None, zone_name:str|None=None):
         """Install a virtual machine
@@ -142,95 +126,6 @@ class Client(BaseClient):
         }
         return self.post("/vm", data)
 
-    def vm_import(self, vm_id:str, hdd_file:str, vars_file:str, message:str|None):
-        """Import a VM which was generated elsewhere
-        """
-        data={
-            "action": "import",
-            "vm-id": vm_id,
-            "hdd-file": hdd_file,
-            "vars-file": vars_file,
-            "message": message
-        }
-        return self.post("/vm", data)
-
-    def vm_save(self, conf:padsi.config.Configuration, vm_id:str, vm_name:str, ar_file:str, depend_at:str|None):
-        """Save a VM version and (some) of its dependencies to a TAR archive which
-        file name is specified via ar_file
-        """
-        # get the VM configuration
-        vm_conf:padsi.config.VirtualMachine|None=None
-        for vm in conf.get_vms_for_usage(padsi.config.VMUsage.RUN):
-            if vm.id==vm_id:
-                vm_conf=vm
-                break
-        if vm_conf is None:
-            raise Exception(f"No VM with ID '{vm_id}'")
-
-        # analyse passed VM name (nickname) and get the VM version
-        (_userid, vtype, vnum, staged, _nickname)=padsi.run.parse_vm_version(vm_name)
-        vmf=padsi.run.VMFiles(vm_conf.directory)
-        if staged:
-            raise Exception("Can't save staged VM version")
-        else:
-            if vtype==padsi.run.VMVersionType.BASE:
-                if vnum is None:
-                    raise Exception("Could not identify VM's version number")
-                vm_version=vmf.get_base_version(vnum)
-            else:
-                raise Exception(f"Can't save {vtype.value} VM version")
-
-        if vm_version is None:
-            raise Exception("Could not find specified VM version")
-        if not vm_version.is_complete:
-            raise Exception("Specified VM version is not compelete (some files are missing)")
-        if vm_version.state==padsi.run.VMState.RUNNING:
-            raise Exception("Specified VM version is currently being used")
-
-        depend_at_vmv=None
-        if depend_at is not None:
-            try:
-                (_userid, vtype, vnum, staged, _nickname)=padsi.run.parse_vm_version(depend_at)
-                if vtype==padsi.run.VMVersionType.BASE and vnum is not None:
-                    depend_at_vmv=vmf.get_base_version(vnum)
-            except Exception:
-                pass
-        padsi.run.VMArchive.create(vm_conf, vm_version, ar_file, depend_at_vmv)
-
-
-    def vm_load(self, conf:padsi.config.Configuration, ar_file:str, vm_id:str|None, message:str|None):
-        """Integrate a VM version from its files which have been uploaded to the staged/<load_id> directory
-        """
-        vm_ar=padsi.run.VMArchive(ar_file)
-        # get the VM configuration
-        if vm_id is not None:
-            vm_ar.vm_id=vm_id
-
-        vm_conf:padsi.config.VirtualMachine|None=None
-        for vm in conf.get_vms_for_usage(padsi.config.VMUsage.RUN):
-            if vm.id==vm_ar.vm_id:
-                vm_conf=vm
-                break
-        if vm_conf is None:
-            raise Exception(f"No VM with ID '{vm_ar.vm_id}'")
-
-        # make sure the staging directory exists
-        data={
-            "vm-id": vm_ar.vm_id,
-            "action": "create-staged-dir"
-        }
-        self.post("/vm", data)
-
-        # extract the archive (the directory which contains the extracted files will be destroyed by the PADSI service)
-        extract_id=vm_ar.extract(vm_conf)
-        data={
-            "action": "load",
-            "vm-id": vm_ar.vm_id,
-            "extract-id": extract_id,
-            "message": message
-        }
-        return self.post("/vm", data)
-
     def vm_update(self, vm_id:str, extra_isos:list[str]|None=None, iso_file:str|None=None, zone_name:str|None=None):
         """Update a virtual machine
         The extra_isos argument may contain some ISO files' paths which will be used AS-IS by the VM,
@@ -242,56 +137,19 @@ class Client(BaseClient):
             offers the correct networking capabilities if no zone is specified, then return an error
           - the user must be allowed to update the specified VM
         """
+        # we need to pass full path for all the extra ISOs
+        ex_isos:list[str]|None=None
+        if extra_isos is not None:
+            ex_isos=[os.path.realpath(fname) for fname in extra_isos]
+
         data={
             "action": "update",
             "vm-id": vm_id,
             "zone": zone_name,
-            "extra-isos": extra_isos,
+            "extra-isos": ex_isos,
             "extra-iso-file": iso_file
         }
         return self.post("/vm", data)
-
-    def vm_discard(self, vm_id:str, vm_version:str, force:bool=False) -> list[str]:
-        """Discard a VM version (remove all the files associated to a VM version)
-        Returns the VM versions which have been discarded
-        Notes:
-          - if staged is True:
-            - version_type must be BASE
-            - version_number must not be specified
-            - the user must be allowed to install or update the specified VM
-          - if staged is False:
-            - if version_type is BASE, the user must be allowed to install or update the specified VM
-            - the version_number must be specified
-            - if the VM version is used by another VM version, then an exception is raised
-        """
-        data={
-            "action": "discard",
-            "vm-id": vm_id,
-            "vm-version": vm_version,
-            "force": force
-        }
-        return self.delete("/vm", data) # pyright: ignore
-
-    def vm_clean(self, vm_id:str) -> list[str]:
-        """Discard any VM version which is not used anymore
-        Returns the VM versions which have been discarded
-        """
-        data={
-            "action": "clean",
-            "vm-id": vm_id
-        }
-        return self.delete("/vm", data) # pyright: ignore
-
-    def vm_merge(self, vm_id:str, vm_version:str, message:str|None):
-        """Merge the contents of a VM's QEMU image file with its originator QEMU image file
-        """
-        data={
-            "action": "commit",
-            "vm-id": vm_id,
-            "vm-version": vm_version,
-            "message": message
-        }
-        return self.put("/vm", data)
 
     def vm_publish(self, vm_id:str, message:str|None):
         """Publish a staged a virtual machine image

@@ -28,14 +28,14 @@ from .options import (BlockListOption, BoolOption, FIDO2Option, PKCS11Option,
 from .policies import ProgramPoliciesFactory, initialize_home_policies
 from .proxy import Proxy
 from .trafficshaper import TrafficShaper
-from .vm import VirtualMachine, VMScript, VMUsage
+from .vm import VirtualMachine, VMScript, VMUsage, strip_vm_id
 from .zone import StartMode, Zone
 
 __all__=["Configuration", "users_br_network", "admin_br_network", "tap_ip", "vm_ip",
         "MountPoint", "FWRuleChain", "FWRule",
          "ResolvRule", "DNSEndpoint", "NetworkSpec", "ProgramPoliciesFactory", "initialize_home_policies",
          "Proxy", "TrafficShaper",
-         "VMScript", "VMUsage", "VirtualMachine",
+         "VMScript", "VMUsage", "VirtualMachine", "strip_vm_id",
          "Zone", "StartMode", "AdminNS",
          "ZoneOption", "ZoneOptionType", "BoolOption", "WebRedirectionOption", "PKIOption", "PKCS11Option", "FIDO2Option", "BlockListOption"
         ]
