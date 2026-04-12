@@ -1022,7 +1022,18 @@ A VM's nickname is also used to keep track of VMs between successive runs in cas
 \family typewriter
 <nickname>.vm
 \family default
- name.
+ name (refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "VM-DNS"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+ for more details).
 \end_layout
 
 \begin_layout Subsubsection
@@ -2350,7 +2361,7 @@ Notes
 \begin_layout Itemize
 the local
 \begin_inset Foot
-status open
+status collapsed
 
 \begin_layout Plain Layout
 The firewall rules are specific to to the 
@@ -2403,7 +2414,94 @@ PADSI supports unsecure (legacy) DNS resolutions and DNS over TLS (DoT).
 \end_layout
 
 \begin_layout Paragraph
+Resolution in the context of Virtual machines
+\begin_inset CommandInset label
+LatexCommand label
+name "VM-DNS"
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+When a virtual machine is started in a zone,
+ all the programs in the same zone can reach it using one of the following names:
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+<nickname>.vm
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+<nickname>.<VM ID>.vm
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+<snapshot>.vm
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+<snapshot>.<VM ID>.vm
+\end_layout
+
+\begin_layout Standard
+However,
+ because one can start virtual machines from various definitions,
+ to avoid name collisions,
+ some of these names may already be used by previously started virtual machines.
+ PADSI prevents this situation by removing duplicates.
+ So for instance,
+ if the user starts a Debian VM named 
+\begin_inset Quotes eld
+\end_inset
+
+default
+\begin_inset Quotes erd
+\end_inset
+
+ and then starts a Suse VM also named 
+\begin_inset Quotes eld
+\end_inset
+
+default
+\begin_inset Quotes erd
+\end_inset
+
+ (assuming both Debian and Suse virtual machines have been defined in the configuration),
+ then the Debian VM will be resolved as 
+\family typewriter
+default.vm
+\family default
+ and 
+\family typewriter
+default.debian.vm
+\family default
+ and the Suse VM will only be resolved via 
+\family typewriter
+default.suse.vm
+\family default
+ (not taking into account snapshot here) because of the order in which the virtual machines have been started.
+\end_layout
+
+\begin_layout Paragraph
 ICMP filtering
+\end_layout
+
+\begin_layout Standard
+For now,
+ to prevent potential data exfiltration or access to a command and control,
+ ICMP packets are blocked outside of traffic within a zone.
+ This however prevents low level network management like MTU negotiations.
+ A future evolution might allow some ICMP types of traffic to avoid this drawback.
 \end_layout
 
 \begin_layout Standard
@@ -6435,6 +6533,102 @@ When the VM is actuall run:
 \end_layout
 
 \begin_layout Subsubsection
+SSH connections
+\end_layout
+
+\begin_layout Standard
+Because SSH is such a powerful tool,
+ when a zone in which VMs can be running is started,
+ a new pair of fresh SSH keys is created with the aim to be used to SSH into all the VMs in that zone.
+ Then,
+ when a VM is actually started:
+\end_layout
+
+\begin_layout Itemize
+the SSH private key is copied to the zone's 
+\family typewriter
+~/.ssh/padsi-vm-key
+\family default
+ file;
+\end_layout
+
+\begin_layout Itemize
+via the PADSI agent (refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "VM agent"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+) 
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+the zone's 
+\family typewriter
+~/.ssh/config
+\family default
+ file is modified to create an entry for the VM;
+\end_layout
+
+\begin_layout Itemize
+the SSH's public key is copied to the 
+\family typewriter
+etc/padsi-vm-key.pub
+\family default
+ file and ultimately appended to the 
+\family typewriter
+~/.ssh/authorized_keys
+\family default
+ file in the user's HOME directory in the VM;
+\end_layout
+
+\end_deeper
+\begin_layout Itemize
+the VM's SSH's public key is scanned and:
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+the public SSH key added to the zone's 
+\family typewriter
+~/.ssh/known_hosts
+\family default
+ file (one entry per domain name for the VM in the zone,
+ refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "VM-DNS"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+);
+\end_layout
+
+\begin_layout Itemize
+a Host entry is created in the zone's 
+\family typewriter
+~/.ssh/config
+\family default
+ file
+\end_layout
+
+\begin_layout Standard
+so that the use can simply run ssh to get a shell in the VM (of course if the VM offers an SSH service).
+ Note that any information in those files which may have been added by the user is kept AS-IS.
+\end_layout
+
+\end_deeper
+\begin_layout Subsubsection
 USB redirection
 \end_layout
 
@@ -6731,67 +6925,6 @@ The following diagram illustrates this:
 
 \begin_layout Standard
 The PADSI agent is provided as a package which must be installed in the VM (in the installation or in a update phase) and is implemented as an OS level service.
-\end_layout
-
-\begin_layout Paragraph
-SSH login
-\end_layout
-
-\begin_layout Standard
-Because SSH is such a powerful tool,
- when a zone in which VMs can be running is started,
- a new pair of fresh SSH keys is created with the aim to be used to SSH into all the VMs in that zone.
- Then,
- when a VM is actually started:
-\end_layout
-
-\begin_layout Itemize
-the SSH private key is copied to the zone's 
-\family typewriter
-~/.ssh/padsi-vm-key
-\family default
- file;
-\end_layout
-
-\begin_layout Itemize
-the zone's 
-\family typewriter
-~/.ssh/config
-\family default
- file is modified to create an entry for the VM;
-\end_layout
-
-\begin_layout Itemize
-the SSH's public key is copied to the 
-\family typewriter
-etc/padsi-vm-key.pub
-\family default
- file and ultimately appended to the 
-\family typewriter
-~/.ssh/authorized_keys
-\family default
- file in the user's HOME directory in the VM;
-\end_layout
-
-\begin_layout Itemize
-the VM's SSH's public key is scanned and added to the zone's 
-\family typewriter
-~/.ssh/known_hosts
-\family default
- file so that the use can simply run 
-\begin_inset listings
-lstparams "basicstyle={\footnotesize\ttfamily}"
-inline false
-status open
-
-\begin_layout Plain Layout
-
-$ ssh <nickname>.vm
-\end_layout
-
-\end_inset
-
- to get a shell in the VM (if the VM offers an SSH service on the default port).
 \end_layout
 
 \begin_layout Paragraph

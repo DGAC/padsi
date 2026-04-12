@@ -55,14 +55,8 @@ class ZoneData:
     (which may "contain" several ZoneApps)
     """
 
-    def __init__(
-        self,
-        zone_name: str,
-        service: PadsiUserService,
-        userfiles: padsi.run.ZoneUserFiles | None = None,
-        infra: padsi.run.ZoneInfra | None = None,
-        apps: padsi.run.ZoneApps | padsi.run.ZoneVM| None = None
-    ):
+    def __init__(self, zone_name: str, service: PadsiUserService, userfiles: padsi.run.ZoneUserFiles | None = None,
+        infra: padsi.run.ZoneInfra | None = None, apps: padsi.run.ZoneApps | padsi.run.ZoneVM| None = None):
         self.zone_name = zone_name
         self.service: PadsiUserService = service
         self.userfiles: padsi.run.ZoneUserFiles | None = userfiles
@@ -220,11 +214,7 @@ class ZoneData:
             if self.apps is None:
                 vmzones = []
             else:
-                vmzones: list[padsi.run.ZoneVM] = [
-                    izone
-                    for izone in self.apps
-                    if isinstance(izone, padsi.run.ZoneVM)
-                ]
+                vmzones: list[padsi.run.ZoneVM] = [izone for izone in self.apps if isinstance(izone, padsi.run.ZoneVM)]
             for izone in vmzones:
                 if izone.ip_address is not None:
                     try:
@@ -879,15 +869,8 @@ class PadsiUserService:
         finally:
             await self._mark_task_finished(task)
 
-    async def _start_vm_zone(
-        self,
-        zone_conf: padsi.config.Zone,
-        vm_conf: padsi.config.VirtualMachine,
-        vm_version: padsi.run.VMVersion,
-        boot_iso: str | None = None,
-        extra_isos: list[str] | None = None,
-        iso_file: str | None = None,
-    ) -> padsi.run.ZoneVM:
+    async def _start_vm_zone(self, zone_conf: padsi.config.Zone, vm_conf: padsi.config.VirtualMachine, vm_version: padsi.run.VMVersion,
+        boot_iso: str | None = None, extra_isos: list[str] | None = None, iso_file: str | None = None) -> padsi.run.ZoneVM:
         """Create a zone for the VM and start it"""
         if self._is_vmversion_used(vm_version):
             raise Exception(f"VM version '{vm_version}' is already used by a running VM")
@@ -932,23 +915,29 @@ class PadsiUserService:
                 all_extra_isos = [iso_file]
 
             logs_dir = self._gconf.get_zone_logs_dir(zone_conf.name, self._uid)
-            vmzone = padsi.run.ZoneVM(
-                self._gconf,
-                zone_conf,
-                self._uid,
-                run_dir,
-                logs_dir,
-                zinfra,
-                zuf,
-                vm_conf,
-                vm_version,
-                vmm,
-                ipiface,
-                self._gid,
-                boot_iso,
-                all_extra_isos,
-                zinfra.net_mtu if zinfra is not None else None
-            )
+            vmzone = padsi.run.ZoneVM(self._gconf, zone_conf, self._uid, run_dir,
+                logs_dir, zinfra, zuf, vm_conf, vm_version, vmm, ipiface, self._gid,
+                boot_iso, all_extra_isos, zinfra.net_mtu if zinfra is not None else None)
+
+            # prevent domain names collisions
+            used_names:set[str]=set() # already used domain names
+            async with self._lock:
+                zdata = self._zones.get(zone_conf.name)
+                if zdata is not None and zdata.apps is not None:
+                    vmzones: list[padsi.run.ZoneVM] = [izone for izone in zdata.apps if isinstance(izone, padsi.run.ZoneVM)]
+
+                    for izone in vmzones:
+                        if izone.ip_address is not None:
+                            # filter this VM's domain names
+                            for name in izone.domain_names:
+                                used_names.add(name)
+            dnames:list[str]=[]
+            for name in vmzone.domain_names:
+                if name not in used_names:
+                    dnames.append(name)
+            vmzone.domain_names=dnames
+
+            # start the VM
             vmzone.start()
 
             # update the internal state
@@ -1455,7 +1444,7 @@ class PadsiUserService:
             loop = asyncio.get_event_loop()
             vm_files = await loop.run_in_executor(None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid)
 
-            # generate a nickname if none provided, might be useful later
+            # generate a nickname if none provided
             if nickname is None:
                 while True:
                     nname = namesgenerator.get_random_name()
@@ -1499,6 +1488,7 @@ class PadsiUserService:
                 await self._call_system_service(
                     {
                         "cmde": "vm-discard-files",
+                        "zone": zone_name,
                         "vmversion-uid": vm_version.uid,
                         "vm-id": vm_id,
                         "vtype": vm_version.version_type,  # pyright: ignore

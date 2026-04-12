@@ -101,6 +101,12 @@ class VMVersion:
         p2="staged" if self._staged is True else self._type.value
         return f"{p1}{p2}" if self._version is None else f"{p1}{p2}.{self._version}"
 
+    @property
+    def domain_name(self) -> str:
+        """Valid domain name representation"""
+        p="staged" if self._staged is True else self._type.value
+        return f"{p}" if self._version is None else f"{p}.{self._version}".replace('.', '-')
+
     def __hash__(self) -> int:
         return hash(self._id)
 

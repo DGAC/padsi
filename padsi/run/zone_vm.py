@@ -56,12 +56,7 @@ from .zone_userfiles import ZoneUserFiles
 _debug = True
 
 class PadsiViewer(nsbubble.vm.Viewer):
-    def __init__(
-        self,
-        vm_conf: padsi.config.VirtualMachine,
-        padsi_install_dir: str,
-        nickname: str|None,
-    ):
+    def __init__(self, vm_conf: padsi.config.VirtualMachine, padsi_install_dir: str, nickname: str|None):
         self._vm_conf = vm_conf
         self._nickname = nickname
         self._padsi_install_dir = padsi_install_dir
@@ -74,9 +69,7 @@ class PadsiViewer(nsbubble.vm.Viewer):
 
     @property
     def real_prog_name(self) -> str:
-        return os.path.join(
-            self._padsi_install_dir, "vm-management", "viewer", "padsi-vm-viewer"
-        )
+        return os.path.join(self._padsi_install_dir, "vm-management", "viewer", "padsi-vm-viewer")
 
     @property
     def bubble_prog_name(self) -> str:
@@ -150,15 +143,8 @@ class ZoneVM(ZoneFoundations):
         mtu: int|None = None
     ):
         logs_vm_name=vm_version.nickname if vm_version.nickname is not None else str(vm_version)
-        super().__init__(
-            "VM",
-            global_conf,
-            zone_conf,
-            None,
-            uid,
-            run_dir,
-            os.path.join(logs_dir, f"{ZoneVM.prefix}{logs_vm_name}")
-        )
+        super().__init__("VM", global_conf, zone_conf, None,
+            uid, run_dir, os.path.join(logs_dir, f"{ZoneVM.prefix}{logs_vm_name}"))
         self._z_infra=zone_infra
         self._zuf=zuf
         self.with_x11 = False # we want to use Wayland
@@ -170,6 +156,7 @@ class ZoneVM(ZoneFoundations):
         self._vm_v = vm_version
         self._vmm = vmm
         self._server_ssh_key_task: asyncio.Task|None = None
+        self._domain_names:list[str]|None=None
 
         self._padsi_install_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         self._viewer = PadsiViewer(self._vm_conf, self._padsi_install_dir, vm_version.nickname)
@@ -438,7 +425,7 @@ class ZoneVM(ZoneFoundations):
         except nsbubble.nsbubble.ProcessNotYetTerminatedException:
             return False
 
-        vm_name = self.domain_names[0][:-1]  # remove the trailing "."
+        vm_domain_names=[item[:-1] for item in self.domain_names] # remove the trailing "."
 
         with open(os.path.join(host_tmp.name, "out"), "rt") as fd:
             keys: list[str] = []
@@ -447,7 +434,7 @@ class ZoneVM(ZoneFoundations):
                 if not line or line[0] == "#":
                     continue  # ignore comments
                 (_ip, key) = line.split(maxsplit=1)
-                keys.append(f"{vm_name} {key}")
+                keys.append(key)
 
         if len(keys) > 0:
             known_hosts_file=None
@@ -459,42 +446,44 @@ class ZoneVM(ZoneFoundations):
                     fcntl.flock(lockfd, fcntl.LOCK_EX)
                     try:
                         # integrate into the user's .ssh/known_hosts while retaining keys for other systems
-                        known_hosts_file = os.path.join(
-                            self._vmm.zone_home_dir, ".ssh", "known_hosts"
-                        )
+                        known_hosts_file = os.path.join(self._vmm.zone_home_dir, ".ssh", "known_hosts")
                         with tempfile.NamedTemporaryFile("wt") as tmp:
-                            # copy othe data from known_hosts file if it exists
+                            # copy other data from known_hosts file if it exists
                             try:
-                                prefix = f"{vm_name} "
                                 with open(known_hosts_file, "rt") as fd:
                                     for line in fd.readlines():
-                                        if not line.startswith(prefix):
+                                        to_keep=True
+                                        for dname in vm_domain_names:
+                                            if line.startswith(f"{dname} "):
+                                                to_keep=False
+                                                break
+                                        if to_keep:
                                             tmp.write(line)
                             except FileNotFoundError:
                                 pass
 
-                            # add our SSH keys
-                            for line in keys:
-                                tmp.write(line + "\n")
+                            # add our SSH keys, one line per VM domain name
+                            for key in keys:
+                                for dname in vm_domain_names:
+                                    tmp.write(f"{dname} {key}\n")
 
                             # finalize
                             tmp.flush()
                             shutil.move(tmp.name, known_hosts_file)
 
                         # integrate into the user's .ssh/config while retaining other settings
-                        config_file = os.path.join(
-                            self._vmm.zone_home_dir, ".ssh", "config"
-                        )
+                        config_file = os.path.join(self._vmm.zone_home_dir, ".ssh", "config")
                         with tempfile.NamedTemporaryFile("wt") as tmp:
                             # copy settings not related to the VM
+                            spaced_names=" ".join(vm_domain_names)
                             try:
                                 with open(config_file, "rt") as fd:
                                     do_copy = True
                                     for line in fd.readlines():
                                         if line.startswith("Host "):
-                                            (_, target) = line.split()
-                                            target = target.strip()
-                                            if target == vm_name:
+                                            (_, targets) = line.split(maxsplit=1)
+                                            targets = targets.strip()
+                                            if targets == spaced_names:
                                                 do_copy = False
                                             else:
                                                 do_copy = True
@@ -505,7 +494,7 @@ class ZoneVM(ZoneFoundations):
                                 pass
 
                             # add this VM's settings
-                            tmp.write(f"Host {vm_name}\n")
+                            tmp.write(f"Host {spaced_names}\n")
                             tmp.write("    IdentityFile ~/.ssh/padsi-vm-key\n")
 
                             # finalize
@@ -611,14 +600,26 @@ class ZoneVM(ZoneFoundations):
     @property
     def domain_names(self) -> list[str]:
         """Domain names through which the VM will be reachable using DNS
-        the names include a final "."
-        Note: this list contains at least one item
+        Notes:
+            - the names include a final ".vm."
+            - the returned list contains at least one item
+            - the user service may decide to remove som items in the list to avoid collisions
         """
-        res: list[str] = []
-        if self._vm_v.nickname is not None:
-            res.append(f"{self._vm_v.nickname.replace('.', '-')}.vm.")
-        res.append(f"{str(self._vm_v).replace('.', '-')}.vm.")
-        return res
+        if self._domain_names is None:
+            res: list[str] = []
+            if self._vm_v.nickname is not None:
+                cnickname=self._vm_v.nickname.replace('.', '-')
+                res.append(f"{cnickname}.vm.") # short name, may result in collisions
+                res.append(f"{cnickname}.{self._vm_conf.id}.vm.") # long name, no collision possible
+            res.append(f"{self._vm_v.domain_name}.vm.") # short name, may result in collisions
+            res.append(f"{self._vm_v.domain_name}.{self._vm_conf.id}.vm.") # long name, no collision possible
+            self._domain_names=res
+        return self._domain_names
+
+    @domain_names.setter
+    def domain_names(self, names:list[str]):
+        """Change the domain names, necessary for the user service to avoid name collisions"""
+        self._domain_names=names
 
     @property
     def vm_viewer_host_pid(self) -> int | None:

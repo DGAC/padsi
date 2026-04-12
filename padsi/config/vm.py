@@ -301,14 +301,15 @@ def load_vm_file(
         except Exception as e:
             raise Exception(f"Invalid definition for VM '{path}': {str(e)}")
 
+        # compute and validate vm_id
         vm_id = os.path.basename(path)[:-3]  # file name less the ".vm" extension
+        if not re.match(r"^[a-z][a-z0-9]+", vm_id):
+            raise Exception(f"invalid VM name '{vm_id}'")
+
         res = {}
         for usage in VMUsage:
             usagedata = data.get(usage.value)
             if usagedata is not None:
-                if not re.match(r"^[a-z][a-z0-9]+", vm_id):
-                    raise Exception(f"invalid VM name '{vm_id}'")
-
                 with_net = usagedata.get("with-net", True)
                 specs = nsbubble.VMSpecs(
                     mem_mb=mem_mb,
