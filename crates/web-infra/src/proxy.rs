@@ -108,7 +108,9 @@ async fn handle_request(mut req: Request<hyper::body::Incoming>, _ip: &Ipv4Addr,
     let ep=match span.in_scope(|| get_endpoint_from_request(&req)) {
         Ok(ep) => ep,
         Err(err) => {
-            warn!("Invalid request: '{:?}'", err.to_string());
+            let mut msg=err.to_string();
+            msg=msg.replace('\n', "");
+            warn!("Invalid request: '{:?}'", msg);
             let mut resp = Response::new(empty());
             *resp.status_mut() = StatusCode::BAD_REQUEST;
             return Ok(resp)
@@ -138,9 +140,11 @@ async fn handle_request(mut req: Request<hyper::body::Incoming>, _ip: &Ipv4Addr,
                             Ok(upgraded) => {
                                 if let Err(err) = tunnel(upgraded, &next_hop, &addr).instrument(span.clone()).await {
                                     span.in_scope(|| {
+                                        let mut msg=err.to_string();
+                                        msg=msg.replace('\n', "");
                                         match next_hop {
-                                            Some(_s) => warn!(up_proxy_blocked=ep.to_string(), "{}", err.to_string()),
-                                            None => warn!(up_conn_blocked=ep.to_string(), "{}", err.to_string()),
+                                            Some(_s) => warn!(up_proxy_blocked=ep.to_string(), "{}", msg),
+                                            None => warn!(up_conn_blocked=ep.to_string(), "{}", msg)
                                         }
                                     })
                                 };
@@ -163,7 +167,9 @@ async fn handle_request(mut req: Request<hyper::body::Incoming>, _ip: &Ipv4Addr,
                                 Ok(upgraded) => {
                                     if let Err(err) = tunnel(upgraded, &None, &addr).instrument(span.clone()).await {
                                         span.in_scope(|| {
-                                            warn!("{}", err.to_string())
+                                            let mut msg=err.to_string();
+                                            msg=msg.replace('\n', "");
+                                            warn!("{}", msg)
                                         })
                                     };
                                 },
@@ -271,7 +277,9 @@ async fn handle_request(mut req: Request<hyper::body::Incoming>, _ip: &Ipv4Addr,
                                         Ok(resp.map(|b| b.boxed()))
                                     },
                                     Err(err) => {
-                                        error!("Should not happen: got an invalid URI extracted from the request: {}", err.to_string());
+                                        let mut msg=err.to_string();
+                                        msg=msg.replace('\n', "");
+                                        error!("Should not happen: got an invalid URI extracted from the request: {}", msg);
                                         let mut resp = Response::new(empty());
                                         *resp.status_mut() = StatusCode::BAD_REQUEST;
                                         Ok(resp)
@@ -282,7 +290,9 @@ async fn handle_request(mut req: Request<hyper::body::Incoming>, _ip: &Ipv4Addr,
                     },
                     Err(err) => {
                         span.in_scope(|| {
-                            warn!(up_conn_blocked=ep.to_string(), "TCP connection failed: {}", err.to_string())
+                            let mut msg=err.to_string();
+                            msg=msg.replace('\n', "");
+                            warn!(up_conn_blocked=ep.to_string(), "TCP connection failed: {}", msg)
                         });
                         let mut resp = Response::new(empty());
                         *resp.status_mut() = StatusCode::REQUEST_TIMEOUT;
