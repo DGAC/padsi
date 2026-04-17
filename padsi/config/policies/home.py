@@ -67,50 +67,59 @@ pcsc-shared
         syslog.syslog(syslog.LOG_ERR, f"Failed to preconfigure GPG: {str(e)}")
 
     # clean any leftovers regarding SSH and VMs
-    # ssh keys
-    try:
-        fpath=os.path.join(home_dir, ".ssh", "known_hosts")
-        with open(fpath, "rt") as fd:
-            kept:list[str]=[]
-            for line in fd.readlines():
-                (host, key)=line.split(maxsplit=1)
-                if not host.endswith(".vm"):
-                    kept.append(line)
-            fd.close()
-            with open(fpath, "wt") as fd:
-                for line in kept:
-                    fd.write(line)
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Failed to clean up SSH keys leftovers: {str(e)}")
+    ssh_dir=os.path.join(home_dir, ".ssh")
+    if os.path.exists(ssh_dir):
+        os.chown(ssh_dir, uid, gid)
+        os.chmod(ssh_dir, 0o700)
 
-    # ssh config
-    try:
-        fpath=os.path.join(home_dir, ".ssh", "config")
-        with open(fpath, "rt") as fd:
-            kept=[]
-            do_copy = True
-            for line in fd.readlines():
-                if line.startswith("Host "):
-                    (_, *targets) = line.split()
-                    vmline=False
-                    for t in targets:
-                        if t.endswith(".vm"):
-                            vmline=True
-                            break
-                    if vmline:
-                        do_copy = False
-                    else:
-                        do_copy = True
+        # ssh keys
+        try:
+            fpath=os.path.join(ssh_dir, "known_hosts")
+            with open(fpath, "rt") as fd:
+                kept:list[str]=[]
+                for line in fd.readlines():
+                    (host, key)=line.split(maxsplit=1)
+                    if not host.endswith(".vm"):
                         kept.append(line)
-                elif do_copy:
-                    kept.append(line)
-            fd.close()
-            with open(fpath, "wt") as fd:
-                for line in kept:
-                    fd.write(line)
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Failed to clean up SSH config leftovers: {str(e)}")
+                fd.close()
+                with open(fpath, "wt") as fd:
+                    for line in kept:
+                        fd.write(line)
+            os.chown(fpath, uid, gid)
+            os.chmod(fpath, 0o600)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Failed to clean up SSH keys leftovers: {str(e)}")
+
+        # ssh config
+        try:
+            fpath=os.path.join(ssh_dir, "config")
+            with open(fpath, "rt") as fd:
+                kept=[]
+                do_copy = True
+                for line in fd.readlines():
+                    if line.startswith("Host "):
+                        (_, *targets) = line.split()
+                        vmline=False
+                        for t in targets:
+                            if t.endswith(".vm"):
+                                vmline=True
+                                break
+                        if vmline:
+                            do_copy = False
+                        else:
+                            do_copy = True
+                            kept.append(line)
+                    elif do_copy:
+                        kept.append(line)
+                fd.close()
+                with open(fpath, "wt") as fd:
+                    for line in kept:
+                        fd.write(line)
+            os.chown(fpath, uid, gid)
+            os.chmod(fpath, 0o600)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            syslog.syslog(syslog.LOG_ERR, f"Failed to clean up SSH config leftovers: {str(e)}")
