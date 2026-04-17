@@ -39,8 +39,8 @@ parser.add_argument("-j", "--json", help="Output JSON", action="store_true")
 #
 # VM
 #
-subparser=subparsers.add_parser("vms", help="List all the declared virtual machines")
-subparser.set_defaults(cmde="vms")
+subparser=subparsers.add_parser("vm-list", help="List all the declared virtual machines")
+subparser.set_defaults(cmde="vm-list")
 
 subparser=subparsers.add_parser("vm-status", help="List the status of a VM (files, ...)")
 subparser.set_defaults(cmde="vm-status")
@@ -99,13 +99,13 @@ try:
     cmde=args["cmde"]
 
     match cmde:
-        case "vms":
+        case "vm-list":
             data=client.vms() # pyright: ignore
             if use_json:
                 print(f"{json.dumps(data, indent=4)}")
             else:
                 for (vmid, descr) in data.items(): # pyright: ignore
-                    print(f"virtual machine '{vmid}' ({descr})")
+                    print(f"virtual machine '{vmid}': {descr}")
 
         case "vm-discard":
             versions:list[str]=[]

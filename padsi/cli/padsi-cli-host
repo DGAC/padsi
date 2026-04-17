@@ -31,6 +31,7 @@ import datetime
 import enum
 import json
 import os
+import pwd
 import re
 import sys
 import tempfile
@@ -82,12 +83,13 @@ parser.add_argument("-U", "--user", type=str, help="UID of the user to use inste
 
 subparser=subparsers.add_parser("net-usage", help="List all past network usage for a zone")
 subparser.set_defaults(cmde="net-usage")
-subparser.add_argument("name", type=str, help="Zone or admin NS to get information about, or '-' for the 'init namespace'")
+subparser.add_argument("name", type=str, help="Zone name, '-' for the 'init namespace', or '@<admin>' for admin. namespaces")
 subparser.add_argument("--since", type=str, help="Consider only the events after specified instant (1 day by default, format can be 'YYYYMMDD', 'YYYYMMDD-HH:MM:SS', or a number of days")
 subparser.add_argument("--until", type=str, help="Consider only the events before specified instant (now by default, format can be 'YYYYMMDD', 'YYYYMMDD-HH:MM:SS', or a number of days")
 subparser.add_argument("--no-timeline", action="store_false", help="Group output by items instead of as a timeline (if not JSON output)")
 subparser.add_argument("--status", type=str, help="Specify the status of events to show as a CSV of: 'blocked' (by configuration), 'failed' (something went wrong) and, 'allowed' (warning: firewall does not log successful connections), defaults to 'blocked,failed', pass 'all' for all")
 subparser.add_argument("--events", type=str, help="Specify the kind of events to show as a CSV of: 'dns', 'firewall', or 'proxy', defaults to all")
+subparser.add_argument("--vm", type=str, help="Specify a virtual machine to filter on: a VM specified as '[<vm ID>:][<VM nickame>]', or 'none' (by default all VM's traffic is included)")
 
 subparser=subparsers.add_parser("net-rules", help="Get information about a network access")
 subparser.set_defaults(cmde="net-rules")
@@ -113,8 +115,8 @@ subparser.add_argument("zone-name", type=str, help="Zone to get information abou
 #
 # handling VMs
 #
-subparser=subparsers.add_parser("vms", help="List all the declared virtual machines")
-subparser.set_defaults(cmde="vms")
+subparser=subparsers.add_parser("vm-list", help="List all the declared virtual machines")
+subparser.set_defaults(cmde="vm-list")
 
 subparser=subparsers.add_parser("vm-import", help="Import a virtual machine in the staging area (must be published afterwards)")
 subparser.set_defaults(cmde="vm-import")
@@ -210,22 +212,7 @@ if "cmde" not in args:
     parser.print_help()
     sys.exit(1) # pyright: ignore
 
-_caller_uid=os.getuid()
-_caller_gid=os.getgid()
 _indent="    "
-
-class PadsiServiceNotRunning(Exception):
-    pass
-
-# test if the PADSI service is running
-try:
-    client_exception=None
-    user=args.get("user")
-    user=int(user) if user is not None else None
-    client=Client(user)
-except Exception as e:
-    client_exception=PadsiServiceNotRunning(str(e))
-    client=None
 
 def load_config() -> padsi.config.Configuration:
     conf=padsi.config.Configuration(args["config_dir"])
@@ -289,7 +276,7 @@ def print_vms(conf:padsi.config.Configuration, verbose:bool, use_json:bool):
             "actions": []
         }
         for vm in all_vms[vmid]:
-            if vm.is_user_allowed(_caller_uid):
+            if vm.is_user_allowed(get_user_id()):
                 vmdata["actions"].append(vm.usage.value)
                 if vm.usage==padsi.config.VMUsage.RUN:
                     vmdata["description"]=vm.description # pyright: ignore
@@ -306,7 +293,7 @@ def print_vms(conf:padsi.config.Configuration, verbose:bool, use_json:bool):
         return
 
     for (vmid, vmdata) in data.items():
-        print(f"virtual machine '{vmid}' ({vmdata['description']})")
+        print(f"virtual machine '{vmid}': {vmdata['description']}")
         print(f"{_indent}actions: {', '.join(vmdata['actions'])}")
         print(f"{_indent}for zones: {', '.join(vmdata['runnable-zone'])}")
 
@@ -326,9 +313,10 @@ class EventsGroup:
     """
     span_s=300 # span in seconds during which events are groupped
 
-    def __init__(self, ev_type:EventType, context:str, ts:datetime.datetime):
+    def __init__(self, ev_type:EventType, context:str, vm:str|None, ts:datetime.datetime):
         self._type=ev_type
         self._context=context
+        self._vm=vm
         self._start_ts=ts
         self._last_ts=ts
         self.span=0
@@ -342,6 +330,10 @@ class EventsGroup:
     def context(self, context:str):
         self._context=context
         self._type=EventType.FAILED # setting the context is actually only performed when the event is "failed"
+
+    @property
+    def vm(self)->str|None:
+        return self._vm
 
     @property
     def ev_type(self) -> EventType:
@@ -376,11 +368,11 @@ class EventsGroup:
 
     @staticmethod
     def serialize_list(lgroups:list[EventsGroup], as_timeline:bool) -> Any:
-        if as_timeline:
-            return [{"ts": gr.start_ts_str, "name": str(gr), "count": gr.nb_events, "span": gr.span} for gr in lgroups]
+        if not as_timeline:
+            return [{"ts": gr.start_ts_str, "name": str(gr), "vm":gr.vm, "count": gr.nb_events, "span": gr.span} for gr in lgroups]
 
         data=EventsGroup._compute_timeline(lgroups)
-        return {req_name: [{"ts": gr.start_ts_str, "count": gr.nb_events, "span": gr.span} for gr in grlist] for (req_name, grlist) in data.items()}
+        return {req_name: [{"ts": gr.start_ts_str, "vm":gr.vm, "count": gr.nb_events, "span": gr.span} for gr in grlist] for (req_name, grlist) in data.items()}
 
     @staticmethod
     def merge_groups_by_ts(llgroups:list[list[EventsGroup]]) -> list[EventsGroup]:
@@ -398,23 +390,25 @@ class EventsGroup:
 
     @staticmethod
     def print_list(lgroups:list[EventsGroup], as_timeline:bool):
-        if as_timeline:
+        if not as_timeline:
             for gr in lgroups:
-                times="1 time" if gr.nb_events==1 else f"{gr.nb_events} times"
+                times="" if gr.nb_events==1 else f"{gr.nb_events} times"
                 duration="" if gr.span<2 else f" over {gr.span} s"
-                print(f"{gr.start_ts_str} {gr}: {gr.context} {times}{duration}")
+                vm="" if gr.vm is None else f" [VM {gr.vm}]"
+                print(f"{gr.start_ts_str} {gr}: {gr.context} {times}{duration}{vm}")
         else:
             data=EventsGroup._compute_timeline(lgroups)
             for req_name in data:
                 print(f"{req_name}:")
                 for gr in data[req_name]:
-                    times="1 time" if gr.nb_events==1 else f"{gr.nb_events} times"
+                    times="" if gr.nb_events==1 else f"{gr.nb_events} times"
                     duration="" if gr.span<2 else f" over {gr.span} s"
-                    print(f"{_indent}{gr.start_ts_str}: {gr.context} {times}{duration}")
+                    vm="" if gr.vm is None else f" [VM {gr.vm}]"
+                    print(f"{_indent}{gr.start_ts_str}: {gr.context} {times}{duration}{vm}")
 
 class DNSEventsGroup(EventsGroup):
-    def __init__(self, ev_type:EventType, context:str, ts:datetime.datetime, domain_name:str):
-        super().__init__(ev_type, context, ts)
+    def __init__(self, ev_type:EventType, context:str, vm:str|None, ts:datetime.datetime, domain_name:str):
+        super().__init__(ev_type, context, vm, ts)
         self._domain_name=domain_name
 
     def __repr__(self) -> str:
@@ -442,21 +436,40 @@ def _compute_until_timestamp(until:str|None):
         return datetime.datetime.now()
     return _parse_time_spec(until)
 
-def get_dns_usage(show_allowed: bool, show_blocked:bool, object:padsi.config.Zone|padsi.config.AdminNS|None, since:str|None, until:str|None) -> list[EventsGroup]:
-    if object is None:
-        return []
-    since_ts=_compute_since_timestamp(since)
-    until_ts=_compute_until_timestamp(until)
+def _get_logs_dirs(object:padsi.config.Zone|padsi.config.AdminNS|None, vms:list[str]|None) -> dict[str|None,str]:
+    """Get a list of log directories indexed by VM name (<VM ID>:<VM nickname>) or None if no VM"""
+    # get top logs directory
+    if isinstance(object, padsi.config.Zone):
+        logs_dir=conf.get_zone_logs_dir(object.name, get_user_id())
+    elif isinstance(object, padsi.config.AdminNS):
+        logs_dir=conf.get_admin_ns_logs_dir(object.name)
+    elif object is None:
+        logs_dir=conf.logs_dir
+    else:
+        raise Exception(f"CODEBUG: unexpected object type {type(object)}")
+
+    if not os.path.isdir(logs_dir):
+        raise Exception(f"Logs directory '{logs_dir}' is not a directory, something is very wrong")
+
+    res:dict[str|None,str]={}
+    if vms is None or vms==[]:
+        res[None]=logs_dir
+
+    if vms!=[]:
+        for fname in os.listdir(logs_dir):
+            if fname.startswith("VM-"):
+                vm_id=fname[3:]
+                fpath=os.path.join(logs_dir, fname)
+                for vm_name in os.listdir(fpath):
+                    if vms is None or (vm_name in vms or f"{vm_id}:" in vms or f"{vm_id}:{vm_name}" in vms):
+                        fpath=os.path.join(fpath, vm_name)
+                        if os.path.isdir(fpath):
+                            res[f"{vm_id}:{vm_name}"]=fpath
+    return res
+
+def _parse_dns_log(logs_file:str, vm: str|None, show_allowed: bool, show_blocked:bool, since_ts:datetime.datetime, until_ts:datetime.datetime) -> list[EventsGroup]:
     lgroups:list[EventsGroup]=[]
     dgroups:dict[str,EventsGroup]={} # key=name, value=EventsGroup
-
-    # get logs directory
-    if isinstance(object, padsi.config.Zone):
-        logs_file=os.path.join(conf.get_zone_logs_dir(object.name, _caller_uid), "resolv.log")
-    elif isinstance(object, padsi.config.AdminNS):
-        logs_file=os.path.join(conf.get_admin_ns_logs_dir(object.name), "resolv.log")
-
-    # analyse logs
     al_context=f"{Fore.GREEN}domain allowed{Fore.RESET}"
     bl_context=f"{Fore.RED}domain blocked{Fore.RESET}"
     try:
@@ -474,31 +487,44 @@ def get_dns_usage(show_allowed: bool, show_blocked:bool, object:padsi.config.Zon
                             if ts>=since_ts and ts<=until_ts:
                                 egr=dgroups.get(name)
                                 if egr is None or not egr.add_event(ts):
-                                    gr=DNSEventsGroup(EventType.ALLOWED, al_context, ts, name)
+                                    gr=DNSEventsGroup(EventType.ALLOWED, al_context, vm, ts, name)
                                     lgroups.append(gr)
                                     dgroups[name]=gr
                         if show_blocked and data.get("action") in ("req-block", "req-would-block"):
                             if ts>=since_ts and ts<=until_ts:
                                 egr=dgroups.get(name)
                                 if egr is None or not egr.add_event(ts):
-                                    gr=DNSEventsGroup(EventType.BLOCKED, bl_context, ts, name)
+                                    gr=DNSEventsGroup(EventType.BLOCKED, bl_context, vm, ts, name)
                                     lgroups.append(gr)
                                     dgroups[name]=gr
 
                 except Exception as e:
                     print(f"Invalid log line '{line}': {str(e)}", file=sys.stderr)
+        return lgroups
     except FileNotFoundError:
-        pass
+        raise Exception(f"Log file '{logs_file}' does not exist (may have been removed)")
     except PermissionError:
         raise Exception(f"Failed to read zone's resolution logs file {logs_file}: permission denied")
     except Exception as e:
         raise Exception(f"Failed to read zone's resolution logs file {logs_file}: {str(e)}")
+
+def get_dns_usage(show_allowed: bool, show_blocked:bool, object:padsi.config.Zone|padsi.config.AdminNS|None,
+    since:str|None, until:str|None, vms:list[str]|None) -> list[EventsGroup]:
+    if object is None:
+        return []
+    since_ts=_compute_since_timestamp(since)
+    until_ts=_compute_until_timestamp(until)
+    logs_dirs=_get_logs_dirs(object, vms)
+
+    lgroups:list[EventsGroup]=[]
+    for (vm, ldir) in logs_dirs.items():
+        lgroups+=_parse_dns_log(os.path.join(ldir, "resolv.log"), vm, show_allowed, show_blocked, since_ts, until_ts)
     return lgroups
 
 class FirewallEventsGroup(EventsGroup):
-    def __init__(self, ev_type:EventType, context:str, ts:datetime.datetime, proto:str|None, in_iface:str|None, out_iface:str|None,
+    def __init__(self, ev_type:EventType, context:str, vm:str|None, ts:datetime.datetime, proto:str|None, in_iface:str|None, out_iface:str|None,
         ip_src:str|None, ip_dst:str|None, port_src:int|None, port_dst:int|None):
-        super().__init__(ev_type, context, ts)
+        super().__init__(ev_type, context, vm, ts)
         src:Endpoint|None=None
         dst:Endpoint|None=None
         self._flow:NetFlow|None=None
@@ -526,21 +552,10 @@ class FirewallEventsGroup(EventsGroup):
             return f"protocol {self._proto}"
         return str(self._flow)
 
-def get_blocked_firewall_usage(object:padsi.config.Zone|padsi.config.AdminNS|None, since:str|None, until:str|None) -> list[EventsGroup]:
-    since_ts=_compute_since_timestamp(since)
-    until_ts=_compute_until_timestamp(until)
+def _parse_firewall_log(logs_dir:str, vm: str|None, show_allowed: bool, show_blocked:bool, since_ts:datetime.datetime, until_ts:datetime.datetime) -> list[EventsGroup]:
     lgroups:list[EventsGroup]=[]
     dgroups:dict[str,EventsGroup]={} # key=name, value=EventsGroup
 
-    # get logs directory
-    if isinstance(object, padsi.config.Zone):
-        logs_dir=conf.get_zone_logs_dir(object.name, _caller_uid)
-    elif isinstance(object, padsi.config.AdminNS):
-        logs_dir=conf.get_admin_ns_logs_dir(object.name)
-    else:
-        logs_dir=conf.logs_dir
-
-    # analyse logs
     for fname in os.listdir(logs_dir):
         if fname.startswith("firewall.") and fname.endswith(".json"):
             start_ts=datetime.datetime.strptime(fname[9:-5], "%Y-%m-%d")
@@ -566,7 +581,7 @@ def get_blocked_firewall_usage(object:padsi.config.Zone|padsi.config.AdminNS|Non
                                             context=f"{Fore.RED}firewall INFRA IN blocked{Fore.RESET}"
                                         else:
                                             context=f"{Fore.RED}firewall blocked{Fore.RESET}"
-                                    gr=FirewallEventsGroup(EventType.BLOCKED, context, ts, data.get("proto"),
+                                    gr=FirewallEventsGroup(EventType.BLOCKED, context, vm, ts, data.get("proto"),
                                         in_iface, out_iface,
                                         data.get("ip_src"), data.get("ip_dst"),
                                         data.get("port_src"), data.get("port_dst"))
@@ -582,9 +597,20 @@ def get_blocked_firewall_usage(object:padsi.config.Zone|padsi.config.AdminNS|Non
                     raise Exception(f"Failed to read zone's firewall logs file {logs_file}: {str(e)}")
     return lgroups
 
+def get_blocked_firewall_usage(object:padsi.config.Zone|padsi.config.AdminNS|None,
+    since:str|None, until:str|None, vms:list[str]|None) -> list[EventsGroup]:
+    since_ts=_compute_since_timestamp(since)
+    until_ts=_compute_until_timestamp(until)
+    logs_dirs=_get_logs_dirs(object, vms)
+
+    lgroups:list[EventsGroup]=[]
+    for (vm, ldir) in logs_dirs.items():
+        lgroups+=_parse_firewall_log(ldir, vm, show_allowed, show_blocked, since_ts, until_ts)
+    return lgroups
+
 class ProxyEventsGroup(EventsGroup):
-    def __init__(self, ev_type:EventType, context:str, ts:datetime.datetime, endpoint:str, cl_ip:str|None, cl_port:int|None):
-        super().__init__(ev_type, context, ts)
+    def __init__(self, ev_type:EventType, context:str, vm:str|None, ts:datetime.datetime, endpoint:str, cl_ip:str|None, cl_port:int|None):
+        super().__init__(ev_type, context, vm, ts)
         self._endpoint=endpoint
         self._id=self._endpoint if cl_ip is None and cl_port is None else f"{self._endpoint}/{cl_ip}:{cl_port}"
 
@@ -612,27 +638,15 @@ class ProxyEventsGroup(EventsGroup):
                 lgroups.append(gr)
         return lgroups
 
-def get_proxy_usage(show_allowed: bool, show_failed:bool, show_blocked:bool,
-    object:padsi.config.Zone|padsi.config.AdminNS|None, since:str|None, until:str|None) -> list[EventsGroup]:
-    since_ts=_compute_since_timestamp(since)
-    until_ts=_compute_until_timestamp(until)
+def _parse_proxy_log(logs_dir:str, vm: str|None, show_allowed: bool, show_failed: bool, show_blocked:bool, since_ts:datetime.datetime, until_ts:datetime.datetime) -> list[EventsGroup]:
     lgroups:list[EventsGroup]=[]
     dgroups:dict[str,EventsGroup]={} # key=name, value=EventsGroup
-
     def _get_client_ip_port(spans: list[dict]|None) -> tuple[str|None,int|None]:
         if spans is not None:
             for span in spans:
                 if "client_ip" in span and "client_port" in span:
                     return (span["client_ip"], span["client_port"])
         return (None, None)
-
-    # get logs directory
-    if isinstance(object, padsi.config.Zone):
-        logs_dir=conf.get_zone_logs_dir(object.name, _caller_uid)
-    elif isinstance(object, padsi.config.AdminNS):
-        logs_dir=conf.get_admin_ns_logs_dir(object.name)
-    else:
-        logs_dir=conf.logs_dir
 
     # analyse logs
     al_context=f"{Fore.GREEN}web proxy allowed{Fore.RESET}"
@@ -654,6 +668,11 @@ def get_proxy_usage(show_allowed: bool, show_failed:bool, show_blocked:bool,
                                 (ts, *_)=data["timestamp"].split(".")
                                 ts=datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
                                 if ts>=since_ts and ts<=until_ts:
+                                    # don't report if corresponds to a VM
+                                    (cl_ip, cl_port)=_get_client_ip_port(data.get("spans"))
+                                    if vm is None and cl_ip!="192.168.0.2":
+                                        continue
+
                                     # determine if actually blocked outside of PADSI
                                     up_proxy=data.get("up_proxy_blocked")
                                     up_conn=data.get("up_conn_blocked")
@@ -661,8 +680,7 @@ def get_proxy_usage(show_allowed: bool, show_failed:bool, show_blocked:bool,
 
                                     if up_bl_endpoint is not None:
                                         # complement corresponding and already parsed allowed endpoint access to make it failed
-                                        (cl_ip, cl_port)=_get_client_ip_port(data.get("spans"))
-                                        gr=ProxyEventsGroup(EventType.ALLOWED, al_context, ts, up_bl_endpoint, cl_ip, cl_port)
+                                        gr=ProxyEventsGroup(EventType.ALLOWED, al_context, vm, ts, up_bl_endpoint, cl_ip, cl_port)
                                         egr=dgroups.get(gr.id)
                                         if egr is not None:
                                             if show_failed:
@@ -679,8 +697,7 @@ def get_proxy_usage(show_allowed: bool, show_failed:bool, show_blocked:bool,
                                         bl_endpoint=data.get("blocked") # endpoint which has been blocked
 
                                         if (show_allowed or show_failed) and al_endpoint is not None:
-                                            (cl_ip, cl_port)=_get_client_ip_port(data.get("spans"))
-                                            gr=ProxyEventsGroup(EventType.ALLOWED, al_context, ts, al_endpoint, cl_ip, cl_port)
+                                            gr=ProxyEventsGroup(EventType.ALLOWED, al_context, vm, ts, al_endpoint, cl_ip, cl_port)
                                             egr=dgroups.get(gr.id)
                                             if egr is None or not egr.add_event(ts):
                                                 lgroups.append(gr)
@@ -688,7 +705,7 @@ def get_proxy_usage(show_allowed: bool, show_failed:bool, show_blocked:bool,
 
                                         elif show_blocked and bl_endpoint is not None:
                                             (cl_ip, cl_port)=_get_client_ip_port(data.get("spans"))
-                                            gr=ProxyEventsGroup(EventType.BLOCKED, bl_context, ts, bl_endpoint, cl_ip, cl_port)
+                                            gr=ProxyEventsGroup(EventType.BLOCKED, bl_context, vm, ts, bl_endpoint, cl_ip, cl_port)
                                             egr=dgroups.get(gr.id)
                                             if egr is None or not egr.add_event(ts):
                                                 lgroups.append(gr)
@@ -709,6 +726,17 @@ def get_proxy_usage(show_allowed: bool, show_failed:bool, show_blocked:bool,
         lgroups=nlgroups
 
     return ProxyEventsGroup.compact_groups(lgroups)
+
+def get_proxy_usage(show_allowed: bool, show_failed:bool, show_blocked:bool,
+    object:padsi.config.Zone|padsi.config.AdminNS|None, since:str|None, until:str|None, vms:list[str]|None) -> list[EventsGroup]:
+    since_ts=_compute_since_timestamp(since)
+    until_ts=_compute_until_timestamp(until)
+    logs_dirs=_get_logs_dirs(object, vms)
+
+    lgroups:list[EventsGroup]=[]
+    for (vm, ldir) in logs_dirs.items():
+        lgroups+=_parse_proxy_log(ldir, vm, show_allowed, show_failed, show_blocked, since_ts, until_ts)
+    return lgroups
 
 def print_user_zone_infos(gconf:padsi.config.Configuration, zone:padsi.config.Zone, verbose:bool, use_json:bool):
     if use_json:
@@ -782,7 +810,7 @@ def print_user_zone_infos(gconf:padsi.config.Configuration, zone:padsi.config.Zo
     vms:list[padsi.config.VirtualMachine]=[]
     for vmid in zone.get_virtual_machine_ids():
         vm=zone.get_virtual_machine(vmid)
-        if vm is not None and vm.is_user_allowed(_caller_uid):
+        if vm is not None and vm.is_user_allowed(get_user_id()):
             vms.append(vm)
     if len(vms)>0:
         print("Virtual machines to run:")
@@ -901,10 +929,30 @@ def print_net_access(conf:padsi.config.Configuration, endpoint:str, text_match:b
     if use_json:
         print(f"{json.dumps(jdata, indent=4)}")
 
-def require_padsi_service():
-    if client is None:
-        assert(client_exception)
-        raise client_exception
+def get_user_id() -> int:
+    user=args.get("user")
+    uid=os.getuid()
+    if user is not None:
+        try:
+            uid=int(user)
+        except ValueError:
+            try:
+                uid=pwd.getpwnam(user).pw_uid
+            except KeyError:
+                raise Exception(f"Unknown user '{user}'")
+    return uid
+
+def get_service_client(can_be_admin:bool=False)->Client|ClientAdmin:
+    """Connect to the the PADSI service,
+    raise an exception if the service can't be reached
+    """
+    uid=get_user_id()
+    try:
+        return Client(uid)
+    except Exception as e:
+        if can_be_admin:
+            return ClientAdmin()
+        raise e
 
 def prepare_extra_isos(resources:list[str]|None) -> tuple[list[str],str|None]:
     """For each file name in the specified list:
@@ -957,7 +1005,7 @@ try:
     cmde=args["cmde"]
     match cmde:
         case "status":
-            require_padsi_service()
+            client=get_service_client()
             status=client.get_status() # pyright: ignore
             if use_json:
                 print(f"{json.dumps(status.raw_data, indent=4)}")
@@ -967,7 +1015,7 @@ try:
         case "run":
             if len(args)==0:
                 raise Exception("Invalid arguments")
-            require_padsi_service()
+            client=get_service_client()
             data=client.run(args["zone-name"], args["args"]) # pyright: ignore
             if use_json:
                 print(f"{json.dumps(data, indent=4)}")
@@ -981,16 +1029,12 @@ try:
         #
         # VM management
         #
-        case "vms":
+        case "vm-list":
             # data is displayed from the configuration, not the PADSI service itself
             print_vms(load_config(), verbose, use_json)
 
         case "vm-discard":
-            try:
-                require_padsi_service()
-            except PadsiServiceNotRunning:
-                client=ClientAdmin()
-            assert(client is not None)
+            client=get_service_client(True)
             versions:list[str]=[]
             for vm_name in args["vm-name"]:
                 data=client.vm_discard(args["vm-id"], vm_name, args.get("zone_name"), force=args["force"])
@@ -1005,11 +1049,8 @@ try:
                     print("No VM version specified")
 
         case "vm-clean":
-            try:
-                require_padsi_service()
-            except PadsiServiceNotRunning:
-                client=ClientAdmin()
-            data=client.vm_clean(args["vm-id"], args.get("zone_name")) # pyright: ignore
+            client=get_service_client(True)
+            data=client.vm_clean(args["vm-id"], args.get("zone_name"))
             if use_json:
                 print(f"{json.dumps(data, indent=4)}")
             else:
@@ -1017,18 +1058,16 @@ try:
                     print(f"{vmversion}")
 
         case "vm-merge":
-            try:
-                require_padsi_service()
-            except PadsiServiceNotRunning:
-                client=ClientAdmin()
-            data=client.vm_merge(args["vm-id"], args.get("vm-name"), args.get("zone_name"), args["message"]) # pyright: ignore
+            client=get_service_client(True)
+            data=client.vm_merge(args["vm-id"],
+               args.get("vm-name"), args.get("zone_name"), args["message"]) # pyright: ignore
             if use_json:
                 print(f"{json.dumps(data, indent=4)}")
             else:
                 print(f"{json.dumps(data, indent=4)}") # TODO
 
         case "vm-install":
-            require_padsi_service()
+            client=get_service_client()
             boot_iso=args.get("iso")
             if boot_iso is None:
                 raise Exception("No bootable ISO specified")
@@ -1048,12 +1087,7 @@ try:
                 print(f"VM version: {data['vm-version']}") # pyright: ignore
 
         case "vm-import":
-            try:
-                require_padsi_service()
-            except PadsiServiceNotRunning:
-                client=ClientAdmin()
-            assert(client is not None)
-
+            client=get_service_client(True)
             hdd_file=args["hdd-file"]
             if not os.path.isabs(hdd_file):
                 hdd_file=os.path.join(os.path.realpath(os.path.curdir), hdd_file)
@@ -1069,29 +1103,19 @@ try:
 
         case "vm-save":
             conf=load_config()
-            try:
-                require_padsi_service()
-            except PadsiServiceNotRunning:
-                client=ClientAdmin()
-            assert(client is not None)
-
+            client=get_service_client(True)
             client.vm_save(conf, args["vm-id"], args["vm-name"], args["archive-file"], args.get("depend_at"))
 
         case "vm-load":
             conf=load_config()
-            try:
-                require_padsi_service()
-            except PadsiServiceNotRunning:
-                client=ClientAdmin()
-            assert(client is not None)
-
+            client=get_service_client(True)
             ar_file=args["archive-file"]
             if not os.path.isabs(ar_file):
                 ar_file=os.path.join(os.path.realpath(os.path.curdir), ar_file)
             client.vm_load(conf, ar_file, args["vm_id"], args["message"])
 
         case "vm-update":
-            require_padsi_service()
+            client=get_service_client()
             extra_isos=None
             iso_file=None
             (extra_isos, iso_file)=prepare_extra_isos(args.get("resource"))
@@ -1102,7 +1126,7 @@ try:
                 print(f"VM version: {data['vm-version']}") # pyright: ignore
 
         case "vm-publish":
-            require_padsi_service()
+            client=get_service_client()
             data=client.vm_publish(args["vm-id"], args["message"]) # pyright: ignore
             if use_json:
                 print(f"{json.dumps(data, indent=4)}")
@@ -1110,18 +1134,13 @@ try:
                 print(f"{json.dumps(data, indent=4)}") # TODO
 
         case "vm-status":
-            try:
-                require_padsi_service()
-            except PadsiServiceNotRunning:
-                client=ClientAdmin()
-            assert(client is not None)
-
+            client=get_service_client(True)
             zone_name=args.get("zone_name")
             print_vm_status(client.get_vm_status(args["vm-id"], zone_name, verbose), zone_name, verbose, use_json, _indent)
         case "vm-start":
             if len(args)==0:
                 raise Exception("Invalid arguments")
-            require_padsi_service()
+            client=get_service_client()
             data=client.vm_start(args["vm-id"], args["zone-name"], args.get("vm-name")) # pyright: ignore
             if data is not None:
                 if use_json:
@@ -1132,19 +1151,19 @@ try:
         case "vm-display":
             if len(args)==0:
                 raise Exception("Invalid arguments")
-            require_padsi_service()
+            client=get_service_client()
             client.vm_display(args["vm-id"], args["zone-name"], args.get("vm-name")) # pyright: ignore
 
         case "vm-create-launcher":
             if len(args)==0:
                 raise Exception("Invalid arguments")
-            require_padsi_service()
+            client=get_service_client()
             client.vm_launcher_create(args["vm-id"], args["zone-name"], args.get("vm-name")) # pyright: ignore
 
         case "vm-delete-launcher":
             if len(args)==0:
                 raise Exception("Invalid arguments")
-            require_padsi_service()
+            client=get_service_client()
             client.vm_launcher_delete(args["vm-id"], args["zone-name"], args.get("vm-name")) # pyright: ignore
 
 
@@ -1180,19 +1199,36 @@ try:
 
             since=args.get("since")
             until=args.get("until")
-            as_timeline=args.get("no_timeline", True)
+            as_timeline=not args.get("no_timeline", True)
+
+            vms:list[str]|None=None # => handle logs from all VMs
+            vms_arg=args.get("vm")
+            if vms_arg is not None:
+                vms=[]
+                for item in vms_arg.split(","):
+                    item=item.strip()
+                    if item:
+                        vms.append(item)
+                if vms==["none"]:
+                    vms=[] # => ignore logs from any VM
 
             conf=load_config()
-            obj:Any|None=None # will be None for the 'init namespace'
             name_arg=args.get("name", "infaillible")
-            if name_arg!="-":
+            obj:Any|None=None # will be None for the 'init namespace'
+            if name_arg=="":
+                raise Exception("Invalid empty name")
+            elif name_arg=="-":
+                pass
+            elif name_arg[0]=="@":
+                try:
+                    obj=conf.get_admin_ns(name_arg[1:])
+                except Exception:
+                    raise Exception(f"No admin. NS '{name_arg[1:]}'")
+            else:
                 try:
                     obj=conf.get_zone(name_arg)
                 except Exception:
-                    try:
-                        obj=conf.get_admin_ns(name_arg)
-                    except Exception:
-                        raise Exception(f"No zone or admin. NS '{name_arg}'")
+                    raise Exception(f"No zone '{name_arg[1:]}'")
 
             all_collected=[] # in case of JSON output
             handled=False
@@ -1204,16 +1240,16 @@ try:
                     raise Exception("No Web proxy in the 'init namespace'")
 
             if "dns" in events_list:
-                data=get_dns_usage(show_allowed, show_blocked, obj, since, until)
+                data=get_dns_usage(show_allowed, show_blocked, obj, since, until, vms)
                 all_collected.append(data)
                 handled=True
             if "firewall" in events_list:
                 if show_blocked:
-                    data=get_blocked_firewall_usage(obj, since, until)
+                    data=get_blocked_firewall_usage(obj, since, until, vms)
                     all_collected.append(data)
                 handled=True
             if "proxy" in events_list:
-                data=get_proxy_usage(show_allowed, show_failed, show_blocked, obj, since, until)
+                data=get_proxy_usage(show_allowed, show_failed, show_blocked, obj, since, until, vms)
                 all_collected.append(data)
                 handled=True
 
@@ -1234,9 +1270,6 @@ try:
             raise Exception(f"Unhandled command '{cmde}'")
 except KeyboardInterrupt:
     pass
-except PadsiServiceNotRunning as e:
-    print(f"Error: {str(e)}", file=sys.stderr)
-    sys.exit(2) # pyright: ignore
 except Exception as e:
     if False:
         print("========== DEBUG ==========")

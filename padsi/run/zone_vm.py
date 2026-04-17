@@ -123,14 +123,15 @@ class ZoneVM(ZoneFoundations):
     """Object to set up and configure a zone in which a (single) VM will run
     If the VM's usage is INSTALL or UPPDATE, then only the zone's network settings are used, not the zone' mount points
     """
-    prefix="VM-"
     def __init__(self, global_conf: padsi.config.Configuration, zone_conf: padsi.config.Zone, uid: int, run_dir: str,
         logs_dir: str, zone_infra: ZoneInfra|None, zuf: ZoneUserFiles, vm_conf: padsi.config.VirtualMachine,
         vm_version: VMVersion, vmm: VMManagementFiles, ip_address: ipaddress.IPv4Interface|None, gid: int,
         boot_iso: str|None = None, extra_isos: list[str]|None = None, mtu: int|None = None):
-        logs_vm_name=vm_version.nickname if vm_version.nickname is not None else str(vm_version)
+        logs_vm_name=vm_version.nickname if vm_version.nickname is not None else str(vm_version).replace("/", "_")
+        vm_logs_dir=os.path.join(logs_dir, f"VM-{vm_conf.id}", logs_vm_name)
+        os.makedirs(vm_logs_dir, exist_ok=True)
         super().__init__("VM", global_conf, zone_conf, None,
-            uid, run_dir, os.path.join(logs_dir, f"{ZoneVM.prefix}{logs_vm_name}"))
+            uid, run_dir, vm_logs_dir)
         self._z_infra=zone_infra
         self._zuf=zuf
         self.with_x11 = False # we want to use Wayland
