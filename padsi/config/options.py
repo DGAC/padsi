@@ -38,6 +38,7 @@ class ZoneOptionType(str, enum.Enum):
     WEB_REDIRECTION = "WEB-REDIRECTION"  # allow web sites to be opened in the web browser of a zone where the URL is accessible
     X11 = "X11"  # zone allows X11 applications
     DNS_BLOCKLIST = "DNS-BLOCKLIST" # block list for DNS resolutions, refer to https://github.com/StevenBlack/hosts
+    MOUNT_POINTS = "MOUNT-POINTS"
 
 
 @dataclass
@@ -115,6 +116,31 @@ class ZoneOption:
                         raise Exception(f"Block list file '{data}' does not exist")
                     return BlockListOption(option_type, enabled=True, blocklist_file=data)
 
+                case ZoneOptionType.MOUNT_POINTS:
+                    if not isinstance(data, dict):
+                        raise Exception("expected a dictionary")
+                    mpoints:dict[str,str]={}
+                    for (mp_zone, mp_host) in data.items():
+                        mp_zone=os.path.normpath(mp_zone)
+                        mp_host=os.path.normpath(mp_host)
+                        if not isinstance(mp_host, str) or not mp_host:
+                            raise Exception(f"Invalid host mount point '{mp_host}'")
+                        if not os.path.isabs(mp_host):
+                            if config_dir is not None:
+                                mp_host=os.path.join(config_dir, mp_host)
+                            else:
+                                raise Exception(f"Could not determine full path of '{mp_host}'")
+                        if not os.path.exists(mp_host):
+                            raise Exception(f"Path '{mp_host}' does not exist")
+
+                        if not isinstance(mp_zone, str) or not mp_zone or \
+                            os.path.realpath(mp_zone) in ("/dev", "/etc", "/var", "/run", "/sys", "/tmp"):
+                            raise Exception(f"Invalid zone mount point '{mp_zone}'")
+
+                        mpoints[mp_zone]=mp_host # mp_zone does not have to be a full path, as opposed to mp_host
+
+                    return StrStrDictOption(option_type, True, mpoints)
+
                 case _:
                     raise Exception(f"CODEBUG: unhandled ZoneOptionType '{option_type}'")
         except Exception as e:
@@ -182,4 +208,16 @@ class BlockListOption(ZoneOption):
         return "disabled"
 
     def downcast(self:ZoneOption) -> BlockListOption:
+        return self # type: ignore[return-value]
+
+@dataclass
+class StrStrDictOption(ZoneOption):
+    map: dict[str,str]
+
+    def __repr__(self) -> str:
+        if self.enabled:
+            return ", ".join([f"{key}={value}" for (key,value) in self.map.items()])
+        return "disabled"
+
+    def downcast(self:ZoneOption) -> StrStrDictOption:
         return self # type: ignore[return-value]

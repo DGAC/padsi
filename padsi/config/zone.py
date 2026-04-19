@@ -27,7 +27,7 @@ import syslog
 
 from . import network, vm
 from .mountpoint import MountPoint
-from .options import (BlockListOption, BoolOption, FIDO2Option, PKCS11Option,
+from .options import (BlockListOption, BoolOption, StrStrDictOption, FIDO2Option, PKCS11Option,
                       PKIOption, WebRedirectionOption, ZoneOption,
                       ZoneOptionType)
 from .proxy import Proxy
@@ -302,6 +302,7 @@ class Zone:
             ZoneOptionType.GPG_CARD: BoolOption(ZoneOptionType.FUSE, False),
             ZoneOptionType.FIDO2: FIDO2Option(ZoneOptionType.FIDO2, False),
             ZoneOptionType.DNS_BLOCKLIST: BlockListOption(ZoneOptionType.DNS_BLOCKLIST, False, None),
+            ZoneOptionType.MOUNT_POINTS: StrStrDictOption(ZoneOptionType.MOUNT_POINTS, False, {})
         }
         if option not in _default:
             raise Exception(f"CODEBUG: option '{option}' does not have any default value")

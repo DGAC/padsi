@@ -241,19 +241,27 @@ class ZoneApps(ZoneFoundations):
         mounts.update(get_apps_generic_mount_points(self._z_infra.wayland_proxy_socket if self._z_infra is not None else None))
         script_dir=os.path.dirname(os.path.realpath(__file__))
 
-        if self._zone_service_socket is not None:
-            mounts[self._zone_service_socket]={
-                "mount-point": "/bubble/run/padsi-zserv.sock",
-                "read-only": False,
-                "monitored": False
-            }
-
-        # zone specific mount points
+        # home dir
         mounts[self._zuf.zone_home_dir]={
             "mount-point": padsi.misc.get_user_home_dir(self._uid),
             "read-only": False,
             "monitored": False
         }
+
+        # zone's MOUNT-POINTS option
+        rev_mp:dict[str,str]={}
+        mp_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.MOUNT_POINTS)
+        if mp_option.enabled:
+            mp_option=padsi.config.StrStrDictOption.downcast(mp_option)
+            for (mp_zone, mp_host) in mp_option.map.items():
+                if not os.path.isabs(mp_zone):
+                    mp_zone=os.path.join(self._zuf.zone_home_dir, mp_zone)
+                mounts[mp_host]={
+                    "mount-point": mp_zone,
+                    "read-only": True,
+                    "monitored": False
+                }
+                rev_mp[mp_zone]=mp_host
 
         # /etc/resolv.conf file
         if self._infra_dns_ip is not None:
@@ -264,6 +272,14 @@ class ZoneApps(ZoneFoundations):
             mounts[resolv_conf]={
                 "mount-point": "/etc/resolv.conf",
                 "read-only": True,
+                "monitored": False
+            }
+
+        # zone service
+        if self._zone_service_socket is not None:
+            mounts[self._zone_service_socket]={
+                "mount-point": "/bubble/run/padsi-zserv.sock",
+                "read-only": False,
                 "monitored": False
             }
 
@@ -352,7 +368,7 @@ class ZoneApps(ZoneFoundations):
             shim_lib=os.path.realpath(os.path.join(script_dir, "..", "..", "bin", "netlink-shim.so"))
             if not os.path.isfile(shim_lib):
                 raise Exception(f"Netlink shim library '{shim_lib}' is missing")
-            preload_file=os.path.join(self.run_dir, "netlink.preload")
+            preload_file=os.path.join(self.tmp_dir, "netlink.preload")
             with open(preload_file, "wt") as fd:
                 fd.write(f"{shim_lib}\n")
             mounts[preload_file]={
@@ -387,6 +403,23 @@ class ZoneApps(ZoneFoundations):
                         # copy any host settings to the zone
                         if os.path.exists(fdirname):
                             shutil.copytree(fdirname, pol_dir, dirs_exist_ok=True)
+
+                        # copy any data in optionaly mounted directories as well
+                        for (mp, src_dir) in rev_mp.items():
+                            if mp.startswith(fdirname): # mp is a sub directory of fdirname, and thus will be shadowed when fdirname is mounted
+                                rlcopy=mp[len(fdirname):] # "" or "/sub/directory"
+                                dst_dir=pol_dir if len(rlcopy)<=1 else os.path.join(pol_dir, rlcopy[1:])
+                                os.makedirs(dst_dir, exist_ok=True)
+                                for (root, dirs, files) in os.walk(src_dir):
+                                    root=root[len(src_dir):]
+                                    for d in dirs:
+                                        src_path=os.path.join(src_dir, root, d)
+                                        dst_path=os.path.join(dst_dir, root, d)
+                                        os.makedirs(dst_path, os.stat(src_path).st_mode)
+                                    for f in files:
+                                        src_path=os.path.join(src_dir, root, f)
+                                        dst_path=os.path.join(dst_dir, root, f)
+                                        shutil.copy2(src_path, dst_path)
         return mounts
 
     @property
@@ -408,18 +441,6 @@ class ZoneApps(ZoneFoundations):
 
     def _apply_policies(self, zuf:ZoneUserFiles):
         factory=padsi.config.ProgramPoliciesFactory()
-
-        # (re) initialize any policy located in the system files (the ones located in the HOME directory
-        # have been handled when the ZoneUserFiles was set up)
-        for progname in factory.supported_programs:
-            syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: (Re) initializing (system) policies for '{progname}'")
-            policies=factory.get_program_policies(progname)
-            if policies is not None:
-                base_pol_dir=os.path.join(self.run_dir, "policies", progname)
-                try:
-                    policies.initialize_policies(system_dir=base_pol_dir)
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to initialize (system) policies for {progname}: {str(e)}")
 
         # extra ROOT CA certificate for browsers
         if self._extra_root_cert is not None:
@@ -463,9 +484,6 @@ class ZoneApps(ZoneFoundations):
     def start(self):
         """Actually start the bubble
         """
-        # apply policies and specific options
-        self._apply_policies(self._zuf)
-
         if self.with_x11:
             # run xlsclients to force XWayland to start if not yet done
             denv:nsbubble.DisplayEnvironment=nsbubble.get_display_env()
@@ -480,6 +498,7 @@ class ZoneApps(ZoneFoundations):
                 syslog.syslog(syslog.LOG_WARNING, f"{self.syslog_prefix}: failed to force starting of XWayland: determined DISPLAY={denv.x11_display}, XAUTHORITY={denv.x11_auth}")
 
         super().start()
+        self._apply_policies(self._zuf)
         self._start_zone_dbus()
 
         router_enabled=False
