@@ -248,19 +248,23 @@ def print_status(status:GlobalStatus, verbose:bool):
     if len(status.active_zones)>0:
         print("Started zones:")
         for zname in status.active_zones:
-            print(f"  - {zname}")
+            print(f"{_indent}{zname}")
             if verbose:
                 for zonestatus in status.get_active_zones_status(zname): # pyright: ignore
                     if zonestatus.vm_conf is None:
-                        print(f"    - {'ready' if zonestatus.ready else 'not ready'}")
+                        print(f"{_indent*2}{'ready' if zonestatus.ready else 'not ready'}")
                     else:
-                        print(f"    - {'ready' if zonestatus.ready else 'not ready'}, running VM: {zonestatus.vm_snap}/{zonestatus.vm_nickname}, ({zonestatus.vm_conf})")
+                        print(f"{_indent}*2{'ready' if zonestatus.ready else 'not ready'}, running VM: {zonestatus.vm_snap}/{zonestatus.vm_nickname}, ({zonestatus.vm_conf})")
     else:
         print("No zone started yet")
     if len(status.running_tasks)>0:
         print("Running tasks:")
         for task in status.running_tasks:
-            print(f"  - {task}")
+            print(f"{_indent}{task}")
+    if len(status.traffic_shapers)>0:
+        print("Traffic shapers:")
+        for (name, tsp) in status.traffic_shapers.items():
+            print(f"{_indent}{name}: {tsp.type}, {'is functionnal' if tsp.functionnal else 'is NOT functionnal'}")
 
 def print_vms(conf:padsi.config.Configuration, verbose:bool, use_json:bool):
     all_vms:dict[str,set[padsi.config.VirtualMachine]]={}

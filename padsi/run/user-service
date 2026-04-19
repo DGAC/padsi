@@ -448,7 +448,8 @@ class PadsiUserService:
         self._kill_event.set()
 
     async def _call_system_service(self, data):
-        """Send a request to the system service"""
+        """Send a request to the system service
+        Raise an exception if something went wrong"""
         request = Message(MessageType.REQUEST, data)
         syslog.syslog(syslog.LOG_INFO, f"_call_system_service({data})")
         reply = await self._client.call_server(request)
@@ -1127,6 +1128,12 @@ class PadsiUserService:
 
                     active_zones[zone_name] = stdata
                 data["active-zones"] = active_zones
+
+                data["network"]=await self._call_system_service(
+                    {
+                        "cmde": "network-status"
+                    }
+                )
 
             return json_response(data)
         except Exception as e:

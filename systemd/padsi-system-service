@@ -146,6 +146,8 @@ class UserServer(Server):
                 await self._infra_dnat_incoming(request.data)
             case "infra-delete-ns":
                 await self._infra_delete_ns(request.data)
+            case "network-status":
+                return await self._network_status(request.data)
             case "zone-apps-prepare-dirs":
                 await self._zone_apps_prepare_dirs(request.data)
             case "vm-zone-setup":
@@ -527,6 +529,22 @@ class UserServer(Server):
         res=await loop.run_in_executor(None, network_infra_delete_netns, attach_args["netns"], attach_args["syslog-prefix"])
         if isinstance(res, Exception):
             raise res
+
+    async def _network_status(self, args:dict) -> Message:
+        t_shappers:dict={}
+        for tsp in self._traffic_shapers.values():
+            try:
+                t_shappers[tsp.name]={
+                    "type": tsp.ts_type,
+                    "functionnal": tsp.functionnal
+                }
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Could not get information about traffic shaper '{tsp.name}': {str(e)}")
+        res={
+            "traffic-shapers": t_shappers
+        }
+        syslog.syslog(syslog.LOG_ERR, f"NET => {res}")
+        return Message(MessageType.REPLY, res)
 
     async def _vm_files_analyse(self, args:dict) -> Message:
         def _vm_versions_list_to_str_list(vmversions:list[VMVersion]) -> list[str]:

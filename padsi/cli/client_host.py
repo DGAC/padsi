@@ -48,12 +48,19 @@ class ZoneStatus:
         return cls(zone_name, ready, vm_conf, vm_snap, vm_nickname)
 
 @dataclass
+class TrafficShaper:
+    name: str
+    type: str
+    functionnal: bool
+
+@dataclass
 class GlobalStatus:
     """Easy way to handle the status returned by the server"""
     uid: int
     available_zones:list[str]
     _active_zones:dict[str,list[ZoneStatus]]
     running_tasks:list[str]
+    traffic_shapers:dict[str,TrafficShaper]
     _raw_data:dict
 
     @classmethod
@@ -67,9 +74,12 @@ class GlobalStatus:
                     active_zones[name]=[]
                 active_zones[name].append(ZoneStatus.from_data(name, zdata))
         running_tasks=data.get("running-tasks")
+        tsp={}
+        for (name, tdata) in data.get("network",{}).get("traffic-shapers",{}).items():
+            tsp[name]=TrafficShaper(name, tdata.get("type"), tdata.get("functionnal"))
         if uid is None or available_zones is None or running_tasks is None:
             raise Exception(f"CODEBUG: invalid global status data {data}")
-        return cls(uid, available_zones, active_zones, running_tasks, data)
+        return cls(uid, available_zones, active_zones, running_tasks, tsp, data)
 
     @property
     def raw_data(self) -> dict:
