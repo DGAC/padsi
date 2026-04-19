@@ -274,6 +274,44 @@ class ZoneApps(ZoneFoundations):
             "monitored": False
         }
 
+        # PKI certificates
+        pki_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKI)
+        if pki_option.enabled:
+            pki_option=padsi.config.PKIOption.downcast(pki_option)
+            certs_dir=os.path.join(self.tmp_dir, "certs")
+            os.makedirs(certs_dir)
+
+            # copy all the certificates in the store (otherwise they will not be present)
+            host_certs_dir="/etc/ssl/certs"
+            for fname in os.listdir(host_certs_dir):
+                if fname.endswith(".pem") or fname.endswith(".crt"):
+                    path=os.path.join(host_certs_dir, fname)
+                    try:
+                        src_path=os.path.realpath(path)
+                        shutil.copyfile(src_path, os.path.join(certs_dir, fname))
+                    except Exception as e:
+                        syslog.syslog(syslog.LOG_ERR, f"Could not symlink cert {fname} in '{certs_dir}': {str(e)}")
+
+            for (name, data) in pki_option.ca_certs.items():
+                fname=os.path.join(certs_dir, f"{name}.crt")
+                try:
+                    with open(fname, "wt") as fd:
+                        fd.write(data)
+                except Exception as e:
+                    syslog.syslog(syslog.LOG_ERR, f"Could not create cert {name} in '{certs_dir}': {str(e)}")
+
+            # rehash
+            proc=subprocess.run(["openssl", "rehash", certs_dir], capture_output=True, text=True)
+            if proc.returncode!=0:
+                syslog.syslog(syslog.LOG_ERR, f"Could not openssl rehash certs in '{certs_dir}': {proc.stderr}")
+
+            # mount
+            mounts[certs_dir]={
+                "mount-point": host_certs_dir,
+                "read-only": True,
+                "monitored": False
+            }
+
         # PKCS11 library
         pkcs11_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11)
         if pkcs11_option.enabled:
