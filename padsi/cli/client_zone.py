@@ -24,7 +24,7 @@
 
 from __future__ import annotations
 
-from client import BaseClient, VMStatus
+from padsi.cli.client import BaseClient, VMStatus
 
 
 class Client(BaseClient):
