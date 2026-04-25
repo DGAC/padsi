@@ -654,7 +654,7 @@ def _parse_proxy_log(logs_dir:str, vm: str|None, show_allowed: bool, show_failed
 
     # analyse logs
     al_context=f"{Fore.GREEN}web proxy allowed{Fore.RESET}"
-    fa_context=f"{Fore.GREEN}web proxy failed{Fore.RESET}"
+    fa_context=f"{Fore.MAGENTA}web proxy failed{Fore.RESET}"
     bl_context=f"{Fore.RED}web proxy blocked{Fore.RESET}"
     for fname in os.listdir(logs_dir):
         if fname.startswith("web-infra.") and fname.endswith(".json"):
