@@ -242,5 +242,23 @@ mod tests {
         let ep1 = EndPoint::from_str("^^100-300").unwrap();
         assert!(ep1.contains(&ep2));
         assert!(!ep2.contains(&ep1));
+
+        let ep1 = EndPoint::from_str("1.2.0.0/16").unwrap();
+        let ep2 = EndPoint::from_str("1.2.3.4").unwrap();
+        assert!(ep1.contains(&ep2));
+        assert!(!ep2.contains(&ep1));
+        let ep2 = EndPoint::from_str("1.2.3.4/32").unwrap();
+        assert!(ep1.contains(&ep2));
+        assert!(!ep2.contains(&ep1));
+        let ep2 = EndPoint::from_str("1.3.3.4/32").unwrap();
+        assert!(!ep1.contains(&ep2));
+
+        let ep1 = EndPoint::from_str("1.2.0.0/16^TCP^443,444").unwrap();
+        let ep2 = EndPoint::from_str("1.2.3.4^TCP^443").unwrap();
+        assert!(ep1.contains(&ep2));
+        assert!(!ep2.contains(&ep1));
+        let ep2 = EndPoint::from_str("1.2.3.4^TCP^445").unwrap();
+        assert!(!ep1.contains(&ep2));
+
     }
 }

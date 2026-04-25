@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("Logging to directory '{}'", log_dir);
     let trace_conf= TraceConfig::new(&log_dir, "web-infra")
-        .with_stdout_output(true)
+        .with_stdout_output(false)
         .with_file_level(LevelFilter::INFO)
         .with_syslog_level(LevelFilter::WARN);
     let _t=tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
