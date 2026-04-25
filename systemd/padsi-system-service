@@ -543,7 +543,6 @@ class UserServer(Server):
         res={
             "traffic-shapers": t_shappers
         }
-        syslog.syslog(syslog.LOG_ERR, f"NET => {res}")
         return Message(MessageType.REPLY, res)
 
     async def _vm_files_analyse(self, args:dict) -> Message:
@@ -1569,6 +1568,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                                 allowed_dns_flows.append(flow)
                             except Exception as e:
                                 syslog.syslog(syslog.LOG_ERR, f"Could not allow outboud DNS flow '{flow}': {str(e)}")
+                        await asyncio.sleep(0.2) # let the FW make its changes
 
                     # let all the traffic shapers adapt to the new settings
                     for tshaper in self._traffic_shapers.values():
