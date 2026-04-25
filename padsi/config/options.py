@@ -137,6 +137,9 @@ class ZoneOption:
                             os.path.realpath(mp_zone) in ("/dev", "/etc", "/var", "/run", "/sys", "/tmp"):
                             raise Exception(f"Invalid zone mount point '{mp_zone}'")
 
+                        (_, *mode)=mp_zone.split(",", maxsplit=1)
+                        if len(mode)==1 and mode[0] not in ("ro", "rw"):
+                            raise Exception(f"Invalid '{mode[0]}' mode")
                         mpoints[mp_zone]=mp_host # mp_zone does not have to be a full path, as opposed to mp_host
 
                     return StrStrDictOption(option_type, True, mpoints)

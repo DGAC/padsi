@@ -448,6 +448,8 @@ class Bubble:
             self._run_dir=run_dir
         self._init_prog=os.path.dirname(os.path.realpath(__file__))+"/init"
 
+        self._overlay_tmpdir=tempfile.TemporaryDirectory()
+
         self._bubble_pid:int|None=None
         self._files_monitor:FilesMonitor=FilesMonitor()
         self._wl_proxy_pid:int|None=None
@@ -467,7 +469,12 @@ class Bubble:
         try:
             if _debug and self._bubble_pid is not None:
                 syslog.syslog(syslog.LOG_DEBUG, f"Bubble with PID {self._bubble_pid} is being destroyed")
-            self._tmpdir=None
+            if self._tmpdir is not None:
+                self._tmpdir.cleanup()
+                self._tmpdir=None
+            if self._overlay_tmpdir is not None:
+                self._overlay_tmpdir.cleanup()
+                self._overlay_tmpdir=None
             self.destroy()
         except Exception:
             pass
@@ -560,6 +567,218 @@ class Bubble:
             raise Exception(f"Bubble is {self._state.value}")
         return self.net_namespace[5:-1]
 
+    def _dir_args(self, bound_dirs:list[str]) -> list[str]:
+        """Set up directories overlays and return all the arguments for bwrap"""
+        if self._overlay_tmpdir is None:
+            raise Exception("CODEBUG: _dir_args() called after destroy()")
+
+        @dataclass
+        class MountPoint:
+            host_path:str|None
+            mount_path:str
+            readonly:bool=True
+            monitored:bool=False
+
+            def __str__(self) -> str:
+                return f"{self.host_path} ==> {self.mount_path} ({'RO' if self.readonly else 'RW'}{', MOINT' if self.monitored else ''})"
+
+            def __post_init__(self):
+                if not self.mount_path:
+                    raise Exception("CODEBUG: empty mount path")
+                forced_dir=self.mount_path[-1]=="/"
+                self.mount_path=os.path.realpath(self.mount_path)
+                if forced_dir:
+                    self.mount_path+="/"
+                if self.host_path is not None and self.host_path[0]=="-": # hack for now
+                    self.host_path=None
+                if self.host_path is not None:
+                    self.host_path=os.path.realpath(self.host_path)
+                    if os.path.isdir(self.host_path):
+                        self.mount_path=self.mount_path+"/"
+                        self.host_path=self.host_path+"/"
+
+            @classmethod
+            def from_data(cls, host_path:str, info:dict)->MountPoint:
+                if not isinstance(info, dict):
+                    raise Exception(f"Invalid mountpoint info {info}")
+                mp=info.get("mount-point")
+                ro=info.get("read-only", True)
+                monit=info.get("monitored", False)
+                if (not isinstance(mp, str) or mp=="") or \
+                    not isinstance(ro, bool) or \
+                    monit is not None and not isinstance(monit, bool):
+                    raise Exception(f"Invalid mountpoint info {info}: expected a dict")
+                return cls(host_path, mp, ro, monit)
+
+            def prefix_path(self, prefix:str) -> str:
+                return os.path.join(prefix, self.mount_path[1:])
+
+        @dataclass
+        class MountPointGroup:
+            """Group mount points beneath a common top directory"""
+            items: list[MountPoint]
+            mount_path:str
+
+            def __str__(self) -> str:
+                return f"{self.mount_path} [{', '.join([str(mpoint) for mpoint in self.items])}]"
+
+            def __post_init__(self):
+                if len(self.items)==0:
+                    raise Exception("CODEBUG: MountPointGroup has no MountPoint")
+
+            def add(self, mpoint:MountPoint):
+                if self.mount_path.startswith(mpoint.mount_path):
+                    self.mount_path=mpoint.mount_path
+                    self.items=[mpoint]+self.items
+                else:
+                    self.items.append(mpoint)
+
+            def get_args(self, run_dir:str, tmp_dir:str) -> list[str]:
+                if len(self.items)==0:
+                    raise Exception("CODEBUG: MountPointGroup has no MountPoint")
+
+                if len(self.items)==1:
+                    mpoint=self.items[0]
+                    if mpoint.host_path is None:
+                        dir=mpoint.prefix_path(run_dir)
+                        if _debug:
+                            syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR 1 {dir}")
+                        os.makedirs(dir)
+                        if mpoint.readonly:
+                            return ["--ro-bind", dir, mpoint.mount_path]
+                        else:
+                            return ["--bind", dir, mpoint.mount_path]
+
+                    if mpoint.readonly:
+                        return ["--ro-bind", mpoint.host_path, mpoint.mount_path]
+                    elif os.access(mpoint.host_path, os.W_OK):
+                        # directlry bind if we have write permission
+                        return ["--bind", mpoint.host_path, mpoint.mount_path]
+                    elif os.path.isdir(mpoint.host_path):
+                        # add an overlay to allow write to directory
+                        ovl_dir=mpoint.prefix_path(run_dir)
+                        if _debug:
+                            syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR 2 {ovl_dir}")
+                        os.makedirs(ovl_dir)
+                        return [
+                            "--overlay-src", mpoint.host_path,
+                            "--overlay-src", ovl_dir,
+                            "--tmp-overlay", mpoint.mount_path
+                        ]
+                    else:
+                        raise Exception(f"Can't allow RW acces to file '{mpoint.host_path}' which is read-only (use a directory instead)")
+
+                else:
+                    args:list[str]=[]
+
+                    # use the 1st mpoint as the base of the overlay
+                    f_mpoint=self.items[0]
+                    if f_mpoint.host_path is not None:
+                        args+=["--overlay-src", f_mpoint.host_path]
+
+                    ref_dir=f_mpoint.prefix_path(run_dir) # writable layer
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR REF_DIR {ref_dir}")
+                    os.makedirs(ref_dir)
+                    args+=["--overlay-src", ref_dir]
+
+                    # copy the contents of all the other mount points (using bind mount would be better but would require root privs.)
+                    for mpoint in self.items[1:]:
+                        if not mpoint.mount_path.startswith(self.mount_path):
+                            raise Exception(f"CODEBUG: mount point {mpoint.mount_path} not a sub dir. of group's {self.mount_path}")
+                        if mpoint.host_path is not None:
+                            delta_path=mpoint.mount_path[len(self.mount_path):]
+                            if delta_path[0]=="/":
+                                delta_path=delta_path[1:]
+                            dest_path=os.path.join(ref_dir, delta_path)
+                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                            if os.path.isdir(mpoint.host_path):
+                                if os.path.exists(dest_path):
+                                    if _debug:
+                                        syslog.syslog(syslog.LOG_DEBUG, f"COPY recurs. contents of {mpoint.host_path} to {dest_path}")
+                                    for fname in os.listdir(mpoint.host_path):
+                                        fpath=os.path.join(mpoint.host_path, fname)
+                                        if os.path.isdir(fpath):
+                                            if _debug:
+                                                syslog.syslog(syslog.LOG_DEBUG, f"COPY tree {fpath} to {dest_path}/{fname}")
+                                            shutil.copytree(fpath, os.path.join(dest_path, fname))
+                                        else:
+                                            if _debug:
+                                                syslog.syslog(syslog.LOG_DEBUG, f"COPY file {fpath} to {dest_path}/{fname}")
+                                            shutil.copy2(fpath, os.path.join(dest_path, fname), follow_symlinks=False)
+                                else:
+                                    if _debug:
+                                        syslog.syslog(syslog.LOG_DEBUG, f"COPY tree {mpoint.host_path} to {dest_path}")
+                                    shutil.copytree(mpoint.host_path, dest_path)
+                            elif os.path.exists(mpoint.host_path):
+                                if _debug:
+                                    syslog.syslog(syslog.LOG_DEBUG, f"COPY file {mpoint.host_path} to {dest_path}")
+                                shutil.copy2(mpoint.host_path, dest_path, follow_symlinks=False)
+                            else:
+                                syslog.syslog(syslog.LOG_ERR, f"Can't copy mount point '{mpoint.host_path}' to '{dest_path}': does not exist")
+
+                    rw_dir=f_mpoint.prefix_path(tmp_dir)+"_._rw" # working layer
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR RW_DIR {rw_dir}")
+                    os.makedirs(rw_dir)
+                    work_dir=f_mpoint.prefix_path(tmp_dir)+"_._wo" # working layer
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR WORK_DIR {work_dir}")
+                    os.makedirs(work_dir)
+                    args+=["--overlay", rw_dir, work_dir, self.mount_path]
+
+                    if f_mpoint.readonly:
+                        os.chmod(rw_dir, 0o555)
+
+                    return args
+
+        # prepare list of directories which will either be RO-mounted AS-IS, or will be the base of an
+        # overlay if we have mount points beneath them
+        groups:dict[str,MountPointGroup]={} # key=mount point
+        for item in bound_dirs:
+            mpoint=MountPoint(item, item)
+            grp=MountPointGroup([mpoint], mpoint.mount_path)
+            groups[grp.mount_path]=grp
+
+        if self._features.mounts is not None:
+            # compute MountPoint objects, to be removed when improved API
+            mpoints:list[MountPoint]=[]
+            for hpath, info in self._features.mounts.items():
+                mpoints.append(MountPoint.from_data(hpath, info))
+
+            # group mount points in overlays
+            for mpoint in mpoints:
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"HANDLE mpoint={str(mpoint)}" )
+                found=False
+                for path in list(groups.keys()).copy():
+                    grp=groups[path]
+                    if mpoint.mount_path==grp.mount_path:
+                        pass
+                    elif mpoint.mount_path.startswith(grp.mount_path): # mpoint is a sub directory
+                        grp.add(mpoint)
+                        found=True
+                        break
+                    elif grp.mount_path.startswith(mpoint.mount_path): # mpoint is a parent directory
+                        ngrp=MountPointGroup([mpoint]+grp.items, mpoint.mount_path)
+                        groups[ngrp.mount_path]=ngrp
+                        del groups[grp.mount_path]
+                        found=True
+                        break
+                if not found:
+                    grp=MountPointGroup([mpoint], mpoint.mount_path)
+                    groups[grp.mount_path]=grp
+
+            if _debug:
+                for (_, grp) in groups.items():
+                    syslog.syslog(syslog.LOG_DEBUG, f"group={str(grp)}")
+
+        # compute args from overlays
+        args:list[str]=[]
+        for grp in groups.values():
+            args+=grp.get_args(self._run_dir, self._overlay_tmpdir.name)
+        return args
+
     def _start_bubble(self):
         """Actually run the bwrap program to start the bubble
         @run_dir is the directory where the fake passwd and group files are creates and which is mounted
@@ -597,20 +816,27 @@ class Bubble:
             "--unshare-pid",
             "--unshare-net",
             "--unshare-ipc",
-            "--ro-bind", "/usr", "/usr",
             "--dir", "/tmp",
             "--dir", "/var",
             "--symlink", "../tmp", "var/tmp",
             "--proc", "/proc",
             "--ro-bind", self._init_prog, "/bubble/init",
             "--bind", self._run_dir, "/bubble/run",
-            "--ro-bind", "/etc/machine-id", "/etc/machine-id",
-            "--ro-bind", "/etc/fonts", "/etc/fonts",
-            "--ro-bind", "/etc/xdg", "/etc/xdg",
-            "--ro-bind", "/etc/alternatives", "/etc/alternatives",
-            "--ro-bind", "/etc/ssl", "/etc/ssl",
-            "--ro-bind", "/etc/localtime", "/etc/localtime",
-            "--ro-bind", "/etc/manpath.config", "/etc/manpath.config",
+            "--tmpfs", "/tmp"
+        ]
+
+        # home directory bind?
+        if self._features.home_dir is not None:
+            args+=["--bind", self._features.home_dir, bhome_dir]
+        else:
+            args+=["--tmpfs",  bhome_dir]
+
+        # mount directories
+        # the bound_dirs var. is the list dirs which are RO bound from the host (excluding /dev, /run and /sys) for
+        # which there might be conflicts with features's mount points if directly --ro-bind
+        bound_dirs=["/etc/fonts", "/etc/xdg", "/etc/alternatives", "/etc/ssl", "/usr"]
+        args+=self._dir_args(bound_dirs)
+        args+=[
             "--symlink", "usr/lib", "/lib",
             "--symlink", "usr/lib64", "/lib64",
             "--symlink", "usr/bin", "/bin",
@@ -621,8 +847,7 @@ class Bubble:
             "--clearenv",
             "--chdir", self._features.working_dir if self._features.working_dir else bhome_dir,
             "--ro-bind", passwd_file, "/etc/passwd",
-            "--ro-bind", group_file, "/etc/group",
-            "--tmpfs", "/tmp"
+            "--ro-bind", group_file, "/etc/group"
         ]
 
         if self._features.bind_medias:
@@ -708,46 +933,6 @@ class Bubble:
         if lang is not None:
             args+=["--setenv", "LANG", lang]
 
-        # home directory bind?
-        if self._features.home_dir is not None:
-            args+=["--bind", self._features.home_dir, bhome_dir]
-        else:
-            args+=["--tmpfs",  bhome_dir]
-
-        # extra mounts
-        if self._features.mounts is not None:
-            for hdir, info in self._features.mounts.items():
-                if not isinstance(info, dict):
-                    raise Exception(f"Invalid mountpoint info {info}: expected a dict")
-                mountpoint=info.get("mount-point")
-                robind=info.get("read-only")
-                monitored=info.get("monitored")
-                if (not isinstance(mountpoint, str) or mountpoint=="") or \
-                    not isinstance(robind, bool) or \
-                    monitored is not None and not isinstance(monitored, bool):
-                    raise Exception(f"Invalid mountpoint info {info}: expected a dict")
-
-                if os.path.exists(hdir):
-                    if not os.path.isabs(hdir):
-                        raise Exception(f"Source path to mount '{hdir}' must be absolute")
-                    if not os.path.isabs(mountpoint):
-                        raise Exception(f"Mountpoint '{mountpoint}' must be absolute")
-
-                    if hdir.startswith("/dev"):
-                        if robind:
-                            raise Exception("Can't bind read-only a device")
-                        args+=["--dev-bind", hdir, mountpoint]
-                    else:
-                        if monitored:
-                            # use a FileMonitor
-                            sfile=ShadowedFile(hdir)
-                            self._files_monitor.register_file(sfile)
-                            hdir=sfile.file_shadow
-                        if robind:
-                            args+=["--ro-bind", hdir, mountpoint]
-                        else:
-                            args+=["--bind", hdir, mountpoint]
-
         # access to display
         if self._features.display_env:
             args+=["--setenv", "XDG_SESSION_TYPE", "wayland"]
@@ -810,7 +995,7 @@ class Bubble:
         # start the bubblewrap process. We don't use the subprocess module here because
         # bwrap does not like the idea of being started with an effective UID!=0 and a real UID=0: it fails
         # with the "Unexpected setuid user XXX, should be 0" error
-        #print(f"BUBBLE args: {' '.join(args)}")
+        #syslog.syslog(syslog.LOG_DEBUG, f"BUBBLE args: {json.dumps(args, indent=4)}")
         argsstr=" ".join(args)
         if _debug:
             syslog.syslog(syslog.LOG_DEBUG, f"Running bwrap: {argsstr}")

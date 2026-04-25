@@ -254,11 +254,15 @@ class ZoneApps(ZoneFoundations):
         if mp_option.enabled:
             mp_option=padsi.config.StrStrDictOption.downcast(mp_option)
             for (mp_zone, mp_host) in mp_option.map.items():
+                (mp_zone, *mode)=mp_zone.split(",", maxsplit=1)
                 if not os.path.isabs(mp_zone):
                     mp_zone=os.path.join(self._zuf.zone_home_dir, mp_zone)
+                ro=True
+                if len(mode)==1 and mode[0]=="rw":
+                    ro=False
                 mounts[mp_host]={
                     "mount-point": mp_zone,
-                    "read-only": True,
+                    "read-only": ro,
                     "monitored": False
                 }
                 rev_mp[mp_zone]=mp_host
@@ -296,23 +300,26 @@ class ZoneApps(ZoneFoundations):
             pki_option=padsi.config.PKIOption.downcast(pki_option)
             certs_dir=os.path.join(self.tmp_dir, "certs")
             os.makedirs(certs_dir)
+            all_certs_file=os.path.join(self.tmp_dir, "certs/ca-certificates.crt")
 
-            # copy all the certificates in the store (otherwise they will not be present)
+            # copy the ca-certificates.crt file which will be modified
             host_certs_dir="/etc/ssl/certs"
-            for fname in os.listdir(host_certs_dir):
-                if fname.endswith(".pem") or fname.endswith(".crt"):
-                    path=os.path.join(host_certs_dir, fname)
-                    try:
-                        src_path=os.path.realpath(path)
-                        shutil.copyfile(src_path, os.path.join(certs_dir, fname))
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_ERR, f"Could not symlink cert {fname} in '{certs_dir}': {str(e)}")
+            host_all_certs_file=None
+            try:
+                host_all_certs_file=os.path.join(host_certs_dir, "ca-certificates.crt")
+                shutil.copyfile(host_all_certs_file, all_certs_file)
+            except Exception as e:
+                syslog.syslog(syslog.LOG_ERR, f"Could not copy {host_all_certs_file} in '{certs_dir}': {str(e)}")
 
             for (name, data) in pki_option.ca_certs.items():
                 fname=os.path.join(certs_dir, f"{name}.crt")
                 try:
                     with open(fname, "wt") as fd:
                         fd.write(data)
+                    with open(all_certs_file, "at") as fd:
+                        fd.write(data)
+                        fd.write("\n")
+
                 except Exception as e:
                     syslog.syslog(syslog.LOG_ERR, f"Could not create cert {name} in '{certs_dir}': {str(e)}")
 
@@ -379,47 +386,23 @@ class ZoneApps(ZoneFoundations):
 
         # policies directories for the programs for which policies can be defined
         factory=padsi.config.ProgramPoliciesFactory()
-        all_pol_dirs:set[str]=set()
         for progname in factory.supported_programs:
             policies=factory.get_program_policies(progname)
             if policies is not None:
-                base_pol_dir=os.path.join(self.run_dir, "policies", progname)
                 for dirname in policies.get_writable_directories():
-                    if dirname not in all_pol_dirs:
-                        if dirname[0]!="/":
-                            syslog.syslog(syslog.LOG_WARNING, f"CODEBUG: {self.syslog_prefix}: writable directory '{dirname}' for {progname}'s policies should be absolute")
-                        else:
-                            dirname=dirname[1:]
-                        fdirname=f"/{dirname}"
-                        pol_dir=os.path.join(base_pol_dir, dirname)
-                        all_pol_dirs.add(dirname)
-                        os.makedirs(pol_dir, exist_ok=True)
-                        mounts[pol_dir]={
-                            "mount-point": fdirname,
-                            "read-only": False,
-                            "monitored": False
-                        }
+                    if dirname[0]!="/":
+                        syslog.syslog(syslog.LOG_WARNING, f"CODEBUG: {self.syslog_prefix}: writable directory '{dirname}' for {progname}'s policies should be absolute")
+                    else:
+                        dirname=dirname[1:]
+                    fdirname=f"/{dirname}"
+                    if fdirname[-1]!="/":
+                        fdirname+="/"
+                    mounts[f"-{dirname}"]={ # hack to say we just want a writable directory
+                        "mount-point": fdirname,
+                        "read-only": False,
+                        "monitored": False
+                    }
 
-                        # copy any host settings to the zone
-                        if os.path.exists(fdirname):
-                            shutil.copytree(fdirname, pol_dir, dirs_exist_ok=True)
-
-                        # copy any data in optionaly mounted directories as well
-                        for (mp, src_dir) in rev_mp.items():
-                            if mp.startswith(fdirname): # mp is a sub directory of fdirname, and thus will be shadowed when fdirname is mounted
-                                rlcopy=mp[len(fdirname):] # "" or "/sub/directory"
-                                dst_dir=pol_dir if len(rlcopy)<=1 else os.path.join(pol_dir, rlcopy[1:])
-                                os.makedirs(dst_dir, exist_ok=True)
-                                for (root, dirs, files) in os.walk(src_dir):
-                                    root=root[len(src_dir):]
-                                    for d in dirs:
-                                        src_path=os.path.join(src_dir, root, d)
-                                        dst_path=os.path.join(dst_dir, root, d)
-                                        os.makedirs(dst_path, os.stat(src_path).st_mode)
-                                    for f in files:
-                                        src_path=os.path.join(src_dir, root, f)
-                                        dst_path=os.path.join(dst_dir, root, f)
-                                        shutil.copy2(src_path, dst_path)
         return mounts
 
     @property
@@ -448,9 +431,8 @@ class ZoneApps(ZoneFoundations):
                 syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: adding extra CA cert. for '{progname}'")
                 policies=factory.get_program_policies(progname)
                 if policies is not None:
-                    base_pol_dir=os.path.join(self.run_dir, "policies", progname)
                     try:
-                        policies.add_trusted_ca(base_pol_dir, zuf.zone_home_dir, "Web redirection CA", self._extra_root_cert)
+                        policies.add_trusted_ca(self.run_dir, zuf.zone_home_dir, "Web redirection CA", self._extra_root_cert)
                     except Exception as e:
                         syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add Root CA to {progname}: {str(e)}")
 
@@ -460,11 +442,10 @@ class ZoneApps(ZoneFoundations):
             for progname in factory.supported_browsers:
                 policies=factory.get_program_policies(progname)
                 if policies is not None:
-                    base_pol_dir=os.path.join(self.run_dir, "policies", progname)
                     for (nickname, ca_cert) in pki_option.ca_certs.items():
                         try:
                             syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: adding trusted CA '{nickname}' for '{progname}'")
-                            policies.add_trusted_ca(base_pol_dir, zuf.zone_home_dir, nickname, ca_cert)
+                            policies.add_trusted_ca(self.run_dir, zuf.zone_home_dir, nickname, ca_cert)
                         except Exception as e:
                             syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add trusted CA '{nickname}' to {progname}: {str(e)}")
 
@@ -601,7 +582,7 @@ def get_apps_generic_mount_points(wayland_proxy_socket:str|None) -> dict:
             }
 
     # extra mount points for some applications
-    for romp in ("/etc/alternatives", "/etc/chromium.d", "/etc/gimp", "/etc/libreoffice", "/opt", "/usr/games", "/var/lib/flatpak"):
+    for romp in ("/etc/alternatives", "/etc/chromium.d", "/etc/gimp", "/etc/libreoffice", "/opt", "/var/lib/flatpak"):
         if os.path.isdir(romp):
             mounts[romp]={
                 "mount-point": romp,
