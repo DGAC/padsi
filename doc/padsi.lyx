@@ -12322,11 +12322,23 @@ vm-management/scripts/<OS type>
 
 \begin_deeper
 \begin_layout Itemize
-a list of user names;
+a list of user names or group names (which must be prefixed by the 
+\begin_inset Quotes eld
+\end_inset
+
+
+\family typewriter
+%
+\family default
+
+\begin_inset Quotes erd
+\end_inset
+
+ character);
 \end_layout
 
 \begin_layout Itemize
-null for all users.
+null to allow all users.
 \end_layout
 
 \end_deeper

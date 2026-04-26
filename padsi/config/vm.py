@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import enum
+import grp
 import json
 import os
 import pwd
@@ -69,6 +70,10 @@ class VirtualMachine:
         self._mounts: list[MountPoint] = mounts if mounts else []
         self._network: NetworkSpec|None = network
         self._allowed_users: list[str]|None = allowed_users
+        if allowed_users is not None:
+            for allowed in allowed_users:
+                if not isinstance(allowed, str) or not re.match(r'^%?[_a-z][-0-9_a-z\.]*\$?$', allowed):
+                    raise Exception(f"Invalid allowed user '{allowed}'")
 
     def __repr__(self):
         return f"VirtualMachine {self._id}/{self._usage}"
@@ -216,6 +221,17 @@ class VirtualMachine:
         """Determine if user is allowed to use the VM (for the associated usage)"""
         if uid == 0:
             return True # root is always allowed
+        if self._allowed_users is None:
+            return True
+
+        # check if user is "padsi", always allowed
+        try:
+            if pwd.getpwnam("padsi").pw_uid==uid:
+                return True
+        except Exception:
+            syslog.syslog(syslog.LOG_WARNING, "It seems the 'padsi' user is not present in the system")
+
+        # get username and quick check
         try:
             username = pwd.getpwuid(uid).pw_name
         except Exception as e:
@@ -223,12 +239,16 @@ class VirtualMachine:
         if self._allowed_users is None or username in self._allowed_users:
             return True
 
-        # check if user is "padsi"
-        try:
-            if pwd.getpwnam("padsi").pw_uid==uid:
-                return True
-        except Exception:
-            syslog.syslog(syslog.LOG_WARNING, "It seems the 'padsi' user is not present in the system")
+        # use groups
+        for allowed in self._allowed_users:
+            if allowed[0]=="%":
+                try:
+                    group=grp.getgrnam(allowed[1:])
+                    if username in group.gr_mem:
+                        return True
+                except KeyError:
+                    syslog.syslog(syslog.LOG_WARNING, f"Referenced group '{allowed[1:]}' does not exist")
+
         return False
 
     def check_user_allowed(self, uid: int):
