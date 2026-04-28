@@ -1428,13 +1428,13 @@ class PadsiUserService:
                 await self._mark_task_finished(task)
             raise e
 
-    async def _vm_install_or_update(self, usage: padsi.config.VMUsage, vm_id: str, zone_name: str,
+    async def _vm_install_or_update(self, usage: padsi.config.VMUsage, vm_id: str, zone_name: str|None,
         boot_iso: str | None, extra_isos: list[str] | None, iso_file: str | None):
         task: Task | None = None
         try:
             # determine VM and zone configs to use
             zone_conf: padsi.config.Zone | None = None
-            if zone_name:  # may be unspecified by the user, will be determined automatically
+            if zone_name is not None:  # may be unspecified by the user, will be determined automatically
                 zone_conf = self._gconf.get_zone(zone_name)
             vm_conf: padsi.config.VirtualMachine | None = self._gconf.get_vm(usage, vm_id)
             if vm_conf is None:
@@ -1456,12 +1456,13 @@ class PadsiUserService:
             await self._mark_task_started(task, ensure_unique=True, unique_descr=f"VM {vm_id} is already being {usage.value}")
 
             # comply with network requirements
-            if zone_conf is not None and zone_conf.network_spec is not None:
-                (compat, failed)=vm_conf.is_network_compatible(zone_conf.network_spec, zone_conf.web_proxies)
-                if not compat:
-                    raise Exception(f"VM network requirements '{failed}' not compatible with zone's networking restrictions")
-                else:
-                    syslog.syslog(syslog.LOG_ERR, f"VM '{vm_id}' ('{usage.value}') will use zone '{zone_name}' networking as specified")
+            if zone_conf is not None:
+                if zone_conf.network_spec is not None:
+                    (compat, failed)=vm_conf.is_network_compatible(zone_conf.network_spec, zone_conf.web_proxies)
+                    if not compat:
+                        raise Exception(f"VM network requirements '{failed}' not compatible with zone's networking restrictions")
+                    else:
+                        syslog.syslog(syslog.LOG_ERR, f"VM '{vm_id}' ('{usage.value}') will use zone '{zone_name}' networking as specified")
             else:
                 for zone_name in self._gconf.get_zones_names():
                     z = self._gconf.get_zone(zone_name)
@@ -1473,6 +1474,7 @@ class PadsiUserService:
                             break
                 if zone_conf is None:
                     raise Exception("Could not identify a zone which networking restrictions are compatible with VM network requirements for installation")
+            zone_name=zone_conf.name
             await self._prepare_zone_dirs(zone_conf, vm_conf=vm_conf)
 
             # staging directory preparation if necessary
@@ -1513,6 +1515,7 @@ class PadsiUserService:
                     "vm-id": vm_id,
                     "vm-version": str(vm_version),
                     "vm-nickname": vm_version.nickname,
+                    "zone": zone_name,
                     "customization": False,
                     "task": task.descr,
                 }
@@ -1533,22 +1536,24 @@ class PadsiUserService:
             nickname = data.get("nickname")
             hdd_file="" # safe init value for the linter
             vars_file="" # safe init value for the linter
-
             message = data.get("message")
-            match data.get("action"):
+            zone_name = data.get("zone")
+            if zone_name is not None and not isinstance(zone_name, str):
+                raise Exception(f"Invalid zone name '{zone_name}'")
+            action=data.get("action")
+            match action:
                 case "import" | "load":
                     usage = None
                     hdd_file = data.get("hdd-file")
                     vars_file = data.get("vars-file")
                     extract_id = data.get("extract-id")
                 case _:
-                    usage = padsi.config.VMUsage(data.get("action"))
+                    usage = padsi.config.VMUsage(action)
+                    if usage == padsi.config.VMUsage.RUN and not zone_name:
+                        raise Exception("Missing or empty zone name")
                     if nickname is not None and usage != padsi.config.VMUsage.RUN:
                         raise Exception(f"VM usage {usage.value} does not allow specifying a nickname")
 
-            zone_name = data.get("zone")
-            if zone_name is not None and not isinstance(zone_name, str):
-                raise Exception("Invalid zone name")
             boot_iso = data.get("boot-iso")
             if boot_iso is not None and not isinstance(boot_iso, str):
                 raise Exception("Invalid boot ISO file name")
@@ -1572,17 +1577,20 @@ class PadsiUserService:
 
         # do the job
         try:
-            if data.get("action") == "import":
-                return await self._vm_post_import(vm_id, hdd_file, vars_file, message)
-            elif data.get("action") == "load":
-                return await self._vm_post_load(vm_id, extract_id, message) # pyright: ignore
-            elif usage == padsi.config.VMUsage.RUN:
-                return await self._vm_run(vm_id, nickname, zone_name)
-            elif usage in (padsi.config.VMUsage.INSTALL, padsi.config.VMUsage.UPDATE):
-                assert(usage is not None)
-                return await self._vm_install_or_update(usage, vm_id, zone_name, boot_iso, extra_isos, iso_file)
-            else:
-                raise Exception(f"Unnown '{usage}' VM usage")
+            match action:
+                case "import":
+                    return await self._vm_post_import(vm_id, hdd_file, vars_file, message)
+                case "load":
+                    return await self._vm_post_load(vm_id, extract_id, message) # pyright: ignore
+                case _:
+                    if usage == padsi.config.VMUsage.RUN:
+                        assert(zone_name)
+                        return await self._vm_run(vm_id, nickname, zone_name)
+                    elif usage in (padsi.config.VMUsage.INSTALL, padsi.config.VMUsage.UPDATE):
+                        assert(usage is not None)
+                        return await self._vm_install_or_update(usage, vm_id, zone_name, boot_iso, extra_isos, iso_file)
+                    else:
+                        raise Exception(f"Unnown '{usage}' VM usage")
         except Exception as e:
             if usage is None:
                 if data.get("action") == "import":
@@ -1953,7 +1961,7 @@ class PadsiUserService:
         try:
             data = await request.json()
             zone_name = data.get("zone")
-            if zone_name is not None and not isinstance(zone_name, str):
+            if not zone_name or not isinstance(zone_name, str):
                 raise Exception(f"Invalid zone name '{zone_name}'")
             zone_conf = self._gconf.get_zone(zone_name)
             url = data.get("url")
