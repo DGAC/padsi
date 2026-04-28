@@ -282,9 +282,9 @@ class BubbleVM(nsbubble.Bubble):
             }
         }
 
-        for path in self._image.get_backing_directories():
-            if path!=image_dir and path not in _mounts:
-                _mounts[path]={
+        # give access to backend images
+        for path in self._image.get_backing_files_names():
+            _mounts[path]={
                     "mount-point": path,
                     "read-only": True,
                     "monitored": False

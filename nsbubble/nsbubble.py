@@ -580,7 +580,7 @@ class Bubble:
             monitored:bool=False
 
             def __str__(self) -> str:
-                return f"{self.host_path} ==> {self.mount_path} ({'RO' if self.readonly else 'RW'}{', MOINT' if self.monitored else ''})"
+                return f"{self.mount_path} <== {self.host_path} ({'RO' if self.readonly else 'RW'}{', MOINT' if self.monitored else ''})"
 
             def __post_init__(self):
                 if not self.mount_path:
@@ -608,7 +608,7 @@ class Bubble:
                     not isinstance(ro, bool) or \
                     monit is not None and not isinstance(monit, bool):
                     raise Exception(f"Invalid mountpoint info {info}: expected a dict")
-                return cls(host_path, mp, ro, monit)
+                return cls(host_path, mp, ro, False if monit is None else monit)
 
             def prefix_path(self, prefix:str) -> str:
                 return os.path.join(prefix, self.mount_path[1:])
@@ -620,7 +620,7 @@ class Bubble:
             mount_path:str
 
             def __str__(self) -> str:
-                return f"{self.mount_path} [{', '.join([str(mpoint) for mpoint in self.items])}]"
+                return f"{self.mount_path} <== [{', '.join([str(mpoint) for mpoint in self.items])}]"
 
             def __post_init__(self):
                 if len(self.items)==0:
@@ -637,40 +637,37 @@ class Bubble:
                 if len(self.items)==0:
                     raise Exception("CODEBUG: MountPointGroup has no MountPoint")
 
+                args:list[str]=[]
                 if len(self.items)==1:
                     mpoint=self.items[0]
                     if mpoint.host_path is None:
                         dir=mpoint.prefix_path(run_dir)
                         if _debug:
-                            syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR 1 {dir}")
+                            syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR {dir}")
                         os.makedirs(dir)
                         if mpoint.readonly:
-                            return ["--ro-bind", dir, mpoint.mount_path]
+                            args+=["--ro-bind", dir, mpoint.mount_path]
                         else:
-                            return ["--bind", dir, mpoint.mount_path]
-
-                    if mpoint.readonly:
-                        return ["--ro-bind", mpoint.host_path, mpoint.mount_path]
+                            args+=["--bind", dir, mpoint.mount_path]
+                    elif mpoint.readonly:
+                        args+=["--ro-bind", mpoint.host_path, mpoint.mount_path]
                     elif os.access(mpoint.host_path, os.W_OK):
-                        # directlry bind if we have write permission
-                        return ["--bind", mpoint.host_path, mpoint.mount_path]
+                        # directly bind file if we have write permission
+                        args+=["--bind", mpoint.host_path, mpoint.mount_path]
                     elif os.path.isdir(mpoint.host_path):
                         # add an overlay to allow write to directory
                         ovl_dir=mpoint.prefix_path(run_dir)
                         if _debug:
                             syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR 2 {ovl_dir}")
                         os.makedirs(ovl_dir)
-                        return [
+                        args+=[
                             "--overlay-src", mpoint.host_path,
                             "--overlay-src", ovl_dir,
                             "--tmp-overlay", mpoint.mount_path
                         ]
                     else:
                         raise Exception(f"Can't allow RW acces to file '{mpoint.host_path}' which is read-only (use a directory instead)")
-
                 else:
-                    args:list[str]=[]
-
                     # use the 1st mpoint as the base of the overlay
                     f_mpoint=self.items[0]
                     if f_mpoint.host_path is not None:
@@ -717,20 +714,21 @@ class Bubble:
                             else:
                                 syslog.syslog(syslog.LOG_ERR, f"Can't copy mount point '{mpoint.host_path}' to '{dest_path}': does not exist")
 
-                    rw_dir=f_mpoint.prefix_path(tmp_dir)+"_._rw" # working layer
-                    if _debug:
-                        syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR RW_DIR {rw_dir}")
-                    os.makedirs(rw_dir)
-                    work_dir=f_mpoint.prefix_path(tmp_dir)+"_._wo" # working layer
-                    if _debug:
-                        syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR WORK_DIR {work_dir}")
-                    os.makedirs(work_dir)
-                    args+=["--overlay", rw_dir, work_dir, self.mount_path]
-
                     if f_mpoint.readonly:
+                        rw_dir=f_mpoint.prefix_path(tmp_dir)+"_._rw" # working layer
+                        if _debug:
+                            syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR RW_DIR {rw_dir}")
+                        os.makedirs(rw_dir)
                         os.chmod(rw_dir, 0o555)
+                        work_dir=f_mpoint.prefix_path(tmp_dir)+"_._wo" # working layer
+                        if _debug:
+                            syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR WORK_DIR {work_dir}")
+                        os.makedirs(work_dir)
+                        args+=["--overlay", rw_dir, work_dir, self.mount_path]
+                    else:
+                        args+=["--tmp-overlay", self.mount_path]
+                return args
 
-                    return args
 
         # prepare list of directories which will either be RO-mounted AS-IS, or will be the base of an
         # overlay if we have mount points beneath them
@@ -755,11 +753,11 @@ class Bubble:
                     grp=groups[path]
                     if mpoint.mount_path==grp.mount_path:
                         pass
-                    elif mpoint.mount_path.startswith(grp.mount_path): # mpoint is a sub directory
+                    elif mpoint.mount_path.startswith(grp.mount_path): # mpoint is a sub directory or grp
                         grp.add(mpoint)
                         found=True
                         break
-                    elif grp.mount_path.startswith(mpoint.mount_path): # mpoint is a parent directory
+                    elif grp.mount_path.startswith(mpoint.mount_path): # mpoint is a parent directory of grp
                         ngrp=MountPointGroup([mpoint]+grp.items, mpoint.mount_path)
                         groups[ngrp.mount_path]=ngrp
                         del groups[grp.mount_path]
@@ -769,8 +767,44 @@ class Bubble:
                     grp=MountPointGroup([mpoint], mpoint.mount_path)
                     groups[grp.mount_path]=grp
 
+            # merge groups which have the same mount path
+            top_paths:set[str]=set()
+            for path in sorted(groups.keys()):
+                handled=False
+                for edir in top_paths.copy():
+                    if edir.startswith(path):
+                        top_paths.remove(edir)
+                        top_paths.add(path)
+                        handled=True
+                        break
+                    elif path.startswith(edir):
+                        handled=True
+                        break
+                if not handled:
+                    top_paths.add(path)
+
+            ngroups:dict[str,MountPointGroup]={}
+            for path in top_paths:
+                ngroups[path]=groups[path]
+
+            for (path, grp) in groups.items():
+                if path not in top_paths:
+                    # merge with existing group
+                    tdir=os.path.dirname(path)
+                    egrp=None
+                    while tdir!="/":
+                        try:
+                            egrp=ngroups[tdir+"/"]
+                            break
+                        except KeyError:
+                            tdir=os.path.dirname(tdir)
+                    if egrp is None:
+                        raise Exception(f"CODEBUG: none of directory '{path}' parents are present in the ngroups")
+                    egrp.items+=grp.items
+            groups=ngroups
+
             if _debug:
-                for (_, grp) in groups.items():
+                for grp in groups.values():
                     syslog.syslog(syslog.LOG_DEBUG, f"group={str(grp)}")
 
         # compute args from overlays

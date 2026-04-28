@@ -302,11 +302,7 @@ class ZoneVM(ZoneFoundations):
             "read-only": False,
             "monitored": False,
         }
-        mounts[self._vm_v.directory] = { # used by the infos SQLite asociated files, to be removed if possible
-            "mount-point": self._vm_v.directory,
-            "read-only": False,
-            "monitored": False,
-        }
+
         if not os.path.exists(self._viewer.bubble_prog_name):
             mounts[self._viewer.real_prog_name] = {
                 "mount-point": self._viewer.bubble_prog_name,
