@@ -878,7 +878,7 @@ a VM disk image file (with the
 \end_layout
 
 \begin_layout Itemize
-a VM's UEFI firmware 
+a VM's UEFI's NVRAM 
 \begin_inset CommandInset href
 LatexCommand href
 name "OVMF"
@@ -4196,7 +4196,21 @@ Listening on port 3128.
 
 \end_inset
 
- to enforce the network access restrictions;
+ to enforce the network access restrictions (applications can use the 
+\family typewriter
+http://proxy:3128
+\family default
+ proxy setting when needed,
+ e.g.
+ in the 
+\family typewriter
+http_proxy
+\family default
+ and 
+\family typewriter
+https_proxy
+\family default
+ environment variables);
 \end_layout
 
 \begin_layout Itemize
@@ -6810,7 +6824,7 @@ Note
 \end_layout
 
 \begin_layout Subsubsection
-PADSI agent
+PADSI VM agent
 \begin_inset CommandInset label
 LatexCommand label
 name "VM agent"
@@ -6823,7 +6837,7 @@ name "VM agent"
 \begin_layout Standard
 The 
 \series bold
-PADSI agent
+PADSI VM agent
 \series default
  is a small component via which PADSI interacts with running VMs mainly to customize the VM for a specific end user and mount the shared directories into the VM,
  and run specific programs on boot.
@@ -12634,105 +12648,6 @@ nolink "false"
 \end_layout
 
 \begin_layout Subsection
-Virtual machines administration
-\end_layout
-
-\begin_layout Subsubsection
-Creating a VM disk image
-\end_layout
-
-\begin_layout Subsubsection
-Updating a VM version
-\end_layout
-
-\begin_layout Subsubsection
-Updating the padsi-agent program
-\end_layout
-
-\begin_layout Paragraph
-In a Linux VM
-\end_layout
-
-\begin_layout Standard
-To update the padsi-agent,
- install the padsi agent's package.
-\end_layout
-
-\begin_layout Paragraph
-In a Windows VM
-\end_layout
-
-\begin_layout Standard
-To update the padsi-agent of a virtual machine,
- the steps are:
-\end_layout
-
-\begin_layout Enumerate
-open a PowerShell console
-\end_layout
-
-\begin_layout Enumerate
-extract the 
-\family typewriter
-padsi-agent_<version>_windows.zip
-\family default
- archive
-\end_layout
-
-\begin_layout Enumerate
-ensure PowerShell policy allows script execution:
-\begin_inset listings
-lstparams "basicstyle={\footnotesize\ttfamily}"
-inline false
-status open
-
-\begin_layout Plain Layout
-
-> Set-ExecutionPolicy -ExecutionPolicy Unrestricted -Scope CurrentUser -Force
-\end_layout
-
-\end_inset
-
-
-\end_layout
-
-\begin_layout Enumerate
-enter the extracted directory and run 
-\begin_inset listings
-lstparams "basicstyle={\footnotesize\ttfamily}"
-inline false
-status open
-
-\begin_layout Plain Layout
-
-> .
-\backslash
-install.ps1
-\end_layout
-
-\end_inset
-
-
-\end_layout
-
-\begin_layout Enumerate
-reset PowerShell policy if necessary:
-\begin_inset listings
-lstparams "basicstyle={\footnotesize\ttfamily}"
-inline false
-status open
-
-\begin_layout Plain Layout
-
-> Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force
-\end_layout
-
-\end_inset
-
-
-\end_layout
-
-\begin_layout Subsection
 Patching / new versions of PADSI
 \end_layout
 
@@ -13207,6 +13122,316 @@ status open
 \begin_layout Plain Layout
 
 ExecStart=/usr/bin/padsi-do --adminns theadminns /usr/lib/apt/apt.systemd.daily install
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Section
+Virtual machines administration
+\end_layout
+
+\begin_layout Standard
+This section describes the operations to manage virtual machines,
+ beyond their declaration (refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "VM-conf"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+).
+\end_layout
+
+\begin_layout Subsection
+Creating a VM disk image
+\end_layout
+
+\begin_layout Standard
+There are two possibilities to create a VM disk image (and its associated NVRAM file):
+\end_layout
+
+\begin_layout Itemize
+use the usual toolset,
+ install the VM (manually or automatically depending on the toolset),
+ export the VM disk image file and then import it in a PADSI system;
+ or
+\end_layout
+
+\begin_layout Itemize
+perform a VM installation on a PADSI system,
+ and use the VM disk image.
+\end_layout
+
+\begin_layout Standard
+In both cases,
+ the PADSI VM agent,
+ which is required to perform per user VM customization and proper setup (like shared directories) must be installed in the VM.
+ The agent's installation package should be present in the 
+\family typewriter
+packages/
+\family default
+ directory if the installation (usually 
+\family typewriter
+/usr/share/padsi/packages
+\family default
+).
+\end_layout
+
+\begin_layout Subsubsection
+VM import from an externally created VM
+\end_layout
+
+\begin_layout Standard
+Using non PADSI tools to install a VM or export a VM is possible,
+ provided that:
+\end_layout
+
+\begin_layout Itemize
+the file format of the VM's disk image is 
+\begin_inset CommandInset href
+LatexCommand href
+name "QCow"
+target "https://en.wikipedia.org/wiki/Qcow"
+literal "false"
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Itemize
+the VM's associated NVRAM file is also present.
+\end_layout
+
+\begin_layout Paragraph
+Import
+\end_layout
+
+\begin_layout Standard
+To actually import the VM,
+ use the 
+\family typewriter
+padsi-cli vm-import
+\family default
+ command (which may take some time depending on the disk image file size).
+\end_layout
+
+\begin_layout Paragraph
+Post installation
+\end_layout
+
+\begin_layout Standard
+Use the 
+\family typewriter
+padsi-cli vm-publish
+\family default
+ command to promote this new installation as a base VM image so users can actually use it.
+\end_layout
+
+\begin_layout Subsubsection
+VM installation using PADSI's tools
+\end_layout
+
+\begin_layout Standard
+Installing a VM via PADSI's tools required that the VM be first defined in the configuration,
+ and specifically that any required network accesses during the installation be identified (at least to download any security updates to make sure the installed VM is up to date).
+\end_layout
+
+\begin_layout Standard
+If any,
+ PADSI will ensure these network accesses are available before the VM boots on its installation media:
+ it will try to find a zone's network compatible with the requirements
+\begin_inset Foot
+status collapsed
+
+\begin_layout Plain Layout
+Note that only the zone's network is actually used as a communication means,
+ and restricted to the declared VM's network requirements;
+ the VM will also not be able to access any files accessible to the user in the zone.
+\end_layout
+
+\end_inset
+
+ (the user can also specify a zone's network to use,
+ in which case PADSI will ensure its compatibility with the VM's requirements).
+\end_layout
+
+\begin_layout Paragraph
+Installation
+\end_layout
+
+\begin_layout Standard
+To actually start the VM installation,
+ one needs the OS's installation media (ISO file,
+ to be downloaded from the OS's manufacturer or project),
+ and use the 
+\family typewriter
+padsi-cli vm-install
+\family default
+ command which opens the VM viewer and allows the actual VM installation,
+ like:
+\end_layout
+
+\begin_layout Standard
+\align center
+\begin_inset Graphics
+	filename VM install.png
+	width 75col%
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+
+\bar under
+Notes
+\bar default
+:
+\end_layout
+
+\begin_layout Itemize
+if the zone's network requires the usage of a Web proxy,
+ the administrator will have to specify this proxy during the installation as 
+\family typewriter
+http://proxy:3128
+\family default
+ (for HTTP and HTTPS connections);
+\end_layout
+
+\begin_layout Itemize
+for proper operations,
+ PADSI's VM agent must also be installed (refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "VM agent"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+) and enabled.
+ The associated packages are automatically made available during installation via a virtual CD-ROM.
+\end_layout
+
+\begin_layout Standard
+Once the installation is complete,
+ the system should be properly shut down (if the installation is not Ok,
+ then the VM can simply be discarded),
+ leaving a VM disk image (and its associated files) in the 
+\series bold
+staged
+\series default
+ state.
+ 
+\end_layout
+
+\begin_layout Paragraph
+Post installation
+\end_layout
+
+\begin_layout Standard
+Use the 
+\family typewriter
+padsi-cli vm-publish
+\family default
+ command to promote this new installation as a base VM image so users can actually use it.
+\end_layout
+
+\begin_layout Subsection
+Updating a VM version
+\end_layout
+
+\begin_layout Subsection
+Updating the padsi-agent program
+\end_layout
+
+\begin_layout Subsubsection
+In a Linux VM
+\end_layout
+
+\begin_layout Standard
+To update the padsi-agent,
+ install the associated package.
+\end_layout
+
+\begin_layout Subsubsection
+In a Windows VM
+\end_layout
+
+\begin_layout Standard
+To update the padsi-agent of a virtual machine,
+ the steps are:
+\end_layout
+
+\begin_layout Enumerate
+open a PowerShell console
+\end_layout
+
+\begin_layout Enumerate
+extract the 
+\family typewriter
+padsi-agent_<version>_windows.zip
+\family default
+ archive
+\end_layout
+
+\begin_layout Enumerate
+ensure PowerShell policy allows script execution:
+\begin_inset listings
+lstparams "basicstyle={\footnotesize\ttfamily}"
+inline false
+status open
+
+\begin_layout Plain Layout
+
+> Set-ExecutionPolicy -ExecutionPolicy Unrestricted -Scope CurrentUser -Force
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+enter the extracted directory and run 
+\begin_inset listings
+lstparams "basicstyle={\footnotesize\ttfamily}"
+inline false
+status open
+
+\begin_layout Plain Layout
+
+> .
+\backslash
+install.ps1
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+reset PowerShell policy if necessary:
+\begin_inset listings
+lstparams "basicstyle={\footnotesize\ttfamily}"
+inline false
+status open
+
+\begin_layout Plain Layout
+
+> Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force
 \end_layout
 
 \end_inset
