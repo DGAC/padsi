@@ -135,6 +135,14 @@ class ZoneInfra(ZoneFoundations):
                 self.add_component(comp)
                 self._dns_c=comp
 
+                if self._web_infra_c is not None:
+                    rules=[]
+                    for name in ("wpad.", "proxy."):
+                        rule=padsi.config.ResolvRule(action="allow", descr=f"Allow to {name}",
+                            endpoint=firewall.Endpoint.from_repr(name), resolv=[f"A/3600/{str(self._br_ip.ip)}"])
+                        rules.append(rule)
+                    comp.add_extra_rules("web-proxy", rules)
+
             # static FW
             fw_rules=self.fw_rules
             if fw_rules is not None and len(fw_rules) > 0:

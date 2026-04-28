@@ -131,15 +131,6 @@ class WebInfra(Component):
                         FWRuleChain.OUTPUT,
                     ))
 
-            # resolve 'wpad'
-            if self._listening_ip is None:
-                syslog.syslog(syslog.LOG_ERR, "CODEBUG: self._listening_ip should not be None")
-            else:
-                resolv_rules.append(ResolvRule(
-                    action="allow",
-                    descr="wpad",
-                    endpoint=Endpoint.from_repr("wpad."), resolv=[f"A/3600/{str(self._listening_ip.ip)}"])
-                )
         return (fw_rules, resolv_rules)
 
     def _generate_config_file(self) -> str:

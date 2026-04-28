@@ -144,7 +144,7 @@ class DNSServer(Component):
             for rule in self._resolv_rules_conf:
                 if rule.action=="allow":
                     for item in rule.endpoint.domain_zones:
-                        if item!="wpad.":
+                        if item not in ("wpad.", "proxy."):
                             data["output-allow"].append(item)
         with open(self._dns_fw_config_file, "wt") as fd:
             fd.write(json.dumps(data))

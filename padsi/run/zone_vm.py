@@ -196,8 +196,12 @@ class ZoneVM(ZoneFoundations):
             self._dns_c=comp
 
             if self._web_infra_c is not None:
-                wpad_rule=padsi.config.ResolvRule(action="allow", descr="wpad", endpoint=firewall.Endpoint.from_repr("wpad."), resolv=[f"A/3600/{str(padsi.config.tap_ip)}"])
-                comp.add_extra_rules("wpad", [wpad_rule])
+                rules=[]
+                for name in ("wpad.", "proxy."):
+                    rule=padsi.config.ResolvRule(action="allow", descr=f"Allow VM to {name}",
+                        endpoint=firewall.Endpoint.from_repr(name), resolv=[f"A/3600/{str(padsi.config.tap_ip)}"])
+                    rules.append(rule)
+                comp.add_extra_rules("web-proxy", rules)
 
         # DHCP server
         comp = dhcp.DHCPServer(
@@ -298,7 +302,7 @@ class ZoneVM(ZoneFoundations):
             "read-only": False,
             "monitored": False,
         }
-        mounts[self._vm_v.directory] = {
+        mounts[self._vm_v.directory] = { # used by the infos SQLite asociated files, to be removed if possible
             "mount-point": self._vm_v.directory,
             "read-only": False,
             "monitored": False,
