@@ -1,13 +1,14 @@
 {
     "Dhcp4": {
+        "match-client-id": false,
         "interfaces-config": {
             "interfaces": ["to-be-replaced"],
             "service-sockets-max-retries": 5,
             "service-sockets-retry-wait-time": 1000
         },
-        
+
         "authoritative": true,
-        
+
         "ddns-send-updates" : false,
 
         "lease-database": {
