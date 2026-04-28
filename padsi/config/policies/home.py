@@ -18,6 +18,7 @@
 #
 
 import os
+import stat
 import syslog
 
 
@@ -63,6 +64,13 @@ disable-ccid
 pcsc-shared
 """)
             os.chown(gpg_conf, uid, gid)
+
+        # remove any previous gpgconf's programs leftovers, if any
+        for fname in os.listdir(gpg_path):
+            if fname.startswith("S."):
+                fpath=os.path.join(gpg_path, fname)
+                if stat.S_ISSOCK(os.stat(fpath).st_mode):
+                    os.remove(fpath)
     except Exception as e:
         syslog.syslog(syslog.LOG_ERR, f"Failed to preconfigure GPG: {str(e)}")
 
