@@ -109,7 +109,7 @@ pub fn shutdown(config: &Config) -> ! {
     for proc in config.procs.values() {
         info!("Killing process {} (PID {})", proc.spec.program(), proc.pid);
         signal::kill(Pid::from_raw(proc.pid as i32), signal::SIGTERM)
-            .unwrap_or_else(|_| warn!("Failed to kill process {}", proc.pid))
+            .unwrap_or_else(|e| warn!("Failed to kill process {}: {}", proc.pid, e.desc()))
     }
     info!("Shutdown done");
     thread::sleep(Duration::from_millis(1000));

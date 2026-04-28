@@ -178,7 +178,7 @@ class VirtualMachine:
     def network(self) -> NetworkSpec | None:
         return self._network
 
-    def is_network_compatible(self, other_network: NetworkSpec, proxies:list[Proxy]) -> tuple[bool, str|None]:
+    def is_network_compatible(self, other_network: NetworkSpec|None, proxies:list[Proxy]) -> tuple[bool, str|None]:
         """Tell if the network requirements for the VM are allowed by the
         specified network specifications
         """

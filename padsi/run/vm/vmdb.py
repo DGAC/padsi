@@ -82,6 +82,7 @@ class VMDB:
     def __init__(self, dbfile:str):
         self._db=db.Sqlite3DB(dbfile, _db_schema, use_wal=False)
         data=self._db.select_1st_row("SELECT count(ts) FROM events")
+        assert(data is not None)
         if data[0]==0:
             self.add_event(EventType.VM_CREATED, "Initial creation")
 

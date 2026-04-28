@@ -969,6 +969,7 @@ def prepare_extra_isos(resources:list[str]|None) -> tuple[list[str],str|None]:
     """
     if resources is None:
         resources=[]
+
     # include PADSI's VM agent packages
     packages:list[str]=[]
     packages_dir:str=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))), "packages") # pyright: ignore
@@ -989,6 +990,8 @@ def prepare_extra_isos(resources:list[str]|None) -> tuple[list[str],str|None]:
     files:list[str]=[]
     try:
         for fname in resources +  packages:
+            if not os.path.isabs(fname):
+                fname=os.path.realpath(fname)
             if padsi.misc.is_iso_image(fname):
                 res1.append(fname)
             else:
@@ -1088,7 +1091,11 @@ try:
             if use_json:
                 print(f"{json.dumps(data, indent=4)}")
             else:
-                print(f"VM version: {data['vm-version']}") # pyright: ignore
+                if data is not None:
+                    print(f"VM version: {data.get('vm-version')}")
+                    print(f"Zone name: {data.get('zone')}")
+                else:
+                    print("No information returned", file=sys.stderr)
 
         case "vm-import":
             client=get_service_client(True)

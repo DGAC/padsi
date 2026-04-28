@@ -215,6 +215,7 @@ impl ProcessSpec {
                     self.restart_events.remove(0);
                 }
                 self.restart_events.push(started_at);
+                info!(program = self.program(), pid=pid, started_at=started_at, "started");
 
                 Ok(Process {
                     spec: self,

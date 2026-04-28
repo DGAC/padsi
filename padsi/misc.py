@@ -219,7 +219,7 @@ def is_iso_image(iso_file:str) -> bool:
     """Tell if a file is n ISO image"""
     proc=subprocess.run(["file", "-E", "-b", "--mime-type", iso_file], capture_output=True, text=True)
     if proc.returncode!=0:
-        raise Exception(f"Could not determine if '{iso_file}' is an ISO image: {proc.stdout}")
+        raise Exception(f"could not determine if '{iso_file}' is an ISO image: {proc.stdout}")
     return proc.stdout.strip()=="application/x-iso9660-image"
 
 def generate_iso_image(contents:list[str], volume_name:str|None=None, iso_file:str|None=None):
@@ -227,7 +227,7 @@ def generate_iso_image(contents:list[str], volume_name:str|None=None, iso_file:s
     or directly as the iso_file otherwise
     """
     if len(contents)==0:
-        raise Exception("No ISO content specified")
+        raise Exception("no ISO content specified")
     tmp=None
     if not iso_file:
         tmp=tempfile.NamedTemporaryFile(suffix=".iso")

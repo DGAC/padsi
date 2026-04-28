@@ -403,6 +403,12 @@ class ZoneApps(ZoneFoundations):
                         "monitored": False
                     }
 
+        # for the man program
+        mounts["/etc/manpath.config"]={
+            "mount-point": "/etc/manpath.config",
+            "read-only": True,
+            "monitored": False
+        }
         return mounts
 
     @property

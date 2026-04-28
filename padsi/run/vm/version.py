@@ -264,6 +264,7 @@ class VMVersion:
         try:
             with VMDB(self.infos_file) as db:
                 db.set_state(state.value, context)
+                #syslog.syslog(syslog.LOG_ERR, f"Set state to {state.value}, db: {self.infos_file}, inode: {os.stat(self.infos_file).st_ino}")
         except Exception as e:
             raise Exception(f"Could not change VM version state to '{state}' (context '{context}'): {str(e)}")
 
