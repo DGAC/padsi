@@ -82,12 +82,16 @@ subparsers = parser.add_subparsers()
 parser.add_argument("-U", "--user", type=int, help="UID of the user to use instead of current one")
 parser.add_argument("--config-dir", help="Configuration directory (defaults to /etc/padsi)", type=str, default="/etc/padsi")
 
-subparser = subparsers.add_parser("adm-list", help="List all the running administration namespaces (must be root)")
+subparser = subparsers.add_parser("adm-list", help="List all the configured administration namespaces")
 subparser.set_defaults(cmde="adm-list")
+
+subparser = subparsers.add_parser("adm-info", help="Get information about a running administration namespaces (must be root to get all the details)")
+subparser.set_defaults(cmde="adm-info")
+subparser.add_argument("adminns", type=str, help="Administration namespace, refer to the adm-list command")
 
 subparser = subparsers.add_parser("adm-exec", help="Execute a command in the INFRA part of an admin. namespace (must be root)")
 subparser.set_defaults(cmde="adm-exec")
-subparser.add_argument("adminns", type=str, help="Administration namespace, refer to the adm-ns command")
+subparser.add_argument("adminns", type=str, help="Administration namespace, refer to the adm-list command")
 subparser.add_argument("args", type=str, nargs=argparse.REMAINDER, help="Optional command to execute and its arguments")
 
 subparser=subparsers.add_parser("config-test", help="Report any error in the configuration")
@@ -479,6 +483,8 @@ def command_zone_network(args: dict, zdata: dict | None):
             pid=data.get("init-pid")
             print(f"{Style.BRIGHT}APPS: init PID {pid}{Style.RESET_ALL}")
             try:
+                if pid is None:
+                    raise Exception("CODEBUG: no 'init-pid' in reply")
                 data = execute_command_in_process_ns(pid, ["ip", "a"])
                 for iface, addr in parse_ip_list_output(data).items():
                     print(f"{_indent}- {iface}: {addr}")
@@ -522,12 +528,15 @@ def get_admin_ns_list() -> list[str]:
         if ns.startswith("admns"):
             (_, ns, _)=ns.split("-")
             res.append(ns)
+    res.sort()
     return res
 
 def get_admin_ns_infos(admns:str) -> dict:
     socket="/run/padsi/padsi/padsi-sserv.sock"
+    if os.getuid() != 0:
+        raise Exception("root privileges required")
     if not os.path.exists(socket):
-        raise Exception("The PADSI system service does not appear to be running")
+        raise Exception("the PADSI system service does not appear to be running")
     socket=parse.quote_plus(socket)
     session=requests_unixsocket.Session()
     try:
@@ -551,11 +560,11 @@ def _get_traffic_shaper_descr(tsp: TrafficShaper|None) -> str:
     else:
         match tsp.functionnal:
             case True:
-                return f"VPN {tsp.name} ({tsp.ts_type}, functionnal)"
+                return f"{tsp.name} ({tsp.ts_type}, functionnal)"
             case False:
-                return f"VPN {tsp.name} ({tsp.ts_type}, not functionnal)"
+                return f"{tsp.name} ({tsp.ts_type}, not functionnal)"
             case _:
-                return f"VPN {tsp.name} ({tsp.ts_type})"
+                return f"{tsp.name} ({tsp.ts_type})"
 
 def _format_rule(rule:FWRule|ResolvRule) -> str:
     if rule.action=="allow":
@@ -597,7 +606,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
         zdata = None
-        if cmde not in ("dump", "network", "pstree", "config-test", "adm-list", "adm-exec"):
+        if cmde not in ("dump", "network", "pstree", "config-test", "adm-list", "adm-info", "adm-exec"):
             status = get_status_from_user_service(uid)
             if status is None:
                 if uid is None:
@@ -686,80 +695,98 @@ if __name__ == "__main__":
 
             case "adm-list":
                 conf=load_config()
-                conf_admns=conf.get_admin_ns_names()
                 exist_admns=get_admin_ns_list()
                 for ns in exist_admns:
-                    adminns:AdminNS|None=None
+                    adminns=None
                     try:
                         adminns=conf.get_admin_ns(ns)
                         s=adminns.name if adminns.friendly_name==adminns.name else f"{adminns.name} ({adminns.friendly_name})"
-                        print(f"{Style.BRIGHT}{s}{Style.RESET_ALL}")
-                        print(f"{_indent}Network through {_get_traffic_shaper_descr(adminns.traffic_shaper)}")
-                        # DNS
-                        if adminns.has_dns_resolution:
-                            if adminns.dns_resolvers is not None:
-                                if len(adminns.dns_resolvers)==0:
-                                    print(f"{_indent}DNS resolution provided by the host (NOT YET IMPLEMENTED)")
-                                else:
-                                    print(f"{_indent}DNS resolvers:")
-                                    for item in adminns.dns_resolvers:
-                                        print(f"{_indent*2}{str(item.ip_address)}:{item.port} ({item.protocol.value})")
-                                if adminns.out_resolv_rules is None or len(adminns.out_resolv_rules)==0:
-                                    print(f"{_indent}No resolution rules")
-                                else:
-                                    print(f"{_indent}Domain resolution rules:")
-                                    for rule in adminns.out_resolv_rules:
-                                        print(f"{_indent*2}{_format_rule(rule)}")
-                            else:
-                                print(f"{_indent}No DNS resolution")
-                        else:
-                            print(f"{_indent}Does not offer DNS resolution service")
+                        print(f"{s}")
 
-                        # input access
-                        if adminns.in_fw_rules is None or len(adminns.in_fw_rules)==0:
-                            print(f"{_indent}No network input access allowed")
-                        else:
-                            print(f"{_indent}Network input access:")
-                            if adminns.in_fw_rules is not None:
-                                for rule in adminns.in_fw_rules:
-                                    print(f"{_indent*2}{_format_rule(rule)}")
-
-                        # output direct access
-                        if (adminns.out_fw_rules is None or len(adminns.out_fw_rules)==0) and (adminns.out_resolv_rules is None or len(adminns.out_resolv_rules)==0):
-                            print(f"{_indent}No direct network output access allowed")
-                        else:
-                            print(f"{_indent}Direct network output access:")
-                            if adminns.out_fw_rules is not None:
-                                for rule in adminns.out_fw_rules:
-                                    print(f"{_indent*2}{_format_rule(rule)}")
-                            if adminns.out_resolv_rules is not None:
-                                for rule in adminns.out_resolv_rules:
-                                    print(f"{_indent*2}{_format_rule(rule)}")
-
-                        # Web access via proxies
-                        if len(adminns.web_proxies)==0:
-                            print(f"{_indent}No Web access via proxy configured")
-                        else:
-                            for proxy in adminns.web_proxies:
-                                print(f"{_indent}Web access via proxy '{proxy.descr}' ({proxy.host}:{proxy.port}):")
-                                if proxy.fw_rules is not None:
-                                    for rule in proxy.fw_rules:
-                                        print(f"{_indent*2}{_format_rule(rule)}")
-                                if proxy.resolv_rules is not None:
-                                    for rule in proxy.resolv_rules:
-                                        print(f"{_indent*2}{_format_rule(rule)}")
                     except Exception as e:
                         if adminns is None:
                             print(f"{Style.BRIGHT}{ns}{Style.RESET_ALL} {Fore.RED}not defined in the current configuration{Style.RESET_ALL}")
                         else:
                             print(f"{_indent}{Fore.RED}Error: {str(e)}{Style.RESET_ALL}")
 
+            case "adm-info":
+                conf=load_config()
+                conf_admns=conf.get_admin_ns_names()
+                ns=args.get("adminns", "")
+                adminns=conf.get_admin_ns(ns)
+
+                try:
+                    s=adminns.name if adminns.friendly_name==adminns.name else f"{adminns.name}: {adminns.friendly_name}"
+                    print(f"{s}")
+                    print(f"Traffic shaper: {_get_traffic_shaper_descr(adminns.traffic_shaper)}")
+                    # DNS
+                    if adminns.has_dns_resolution:
+                        if adminns.dns_resolvers is not None:
+                            if len(adminns.dns_resolvers)==0:
+                                print("DNS resolution provided by the host (NOT YET IMPLEMENTED)")
+                            else:
+                                print("DNS resolvers:")
+                                for item in adminns.dns_resolvers:
+                                    print(f"{_indent}{str(item.ip_address)}:{item.port} ({item.protocol.value})")
+                            if adminns.out_resolv_rules is None or len(adminns.out_resolv_rules)==0:
+                                print("No resolution rules")
+                            else:
+                                print("Domain resolution rules:")
+                                for rule in adminns.out_resolv_rules:
+                                    print(f"{_indent}{_format_rule(rule)}")
+                        else:
+                            print("No DNS resolution")
+                    else:
+                        print("Does not offer DNS resolution service")
+
+                    # input access
+                    if adminns.in_fw_rules is None or len(adminns.in_fw_rules)==0:
+                        print("No network input access allowed")
+                    else:
+                        print("Network input access:")
+                        if adminns.in_fw_rules is not None:
+                            for rule in adminns.in_fw_rules:
+                                print(f"{_indent}{_format_rule(rule)}")
+
+                    # output direct access
+                    if (adminns.out_fw_rules is None or len(adminns.out_fw_rules)==0) and (adminns.out_resolv_rules is None or len(adminns.out_resolv_rules)==0):
+                        print("No direct network output access allowed")
+                    else:
+                        print("Direct network output access:")
+                        if adminns.out_fw_rules is not None:
+                            for rule in adminns.out_fw_rules:
+                                print(f"{_indent}{_format_rule(rule)}")
+                        if adminns.out_resolv_rules is not None:
+                            for rule in adminns.out_resolv_rules:
+                                print(f"{_indent}{_format_rule(rule)}")
+
+                    # Web access via proxies
+                    if len(adminns.web_proxies)==0:
+                        print("No Web access via proxy configured")
+                    else:
+                        for proxy in adminns.web_proxies:
+                            print(f"Web access via proxy '{proxy.descr}' ({proxy.host}:{proxy.port}):")
+                            if proxy.fw_rules is not None:
+                                for rule in proxy.fw_rules:
+                                    print(f"{_indent}{_format_rule(rule)}")
+                            if proxy.resolv_rules is not None:
+                                for rule in proxy.resolv_rules:
+                                    print(f"{_indent}{_format_rule(rule)}")
+                except Exception as e:
+                    if adminns is None:
+                        print(f"{Style.BRIGHT}{ns}{Style.RESET_ALL} {Fore.RED}not defined in the current configuration{Style.RESET_ALL}")
+                    else:
+                        print(f"{Fore.RED}Error: {str(e)}{Style.RESET_ALL}")
+
+                try:
                     data=get_admin_ns_infos(ns)
                     pid = data.get("init-pid")
                     if pid is None:
-                        print(f"{_indent}{Fore.MAGENTA}no associated PID{Style.RESET_ALL}")
+                        print(f"{Fore.MAGENTA}No associated PID{Style.RESET_ALL}")
                     else:
-                        print(f"{_indent}init PID: {pid}")
+                        print(f"init PID: {pid}")
+                except Exception as e:
+                    print(f"{Fore.RED}Could not get NS information: {str(e)}{Style.RESET_ALL}")
 
 
             case "adm-exec":

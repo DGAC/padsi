@@ -238,6 +238,7 @@ class Configuration:
                     if rule in all_in_rules:
                         raise Exception(f"Duplicate inbound rule {rule.action} {rule.endpoint} ({rule.descr}) in the admin NS '{adminns.name}'")
                     all_in_rules.append(rule)
+        self._admin_ns_list.sort(key=lambda x: x.name)
 
         # reserve some networks for the admin NS
         self._admin_sub_networks:list[ipaddress.IPv4Network]=[]

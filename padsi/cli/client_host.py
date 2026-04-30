@@ -64,22 +64,37 @@ class GlobalStatus:
     _raw_data:dict
 
     @classmethod
-    def from_data(cls, data:dict) -> GlobalStatus:
+    def from_data(cls, data:dict, zone_name:str|None, tsp_name:str|None) -> GlobalStatus:
         uid=data.get("uid")
         available_zones=data.get("zones-available")
+        running_tasks=data.get("running-tasks")
         active_zones:dict[str,list[ZoneStatus]]={}
+
+        raw_data:dict={
+            "uid": uid,
+            "zones-available": available_zones,
+            "running-tasks": running_tasks,
+            "active-zones": {},
+            "traffic-shapers": {}
+        }
         for (name, zdatalist) in data.get("active-zones", {}).items():
             for zdata in zdatalist:
-                if name not in active_zones:
-                    active_zones[name]=[]
-                active_zones[name].append(ZoneStatus.from_data(name, zdata))
-        running_tasks=data.get("running-tasks")
+                if zone_name is None or name==zone_name:
+                    if name not in active_zones:
+                        active_zones[name]=[]
+                    active_zones[name].append(ZoneStatus.from_data(name, zdata))
+                    raw_data["active-zones"][name]=zdatalist
+
         tsp={}
         for (name, tdata) in data.get("network",{}).get("traffic-shapers",{}).items():
-            tsp[name]=TrafficShaper(name, tdata.get("type"), tdata.get("functionnal"))
+            if tsp_name is None or name==tsp_name:
+                tsp[name]=TrafficShaper(name, tdata.get("type"), tdata.get("functionnal"))
+                raw_data["traffic-shapers"][name]=tdata
+
         if uid is None or available_zones is None or running_tasks is None:
             raise Exception(f"CODEBUG: invalid global status data {data}")
-        return cls(uid, available_zones, active_zones, running_tasks, tsp, data)
+
+        return cls(uid, available_zones, active_zones, running_tasks, tsp, raw_data)
 
     @property
     def raw_data(self) -> dict:
@@ -100,12 +115,12 @@ class Client(ClientAdmin):
         uid=os.getuid() if uid is None else uid
         super().__init__(f"/run/user/{uid}/padsi-userv.sock")
 
-    def get_status(self) -> GlobalStatus:
+    def get_status(self, zone_name:str|None, tsp_name:str|None) -> GlobalStatus:
         """Get a global status of the user service"""
         data=self.get("/status")
         if data is None:
             raise Exception(f"CODEBUG: invalid /status data {data}")
-        return GlobalStatus.from_data(data)
+        return GlobalStatus.from_data(data, zone_name, tsp_name)
 
     def run(self, zone_name:str, args:list[str]):
         """Run a program in a specific zone"""

@@ -1470,6 +1470,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         """
         if tshaper not in self._traffic_shapers:
             self._traffic_shapers[tshaper.name]=(tshaper)
+            self._traffic_shapers={k:self._traffic_shapers[k] for k in sorted(self._traffic_shapers)} # sort by name
 
     def _update_dns_resolvers_list(self):
         """Parse /etc/resolv to determine the current DNS resolvers

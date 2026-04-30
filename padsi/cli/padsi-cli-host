@@ -103,7 +103,8 @@ subparser.add_argument("args", nargs=argparse.REMAINDER, type=str, help="Program
 
 subparser=subparsers.add_parser("status", help="Get the status of the PADSI service for the current user")
 subparser.set_defaults(cmde="status")
-subparser.add_argument("--zone", type=str, help="Only show information about this zone")
+subparser.add_argument("--zone", type=str, help="Only show information about a zone")
+subparser.add_argument("--tsp", type=str, help="Only show information about a traffic shaper")
 
 subparser=subparsers.add_parser("zones", help="List all the declared zones")
 subparser.set_defaults(cmde="zones")
@@ -161,24 +162,24 @@ subparser.set_defaults(cmde="vm-discard")
 subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to discard")
 subparser.add_argument("vm-name", type=str, nargs=argparse.REMAINDER,
                        help="VM name(s)/version(s) in the form '[<user ID>/]<base|user|snapshot>.[version]' or '[<user ID>/]staged' or a nickname")
-subparser.add_argument("--zone-name", type=str, help="Zone in which the VM version is (must be specified for user and snapshot VM versions)")
+subparser.add_argument("--zone", type=str, help="Zone in which the VM version is (must be specified for user and snapshot VM versions)")
 subparser.add_argument("--force", action="store_true", help="Force the removal")
 
 subparser=subparsers.add_parser("vm-clean", help="Discard all the VM versions which can safely be discarded")
 subparser.set_defaults(cmde="vm-clean")
 subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to discard")
-subparser.add_argument("--zone-name", type=str, help="Zone to clean (defaults to all zones if not specified")
+subparser.add_argument("--zone", type=str, help="Zone to clean (defaults to all zones if not specified")
 
 subparser=subparsers.add_parser("vm-merge", help="Merge the contents of a VM version with the VM version it comes from")
 subparser.set_defaults(cmde="vm-merge")
 subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to merge")
 subparser.add_argument("vm-name", type=str, help="VM version in the form '[<user ID>/]<base|user|snapshot>.<version>'")
-subparser.add_argument("--zone-name", type=str, help="Zone in which the VM version is (must be specified for user and snapshot VM versions)")
+subparser.add_argument("--zone", type=str, help="Zone in which the VM version is (must be specified for user and snapshot VM versions)")
 subparser.add_argument("--message", "-m", type=str, help="Merge comment")
 
 subparser=subparsers.add_parser("vm-status", help="List the status of a VM (files, ...)")
 subparser.set_defaults(cmde="vm-status")
-subparser.add_argument("--zone-name", type=str, help="Zone to clean (defaults to all zones if not specified")
+subparser.add_argument("--zone", type=str, help="Zone to clean (defaults to all zones if not specified")
 subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to filter")
 
 subparser=subparsers.add_parser("vm-start", help="Run a new or existing virtual machine in a specific zone. If the VM is already running, it will be shown")
@@ -244,27 +245,55 @@ def print_zones(conf:padsi.config.Configuration, verbose:bool, use_json:bool):
             else:
                 print(f"{zone}: {descr}")
 
-def print_status(status:GlobalStatus, verbose:bool):
-    if len(status.active_zones)>0:
-        print("Started zones:")
-        for zname in status.active_zones:
-            print(f"{_indent}{zname}")
-            if verbose:
-                for zonestatus in status.get_active_zones_status(zname): # pyright: ignore
-                    if zonestatus.vm_conf is None:
-                        print(f"{_indent*2}{'ready' if zonestatus.ready else 'not ready'}")
-                    else:
-                        print(f"{_indent}*2{'ready' if zonestatus.ready else 'not ready'}, running VM: {zonestatus.vm_snap}/{zonestatus.vm_nickname}, ({zonestatus.vm_conf})")
+def print_status(status:GlobalStatus, zone_name:str|None, tsp_name: str|None, verbose:bool):
+    if zone_name is None and tsp_name is None:
+        if len(status.active_zones)>0:
+            print("Started zones:")
+            for zname in status.active_zones:
+                print(f"{_indent}{zname}")
+                if verbose:
+                    data=status.get_active_zones_status(zname)
+                    if data is not None:
+                        for zonestatus in data:
+                            if zonestatus.vm_conf is None:
+                                print(f"{_indent*2}{'ready' if zonestatus.ready else 'not ready'}")
+                            else:
+                                print(f"{_indent}*2{'ready' if zonestatus.ready else 'not ready'}, running VM: {zonestatus.vm_snap}/{zonestatus.vm_nickname}, ({zonestatus.vm_conf})")
+        else:
+            print("No zone started yet")
+        if len(status.running_tasks)>0:
+            print("Running tasks:")
+            for task in status.running_tasks:
+                print(f"{_indent}{task}")
+        if len(status.traffic_shapers)>0:
+            print("Traffic shapers:")
+            for (name, tsp) in status.traffic_shapers.items():
+                print(f"{_indent}{name}: {tsp.type}, {'is functionnal' if tsp.functionnal else 'is NOT functionnal'}")
+        return
+
+    if zone_name is None:
+        if len(status.traffic_shapers)==0:
+            raise Exception(f"Traffic shaper '{tsp_name}' not found")
+        else:
+            assert(tsp_name is not None)
+            tsp=status.traffic_shapers.get(tsp_name)
+            if tsp is None:
+                raise Exception(f"CODEBUG: traffic shaper '{tsp_name}' not present in status")
+            print(f"{'is functionnal' if tsp.functionnal else 'is NOT functionnal'}")
     else:
-        print("No zone started yet")
-    if len(status.running_tasks)>0:
-        print("Running tasks:")
-        for task in status.running_tasks:
-            print(f"{_indent}{task}")
-    if len(status.traffic_shapers)>0:
-        print("Traffic shapers:")
-        for (name, tsp) in status.traffic_shapers.items():
-            print(f"{_indent}{name}: {tsp.type}, {'is functionnal' if tsp.functionnal else 'is NOT functionnal'}")
+        if len(status.active_zones)==0:
+            raise Exception(f"Zone '{zone_name}' not found")
+        else:
+            assert(zone_name is not None)
+            if verbose:
+                data=status.get_active_zones_status(zone_name)
+                if data is not None:
+                    for zonestatus in data:
+                        if zonestatus.vm_conf is None:
+                            print(f"{'ready' if zonestatus.ready else 'not ready'} for user applications")
+                        else:
+                            print(f"{'' if zonestatus.ready else 'not ready, '}running VM: {zonestatus.vm_snap}/{zonestatus.vm_nickname}, ({zonestatus.vm_conf})")
+
 
 def print_vms(conf:padsi.config.Configuration, verbose:bool, use_json:bool):
     all_vms:dict[str,set[padsi.config.VirtualMachine]]={}
@@ -1013,11 +1042,15 @@ try:
     match cmde:
         case "status":
             client=get_service_client()
-            status=client.get_status() # pyright: ignore
+            if not isinstance(client, Client):
+                raise Exception("CODEBUG: get_service_client() returned an AdminClient, expected a Client")
+            zone=args.get("zone")
+            tsp=args.get("tsp")
+            status=client.get_status(zone, tsp)
             if use_json:
                 print(f"{json.dumps(status.raw_data, indent=4)}")
             else:
-                print_status(status, verbose)
+                print_status(status, zone, tsp, verbose)
 
         case "run":
             if len(args)==0:
@@ -1044,7 +1077,7 @@ try:
             client=get_service_client(True)
             versions:list[str]=[]
             for vm_name in args["vm-name"]:
-                data=client.vm_discard(args["vm-id"], vm_name, args.get("zone_name"), force=args["force"])
+                data=client.vm_discard(args["vm-id"], vm_name, args.get("zone"), force=args["force"])
                 versions+=data
             if use_json:
                 print(f"{json.dumps(versions, indent=4)}")
@@ -1057,7 +1090,7 @@ try:
 
         case "vm-clean":
             client=get_service_client(True)
-            data=client.vm_clean(args["vm-id"], args.get("zone_name"))
+            data=client.vm_clean(args["vm-id"], args.get("zone"))
             if use_json:
                 print(f"{json.dumps(data, indent=4)}")
             else:
@@ -1067,7 +1100,7 @@ try:
         case "vm-merge":
             client=get_service_client(True)
             data=client.vm_merge(args["vm-id"],
-               args.get("vm-name"), args.get("zone_name"), args["message"]) # pyright: ignore
+               args.get("vm-name"), args.get("zone"), args["message"]) # pyright: ignore
             if use_json:
                 print(f"{json.dumps(data, indent=4)}")
             else:
@@ -1146,7 +1179,7 @@ try:
 
         case "vm-status":
             client=get_service_client(True)
-            zone_name=args.get("zone_name")
+            zone_name=args.get("zone")
             print_vm_status(client.get_vm_status(args["vm-id"], zone_name, verbose), zone_name, verbose, use_json, _indent)
         case "vm-start":
             if len(args)==0:
