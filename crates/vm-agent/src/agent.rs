@@ -20,6 +20,7 @@
 use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use padsi::trace::info;
 
 use crate::config::AgentConfig;
 
@@ -78,7 +79,7 @@ pub trait OsAgent {
             }
             script.push(format!("on-boot.{}", *ext));
             if script.try_exists().is_ok() {
-                println!("running {:?}", script);
+                info!(script=script.display().to_string(), "running script");
                 let mut cmd = Command::new(&script);
                 self.add_environment_variables(&mut cmd);
                 match cmd.output() {

@@ -9,11 +9,11 @@ actix-multipart = "0.7.2"
 actix-web = "4.12.1"
 anyhow = "1.0.100"
 base64 = "0.22.1"
-env_logger = "0.11.8"
 serde = "1.0.228"
 serde_json = "1.0.148"
 shell-words = "1.1.1"
 tokio = { version="1.49.0", features=["fs"] }
+padsi = { path = "../padsi" }
 
 [target.'cfg(unix)'.dependencies]
 users = "0.11.0"

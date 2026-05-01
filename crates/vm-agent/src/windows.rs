@@ -25,6 +25,7 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use padsi::trace::{info, debug, error};
 
 use crate::config::AgentConfig;
 use crate::agent::OsAgent;
@@ -47,6 +48,10 @@ pub struct WindowsAgent {
 }
 
 pub type PlatformAgent = WindowsAgent;
+
+pub fn log_dir() -> String {
+    todo!("implement log_dir()")
+}
 
 impl WindowsAgent {
     pub fn new() -> Result<Self> {
@@ -116,7 +121,7 @@ impl WindowsAgent {
         // check if already mounted
         match virtiofs_mapped_drive(fsname) {
             Ok(Some(mountpoint)) => {
-                println!("VirtioFS '{}' is already mapped to {}", fsname, mountpoint);
+                info!("VirtioFS '{}' is already mapped to {}", fsname, mountpoint);
                 return Ok(())
             },
             Ok(None) => {},
@@ -147,7 +152,7 @@ impl WindowsAgent {
         };
         let drive=format!("{}:", letter);
         let s = String::from_utf8_lossy(OsStr::new(mountpoint.as_ref()).as_bytes());
-        println!("Mounting fs '{}' to mountpoint '{}'", fsname, s);
+        info!("Mounting fs '{}' to mountpoint '{}'", fsname, s);
 
         let mp: &OsStr = OsStr::new(mountpoint.as_ref());
 
@@ -160,7 +165,7 @@ impl OsAgent for WindowsAgent {
     }
 
     fn agent_dir(&self) -> &str {
-        return PADSI_AGENT_MOUNTPOINT;
+        PADSI_AGENT_MOUNTPOINT
     }
 
     fn platform_extensions(&self) -> &Vec<&str> {
@@ -188,10 +193,10 @@ impl OsAgent for WindowsAgent {
                         }
                     }
                     else {
-                        println!("failed to execute {:?}: {}", cmd, String::from_utf8_lossy(&output.stderr[..]))
+                        error!("failed to execute {:?}: {}", cmd, String::from_utf8_lossy(&output.stderr[..]))
                     }
                 },
-                Err(err) => println!("failed to execute {:?}: {}", cmd, err.to_string())
+                Err(err) => error!("failed to execute {:?}: {}", cmd, err.to_string())
             }
         }
         *b_val
@@ -224,10 +229,7 @@ impl OsAgent for WindowsAgent {
             };
 
             // actual mounting
-            println!(
-                "Mounting FS '{}' to '{}' ==> '{:?}'",
-                fsname, mountpoint, real_mp
-            );
+            info!("Mounting FS '{}' to '{}' ==> '{:?}'", fsname, mountpoint, real_mp);
             if let Err(e) = virtio_mount(fsname, real_mp) {
                 warnings.push(e.to_string());
             }
@@ -271,7 +273,7 @@ impl OsAgent for WindowsAgent {
                     Some(output) => {
                         let o=output.to_owned();
                         b_tasks.remove(&id); // get rid of the task
-                        println!("Getting rid of task {} which has been queried", id);
+                        info!("Getting rid of task {} which has been queried", id);
                         Ok(Some(o))
                     }
                     None => Ok(None)

@@ -20,10 +20,13 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use std::env;
 use tokio::time::sleep;
 
 use actix_web::{App, HttpServer, web};
 use anyhow::Result;
+
+use padsi::trace::{LevelFilter, TraceConfig, info, error, tracing_setup_json};
 
 mod agent;
 mod api;
@@ -38,14 +41,13 @@ use crate::agent::OsAgent;
 use crate::config::VMUsage;
 
 #[cfg(target_os = "linux")]
-use crate::linux::PlatformAgent;
+use crate::linux::{PlatformAgent, log_dir};
 #[cfg(target_os = "windows")]
-use crate::windows::PlatformAgent;
+use crate::windows::{PlatformAgent, log_dir};
 
 const ADMIN_PORT: u16 = 1212;
 
 fn system_setup() -> Result<PlatformAgent> {
-    println!("Setting up system...");
     let agent = { PlatformAgent::new()? };
     if agent.config().usage == VMUsage::RUN {
         agent.mount_shared_dirs()?;
@@ -56,14 +58,31 @@ fn system_setup() -> Result<PlatformAgent> {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    println!("Logging setup");
-    env_logger::init();
+    // init logging
+    let log_dir=match env::var("LOG_DIR") {
+        Ok(v) => String::from(v),
+        Err(_) => log_dir()
+    };
 
-    println!("System setup");
-    let agent: PlatformAgent = system_setup().expect("Failed to setup system");
+    println!("Logging to directory '{}'", log_dir);
+    let trace_conf= TraceConfig::new(&log_dir, "padsi-vm-agent")
+        .with_stdout_output(true)
+        .with_file_level(LevelFilter::INFO)
+        .with_syslog_level(LevelFilter::WARN);
+    trace_conf.check_dir().expect(&format!("Could not create directory {}", trace_conf.directory()));
+    let _t=tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
+
+    info!("System setup");
+    let agent: PlatformAgent = match system_setup() {
+        Ok(a) => a,
+        Err(err) => {
+            error!("Failed to setup system: {}", err.to_string());
+            panic!("Failed to setup system")
+        }
+    };
     let shared_agent: Arc<Mutex<PlatformAgent>>=Arc::new(Mutex::new(agent));
 
-    println!("Listening on port {}", ADMIN_PORT);
+    info!("Listening on port {}", ADMIN_PORT);
     tokio::spawn(reap_tasks(shared_agent.clone()));
     HttpServer::new(move || {
         App::new()
