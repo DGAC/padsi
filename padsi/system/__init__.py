@@ -18,5 +18,6 @@
 #
 
 from .network_input_manager import NetworkInputManager
+from .vm_files import vm_files_analyse
 
-__all__=[ "NetworkInputManager" ]
+__all__=[ "NetworkInputManager", "vm_files_analyse" ]

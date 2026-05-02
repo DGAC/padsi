@@ -128,23 +128,32 @@ class VMStatus:
             "vm-version-infos": {k:v.serialize() for (k,v) in self.infos_vm_versions.items()}
         }
 
+    def get_vm_version_id(self, vmversion:str) -> str:
+        parts=vmversion.split(":")
+        if len(parts)==1:
+            return parts[0]
+        elif len(parts)>2:
+            raise Exception(f"CODEBUG: invalid vmversion format '{vmversion}': contains more than on colon separator")
+        return parts[1]
+
     def get_vm_version_display_name(self, vmversion:str) -> str:
         infos:VMVersionInfo|None=self.infos_vm_versions.get(vmversion)
         if infos is None:
             raise Exception(f"Unknown VM version '{vmversion}'")
-        return vmversion if infos.nickname is None else f"{infos.nickname} ({vmversion})"
+        return self.get_vm_version_id(vmversion) if infos.nickname is None else f"{infos.nickname} ({self.get_vm_version_id(vmversion)})"
 
-    def get_vm_version_description(self, vmversion:str, zone_name:str|None, zone_filtered:bool) -> str:
+    def get_vm_version_description(self, vmversion:str, zone_name:str|None, restricted_view:bool=False, with_deps:bool=True) -> str:
         infos:VMVersionInfo|None=self.infos_vm_versions.get(vmversion)
         if infos is None:
             raise Exception(f"Unknown VM version '{vmversion}'")
 
         parts:list[str]=[]
-        if infos.dependencies is not None:
-            parts.append(infos.dependencies)
-        if infos.state is not None:
-            parts.append(infos.state)
-        if infos.zone is not None and not zone_filtered and infos.zone!=zone_name:
+        if with_deps:
+            if infos.dependencies is not None:
+                parts.append(infos.dependencies)
+            if infos.state is not None:
+                parts.append(infos.state)
+        if infos.zone is not None and not restricted_view and infos.zone!=zone_name:
             parts.append(f"in zone '{infos.zone}'")
         return ", ".join(parts)
 
@@ -221,7 +230,7 @@ class BaseClient:
                 raise Exception(exp)
         return data
 
-def print_vm_status(status:VMStatus, zone_name:str|None, verbose:bool, use_json:bool, indent:str="    ", zone_filtered:bool=False):
+def print_vm_status(status:VMStatus, zone_name:str|None, verbose:bool, use_json:bool, indent:str="    ", restricted_view:bool=False):
     if use_json:
         data=status.serialize()
         print(f"{json.dumps(data, indent=4)}")
@@ -237,7 +246,7 @@ def print_vm_status(status:VMStatus, zone_name:str|None, verbose:bool, use_json:
             print(f"{indent}staged ({status.vm_versions.base_staged})")
         for vmversion in base_versions+user_versions+snap_versions:
             name=status.get_vm_version_display_name(vmversion)
-            descr=status.get_vm_version_description(vmversion, zone_name, zone_filtered)
+            descr=status.get_vm_version_description(vmversion, zone_name, restricted_view=restricted_view)
             if descr is not None:
                 print(f"{indent}{name}: {descr}")
             else:
@@ -267,7 +276,7 @@ def print_vm_status(status:VMStatus, zone_name:str|None, verbose:bool, use_json:
             print(f"{indent}{uid}/staged ({userset.base_staged})")
         for vmversion in user_versions+snap_versions:
             name=status.get_vm_version_display_name(vmversion)
-            descr=status.get_vm_version_description(vmversion, zone_name, zone_filtered)
+            descr=status.get_vm_version_description(vmversion, zone_name, restricted_view=restricted_view)
             if not header_done:
                 print(f"For user {uid:}")
                 header_done=True
@@ -276,25 +285,26 @@ def print_vm_status(status:VMStatus, zone_name:str|None, verbose:bool, use_json:
             else:
                 print(f"{indent}{name}")
 
-    if not zone_filtered:
-        # possible commits
-        if len (status.committable_vm_versions)>0:
-            print("VM versions which can be merged:")
-            for version in status.committable_vm_versions:
-                print(f"{indent}{version}")
-        else:
-            print("No VM version can be merged")
 
-        # obsolete files
-        if len (status.obsolete_vm_versions)>0:
-            print("VM versions which should be discarded:")
-            for version in status.obsolete_vm_versions:
-                print(f"{indent}{version}")
-        else:
-            print("No VM version should be discarded")
+    # possible commits
+    if len (status.committable_vm_versions)>0:
+        print("VM versions which can be merged:")
+        for version in status.committable_vm_versions:
+            print(f"{indent}{version}")
+    else:
+        print("No VM version can be merged")
 
-        # unused files
-        if len (status.unused_files)>0:
-            print("Unused files:")
-            for fname in status.unused_files:
-                print(f"{indent}{fname}")
+    # obsolete files
+    if len (status.obsolete_vm_versions)>0:
+        print("VM versions which should be discarded:")
+        for version in status.obsolete_vm_versions:
+            st=status.get_vm_version_description(version, zone_name, restricted_view=restricted_view, with_deps=False)
+            print(f"{indent}{status.get_vm_version_id(version)} {st}")
+    else:
+        print("No VM version should be discarded")
+
+    # unused files
+    if len (status.unused_files)>0:
+        print("Unused files:")
+        for fname in status.unused_files:
+            print(f"{indent}{fname}")

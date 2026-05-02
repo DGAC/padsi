@@ -123,7 +123,7 @@ try:
 
         case "vm-status":
             print_vm_status(client.get_vm_status(args["vm-id"], verbose), None,
-                verbose, use_json, _indent, zone_filtered=True)
+                verbose, use_json, _indent, restricted_view=True)
 
         case "vm-start":
             data=client.vm_start(args["vm-id"], args.get("vm-name")) # pyright: ignore
