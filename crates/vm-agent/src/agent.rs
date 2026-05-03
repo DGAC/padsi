@@ -18,7 +18,7 @@
 //
 
 use anyhow::{Result, anyhow};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use padsi::trace::info;
 
@@ -31,6 +31,9 @@ pub trait OsAgent {
     /// Get the path where PADSI's configuration files
     /// are located in the VM
     fn agent_dir(&self) -> &str;
+
+    /// Get the home directory of the user
+    fn user_home_dir(&self) -> &Path;
 
     /// Get all the extensions for scripts or programs
     /// for the specific OS (without the '.', e.g. "bat" for Windows).
@@ -45,7 +48,7 @@ pub trait OsAgent {
     fn user_session_opened(&self) -> bool;
 
     /// Mount all the configured filesystems
-    fn mount_shared_dirs(&self) -> Result<()>;
+    fn mount_shared_dirs(&mut self) -> Result<()>;
 
     /// Start the system's shutdown
     fn shutdown(&self) -> Result<()>;
@@ -72,14 +75,15 @@ pub trait OsAgent {
         for ext in self.platform_extensions() {
             let mut script = PathBuf::from(self.agent_dir());
             script.push("bin");
-            if let Some(args) = self.platform_runner(ext) {
-                for arg in args {
-                    script.push(arg)
-                }
-            }
             script.push(format!("on-boot.{}", *ext));
-            if script.try_exists().is_ok() {
-                info!(script=script.display().to_string(), "running script");
+            if script.try_exists().is_ok_and(|x| x) {
+                info!(script=script.display().to_string(), "running boot script");
+
+                // if let Some(args) = self.platform_runner(ext) {
+                //     for arg in args {
+                //         script.push(arg)
+                //     }
+                // }
                 let mut cmd = Command::new(&script);
                 self.add_environment_variables(&mut cmd);
                 match cmd.output() {

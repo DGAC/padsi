@@ -17,8 +17,15 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
-use std::process::{Command, Child, Output, Stdio};
+use std::{ffi::OsStr, process::{Child, Command, Output, Stdio}};
 use anyhow::{Result, anyhow};
+use std::path::Path;
+
+use crate::agent::OsAgent;
+#[cfg(target_os = "linux")]
+use crate::linux::PlatformAgent;
+#[cfg(target_os = "windows")]
+use crate::windows::PlatformAgent;
 
 pub struct Task {
     pub keep_status: bool,
@@ -27,11 +34,33 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(args: &Vec<String>, keep_status:bool) -> Result<Self> {
+    pub fn new(agent: &PlatformAgent, args: &Vec<String>, keep_status:bool) -> Result<Self> {
         if args.len()==0 {
             return Err(anyhow!("invalid empty command arguments"))
         }
-        let mut cmd=Command::new(&args[0]);
+
+        // get program's extension
+        let prog=Path::new(&args[0]);
+        let mut cmd = match prog.extension().and_then(OsStr::to_str) {
+            Some(ext) => {
+                match agent.platform_runner(ext) {
+                    Some(eargs) => {
+                        if eargs.len()==0 {
+                            return Err(anyhow!("CODEBUG: platform runner for extention '{}' returned an empty vector", ext))
+                        }
+                        let mut cmd=Command::new(&eargs[0]);
+                        if eargs.len()>1 {
+                            cmd.args(&eargs[1..]);
+                        }
+                        cmd.arg(&prog);
+                        cmd
+                    },
+                    None => Command::new(&prog)
+                }
+            },
+            None => Command::new(&prog)
+        };
+
         cmd.stdout(Stdio::piped());
         if args.len()>1 {
             cmd.args(&args[1..]);

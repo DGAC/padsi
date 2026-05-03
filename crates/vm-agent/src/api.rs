@@ -25,18 +25,18 @@ use actix_files::NamedFile;
 use actix_multipart::form::{json::Json as MpJson, tempfile::TempFile, MultipartForm};
 use serde::{Deserialize, Serialize};
 use base64::prelude::*;
-#[cfg(target_os = "linux")]
-use users::os::unix::UserExt;
-#[cfg(target_os = "linux")]
-use users::get_user_by_name;
 use tokio::fs as fs;
-use std::os::unix::fs::chown;
+use urlencoding::decode;
+
+use padsi::trace::{info, error};
 
 use crate::agent::OsAgent;
 use crate::config::AgentConfig;
 
 #[cfg(target_os = "linux")]
 use crate::linux::PlatformAgent;
+#[cfg(target_os = "windows")]
+use crate::windows::PlatformAgent;
 
 #[post("/shutdown")]
 async fn post_shutdown(data: web::Data<Arc<Mutex<PlatformAgent>>>) -> WebResult<impl Responder> {
@@ -72,12 +72,17 @@ async fn post_task(
     data: web::Data<Arc<Mutex<PlatformAgent>>>,
     query: web::Json<TaskArgs>
 ) -> WebResult<impl Responder> {
+    info!(args=format!("{:?}", &query.args), with_status=query.with_status, "New task");
     let agent_guard=data.get_ref().lock().unwrap();
     match agent_guard.new_task(&query.args, query.with_status) {
         Ok(tid) => {
+            info!(tid=tid, args=format!("{:?}", &query.args), with_status=query.with_status, "Task running");
             Ok(web::Json(tid))
         },
-        Err(err) => Err(error::ErrorInternalServerError(err))
+        Err(err) => {
+            error!(error=err.to_string(), args=format!("{:?}", &query.args), with_status=query.with_status, "Task failed");
+            Err(error::ErrorInternalServerError(err))
+        }
     }
 }
 
@@ -88,6 +93,7 @@ async fn get_task(
     path: web::Path<u64>
 ) -> WebResult<impl Responder> {
     let id=path.into_inner();
+    info!(tid=id, "Get task status");
     let mut agent_guard=data.get_ref().lock().unwrap();
     let res=match agent_guard.task_output(id) {
         Ok(Some(output)) => {
@@ -119,6 +125,7 @@ async fn get_task(
 async fn get_tasks(data: web::Data<Arc<Mutex<PlatformAgent>>>) -> impl Responder {
     let agent_guard=data.get_ref().lock().unwrap();
     let tids=agent_guard.tasks();
+    info!(tids=format!("{:?}", tids), "Get tasks list");
     web::Json(tids)
 }
 
@@ -150,24 +157,44 @@ async fn get_file(
     data: web::Data<Arc<Mutex<PlatformAgent>>>,
     req: HttpRequest
 ) -> Result<NamedFile, WebError> {
-    let mut path: std::path::PathBuf = req.match_info().query("filename").parse().unwrap();
+    let res=match decode(req.match_info().query("filename")) {
+        Ok(d)=>d,
+        Err(_) => {
+            error!("Get file error: could not decode file path");
+            return Err(error::ErrorBadRequest("Could not decode file path"))
+        }
+    };
+    let mut path: std::path::PathBuf = match res.parse(){
+        Ok(p) => p,
+        Err(_) => {
+            error!("Get file error: could not parse file path");
+            return Err(error::ErrorBadRequest("Could not parse file path"))
+        }
+    };
+
     let agent_guard = data.get_ref().lock().unwrap();
-    let user=get_user_by_name(&agent_guard.config().user_name);
-    if user.is_none() {
-        return Err(error::ErrorInternalServerError(format!("user '{}' does not exist", &agent_guard.config().user_name)))
-    }
-    let user=user.unwrap();
+
     if path.is_absolute() {
-        if ! path.starts_with(user.home_dir()) {
-            return Err(error::ErrorForbidden(format!("access to '{}' is not allowed", path.display())))
+        if ! path.starts_with(agent_guard.user_home_dir()) {
+            let msg=format!("access to '{}' is not allowed", path.display());
+            error!("Get file error: {}", msg);
+            return Err(error::ErrorForbidden(msg))
         }
     }
     else {
-        let mut npath=PathBuf::from(user.home_dir());
+        let mut npath=PathBuf::from(agent_guard.user_home_dir());
         npath.push(&path);
         path=npath;
     }
-    let file = NamedFile::open(path)?;
+    let file = match NamedFile::open(&path) {
+        Ok(f) => f,
+        Err(err) => {
+            let msg=format!("access error to '{}': {}", path.display(), err.to_string());
+            error!("Get file error: {}", msg);
+            return Err(error::ErrorForbidden(msg))
+        }
+    };
+    info!(path=format!("{}", path.display()), "Get file");
     Ok(file.use_last_modified(true))
 }
 
@@ -191,35 +218,55 @@ pub async fn post_file(
     // Uploaded to file: form.file.file_name, size form.file.size
     // Requested file name: form.meta.name
     let agent_guard = data.get_ref().lock().unwrap();
-    let user=get_user_by_name(&agent_guard.config().user_name);
-    if user.is_none() {
-        return Err(error::ErrorInternalServerError(format!("user '{}' does not exist", &agent_guard.config().user_name)))
-    }
-    let user=user.unwrap();
 
     let file_path= match &form.meta.name {
         Some(x) => {
             let mut p=PathBuf::from(x);
             if p.is_absolute() {
-                if ! p.starts_with(user.home_dir()) {
-                    return Err(error::ErrorForbidden(format!("access to '{}' is not allowed", p.display())))
+                if ! p.starts_with(agent_guard.user_home_dir()) {
+                    let msg=format!("access to '{}' is not allowed", p.display());
+                    error!("File upload error: {}", msg);
+                    return Err(error::ErrorForbidden(msg))
                 }
             }
             else {
-                let mut npath=PathBuf::from(user.home_dir());
+                let mut npath=PathBuf::from(agent_guard.user_home_dir());
                 npath.push(&x);
                 p=npath
             }
+            match p.parent() {
+                Some(parent) => {
+                    if let Err(err)=std::fs::create_dir_all(parent) {
+                        let msg=format!("could not create directories up to '{}': {}", parent.display(), err.to_string());
+                        error!("File upload error: {}", msg);
+                        return Err(error::ErrorForbidden(msg))
+                    }
+                },
+                None => {
+                    let msg=format!("'{}' does not have any parent", p.display());
+                    error!("File upload error: {}", msg);
+                    return Err(error::ErrorBadRequest(msg))
+                }
+            }
+
             p
         },
-        None => PathBuf::from(user.home_dir())
+        None => PathBuf::from(agent_guard.user_home_dir())
     };
+    info!(path=format!("{}", file_path.display()), "File upload");
 
     if let Err(err) = fs::copy(form.file.file.path(), &file_path).await {
+        error!("File upload error: {}", err.to_string());
         return Err(error::ErrorInternalServerError(err.to_string()))
     }
-    match chown(&file_path, Some(agent_guard.config().user_id), Some(agent_guard.config().group_id)) {
+    #[cfg(target_os = "linux")]
+    match std::os::unix::fs::chown(&file_path, Some(agent_guard.config().user_id), Some(agent_guard.config().group_id)) {
         Ok(_) => Ok(format!("Ok")),
-        Err(err) => Err(error::ErrorInternalServerError(err.to_string())),
+        Err(err) => {
+            error!(path=format!("{}", file_path.display()), "File upload error: {}", err.to_string());
+            Err(error::ErrorInternalServerError(err.to_string()))
+        }
     }
+    #[cfg(target_os = "windows")]
+    Ok(format!("Ok"))
 }

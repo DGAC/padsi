@@ -45,10 +45,10 @@ use crate::linux::{PlatformAgent, log_dir};
 #[cfg(target_os = "windows")]
 use crate::windows::{PlatformAgent, log_dir};
 
-const ADMIN_PORT: u16 = 1212;
+const ADMIN_PORT: u16 = 12;
 
 fn system_setup() -> Result<PlatformAgent> {
-    let agent = { PlatformAgent::new()? };
+    let mut agent = { PlatformAgent::new()? };
     if agent.config().usage == VMUsage::RUN {
         agent.mount_shared_dirs()?;
     }

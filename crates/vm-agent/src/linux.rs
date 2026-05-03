@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use users::os::unix::UserExt;
 use users::{User, get_user_by_uid};
-use padsi::trace::{info, debug};
+use padsi::trace::info;
 
 use crate::config::AgentConfig;
 use crate::agent::OsAgent;
@@ -69,10 +69,6 @@ impl LinuxAgent {
         }
     }
 
-    fn home_dir(&self) -> &Path {
-        self.user.home_dir()
-    }
-
     // Tell if the OS has a GUI
     fn has_gui(&self) -> bool {
         let mut b_has_gui=self.has_gui.borrow_mut();
@@ -110,6 +106,10 @@ impl OsAgent for LinuxAgent {
         PADSI_AGENT_MOUNTPOINT
     }
 
+    fn user_home_dir(&self) -> &Path {
+        self.user.home_dir()
+    }
+
     fn platform_extensions(&self) -> &Vec<&str> {
         &self.extensions
     }
@@ -144,10 +144,10 @@ impl OsAgent for LinuxAgent {
         *b_val
     }
 
-    fn mount_shared_dirs(&self) -> Result<()> {
+    fn mount_shared_dirs(&mut self) -> Result<()> {
         let mut warnings: Vec<String> = vec![];
         for (fsname, mountpoint) in self.vm_config.mountpoints.iter() {
-            if let Err(e) = virtio_mount(fsname, mountpoint, Some(self.home_dir()), self.user.uid(), self.user.primary_group_id()) {
+            if let Err(e) = virtio_mount(fsname, mountpoint, Some(self.user_home_dir()), self.user.uid(), self.user.primary_group_id()) {
                 warnings.push(e.to_string());
             }
         }
@@ -177,7 +177,7 @@ impl OsAgent for LinuxAgent {
         let tid=*b_id;
         *b_id+=1;
         let mut b_tasks=self.tasks.borrow_mut();
-        let task=Task::new(args, with_status)?;
+        let task=Task::new(self, args, with_status)?;
         b_tasks.insert(tid, task);
         Ok(tid)
     }
@@ -241,20 +241,21 @@ fn virtiofs_mounted(mountpoint: impl AsRef<Path>) -> Result<bool> {
 }
 
 fn virtio_mount(fsname: &str, mountpoint: &str, home_dir:Option<&Path>, uid:u32, gid:u32) -> Result<()> {
+    // prepare actual mount point, creating directories if necessary
     let mut mp_path = PathBuf::from(mountpoint);
     if ! mp_path.is_absolute() {
         if home_dir==None {
             return Err(anyhow!("CODEBUG: mountpoint directory {} is not absolue and yet home dir is None", mountpoint))
         }
         let mut new_mp_path=PathBuf::from(home_dir.unwrap());
-        new_mp_path.push("DEBUG");
         new_mp_path.push(mp_path);
 
-        // create directory if it does not exist and set ownership
+        // create directory if it does not exist
         if let Err(err)=std::fs::create_dir_all(&new_mp_path) {
             return Err(anyhow!("could not create mountpoint directory {}: {}", new_mp_path.display(), err.to_string()))
         }
 
+        // set ownership
         if uid!=0 && gid !=0 {
             let mut dir=Some(new_mp_path.as_path());
             loop {
@@ -262,9 +263,11 @@ fn virtio_mount(fsname: &str, mountpoint: &str, home_dir:Option<&Path>, uid:u32,
                     break;
                 }
                 let sdir=dir.unwrap();
-                debug!("chown {} to {}:{}", sdir.display(), uid, gid);
                 if let Err(err)=std::os::unix::fs::chown(sdir, Some(uid), Some(gid)) {
-                    return Err(anyhow!("could not chown {} to {}:{}: {}", sdir.display(), uid, gid, err.to_string()))
+                    // a readonly filesystem probably it's mean it's already mounted, so no error here
+                    if err.kind()!=std::io::ErrorKind::ReadOnlyFilesystem {
+                        return Err(anyhow!("could not chown {} to {}:{}: {}", sdir.display(), uid, gid, err.to_string()))
+                    }
                 }
                 if sdir==home_dir.unwrap() {
                     break;
@@ -274,20 +277,27 @@ fn virtio_mount(fsname: &str, mountpoint: &str, home_dir:Option<&Path>, uid:u32,
         }
         mp_path=new_mp_path
     }
-    let mp_path_str=mp_path.display();
+    else {
+        // create directory if it does not exist
+        if let Err(err)=std::fs::create_dir_all(&mp_path) {
+            return Err(anyhow!("could not create mountpoint directory {}: {}", mp_path.display(), err.to_string()))
+        }
+    }
+
+    let mp_path_display=mp_path.display();
 
     // check if already mounted
     match virtiofs_mounted(&mp_path) {
         Ok(mounted) => {
             if mounted {
-                info!("Mountpoint '{}' already mounted", mp_path_str);
+                info!("Mountpoint '{}' already mounted", mp_path_display);
                 return Ok(());
             }
         }
         Err(err) => return Err(anyhow!(err.to_string())),
     }
 
-    info!("Mounting fs '{}' to mountpoint '{}'", fsname, mp_path_str);
+    info!("Mounting fs '{}' to mountpoint '{}'", fsname, mp_path_display);
     let res = Command::new("mount")
         .arg("-t")
         .arg("virtiofs")
@@ -299,7 +309,7 @@ fn virtio_mount(fsname: &str, mountpoint: &str, home_dir:Option<&Path>, uid:u32,
         false => Err(anyhow!(
             "failed to mount virtiofs named {} to {:?}: {}",
             fsname,
-            mp_path_str,
+            mp_path_display,
             String::from_utf8_lossy(&res.stderr)
         )),
     }
