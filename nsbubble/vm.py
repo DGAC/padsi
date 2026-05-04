@@ -272,8 +272,6 @@ class BubbleVM(nsbubble.Bubble):
         # VirtioFSD instances
         self._vfs_dirs:list[VirtioSharedDirectory]|None=vfs_dirs
 
-        # bind files and directories for the VM
-        image_dir=self._image.image_directory_name
         _mounts={
             "/dev/kvm": {
                 "mount-point": "/dev/kvm",

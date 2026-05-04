@@ -20,12 +20,12 @@
 //!
 //! Small module to log events to a file using the tracing crate
 //!
-
-use std::ffi::CString;
 use std::io::IsTerminal;
+use std::path::Path;
+use std::fs;
 use tracing;
 use tracing_subscriber;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use tracing_subscriber::{Registry, prelude::*};
 
 pub use tracing::{info, warn, error, debug, trace, span, Span, Level, Instrument};
@@ -45,7 +45,7 @@ pub struct TraceConfig<'a> {
 
 impl <'a> TraceConfig<'a> {
     pub fn new(directory: &'a str, file_prefix:&'a str) -> Self {
-        Self { directory , file_prefix, program_id:file_prefix, with_stdout_output: true,
+        Self { directory, file_prefix, program_id:file_prefix, with_stdout_output: true,
             file_level: tracing_subscriber::filter::LevelFilter::INFO,
             syslog_level: tracing_subscriber::filter::LevelFilter::INFO
         }
@@ -66,6 +66,20 @@ impl <'a> TraceConfig<'a> {
 
     pub fn with_syslog_level(self, syslog_level: tracing_subscriber::filter::LevelFilter) -> Self {
         Self{syslog_level, ..self}
+    }
+
+    pub fn directory(&self) -> &str {
+        self.directory
+    }
+
+    pub fn check_dir(&self) -> Result<()> {
+        if Path::new(self.directory).is_dir() {
+            return Ok(())
+        };
+        match fs::create_dir(self.directory) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(anyhow!("failed to create logs directory: {}", err.to_string()))
+        }
     }
 }
 
@@ -88,7 +102,19 @@ pub fn tracing_setup_json(config: &TraceConfig) -> Result<TraceGuard>{
     // stdout output if TTY and with_stdout_output
     let stdout_log = match config.with_stdout_output {
         true => match std::io::stdout().is_terminal() {
-            true => Some(tracing_subscriber::fmt::layer()),
+            true => {
+                #[cfg(target_os = "windows")]
+                {
+                    let stdout=tracing_subscriber::fmt::layer()
+                        .with_ansi(false);
+                    Some(stdout)
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    let stdout=tracing_subscriber::fmt::layer();
+                    Some(stdout)
+                }
+            },
             false => None
         },
         false => None
@@ -115,24 +141,39 @@ pub fn tracing_setup_json(config: &TraceConfig) -> Result<TraceGuard>{
         .with_writer(non_blocking)
         .with_filter(config.file_level);
 
-    // syslog ouput
-    let identity_s=CString::new(config.program_id)?;
-    let b = Box::new(identity_s);
-    let c=Box::leak(b);
-    let identity=c.as_c_str();
-    let (options, facility) = Default::default();
-    let syslog = syslog_tracing::Syslog::new(identity, options, facility).unwrap();
-    let syslog_log = tracing_subscriber::fmt::layer()
-        .with_writer(syslog)
-        .with_filter(config.syslog_level); // only get events tagged as syslog events
+    #[cfg(target_os = "linux")]
+    {
+        use std::ffi::CString;
+        // syslog ouput
+        let identity_s=CString::new(config.program_id)?;
+        let b = Box::new(identity_s);
+        let c=Box::leak(b);
+        let identity=c.as_c_str();
+        let (options, facility) = Default::default();
+        let syslog = syslog_tracing::Syslog::new(identity, options, facility).unwrap();
+        let syslog_log = tracing_subscriber::fmt::layer()
+            .with_writer(syslog)
+            .with_filter(config.syslog_level); // only get events tagged as syslog events
 
-    // define subscriber
-    let subscriber = Registry::default()
-        .with(stdout_log)
-        .with(file_log)
-        .with(syslog_log);
+        // define subscriber
+        let subscriber = Registry::default()
+            .with(stdout_log)
+            .with(file_log)
+            .with(syslog_log);
 
-    // set global subscriber
-    tracing::subscriber::set_global_default(subscriber)?;
-    Ok(TraceGuard{_guard: guard})
+        // set global subscriber
+        tracing::subscriber::set_global_default(subscriber)?;
+        Ok(TraceGuard{_guard: guard})
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // define subscriber
+        let subscriber = Registry::default()
+            .with(stdout_log)
+            .with(file_log);
+
+        // set global subscriber
+        tracing::subscriber::set_global_default(subscriber)?;
+        Ok(TraceGuard{_guard: guard})
+    }
 }

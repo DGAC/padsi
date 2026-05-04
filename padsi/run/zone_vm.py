@@ -477,14 +477,9 @@ class ZoneVM(ZoneFoundations):
 
                 return True
             except Exception as e:
-                syslog.syslog(
-                    syslog.LOG_WARNING,
-                    f"Failed to create SSH's known hosts file {known_hosts_file if known_hosts_file is not None else '_undefined_'}: {str(e)}",
-                )
+                syslog.syslog(syslog.LOG_WARNING, f"Failed to create SSH's known hosts file {known_hosts_file if known_hosts_file is not None else '_undefined_'}: {str(e)}")
         else:
-            syslog.syslog(
-                syslog.LOG_WARNING, "VM's SSH server did not provide any public key???"
-            )
+            syslog.syslog(syslog.LOG_WARNING, "VM's SSH server did not provide any public key???")
         return False
 
     async def _propagate_ssh_server_pubkey(self):
