@@ -73,6 +73,9 @@ async fn post_task(
     query: web::Json<TaskArgs>
 ) -> WebResult<impl Responder> {
     info!(args=format!("{:?}", &query.args), with_status=query.with_status, "New task");
+    error!("Feature disabled");
+    return Err(error::ErrorBadRequest("Feature disabled"));
+
     let agent_guard=data.get_ref().lock().unwrap();
     match agent_guard.new_task(&query.args, query.with_status) {
         Ok(tid) => {
