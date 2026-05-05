@@ -337,6 +337,21 @@ usage of virtual machines (Windows and Linux) for specific jobs;
 \end_layout
 
 \begin_layout Itemize
+enhanced security via virtual machines isolation instead of sandbox isolation (refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "VM-forced"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+);
+\end_layout
+
+\begin_layout Itemize
 polished UX to help the user understand his environment;
 \end_layout
 
@@ -5623,6 +5638,80 @@ base
 \begin_layout Standard
 Virtual machines are defined globally and made available on a per zone basis.
  
+\end_layout
+
+\begin_layout Subsubsection
+Forcing the usage of virtual machines
+\begin_inset CommandInset label
+LatexCommand label
+name "VM-forced"
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+To further strengthen security,
+ system administrators may force the usage of virtual machines and disable the possibility to execute applications.
+ Such extra restriction is enabled via the 
+\family typewriter
+VM-ONLY
+\family default
+ zone option.
+\end_layout
+
+\begin_layout Standard
+When this mode is configured for a zone:
+\end_layout
+
+\begin_layout Itemize
+a default VM has to be specified,
+ which of course must be available in the zone;
+\end_layout
+
+\begin_layout Itemize
+users can't directly run applications in the zone (technically,
+ no zone bubble is created).
+\end_layout
+
+\begin_layout Standard
+This mode allows one to build a 
+\begin_inset Quotes eld
+\end_inset
+
+multi environment workstation
+\begin_inset Quotes erd
+\end_inset
+
+ as defined by the French ANSSI (refer to the 
+\begin_inset CommandInset href
+LatexCommand href
+name "Sécurisation du poste de travail multi-environnements (non classifiés)"
+target "https://messervices.cyber.gouv.fr/guides/fondamentaux-poste-multi-environnements"
+literal "false"
+
+\end_inset
+
+ guide) where each 
+\begin_inset Quotes eld
+\end_inset
+
+user domain
+\begin_inset Quotes erd
+\end_inset
+
+ can be implemented via a VM (and 
+\begin_inset Quotes eld
+\end_inset
+
+support domains
+\begin_inset Quotes erd
+\end_inset
+
+ remain isolated via sandboxing mechanisms).
+ Note that PADSI only covers some of the requirements for a secure workstation,
+ specifically OS hardening must be implemented by the administrators.
 \end_layout
 
 \begin_layout Subsubsection
@@ -10980,6 +11069,27 @@ Note
  true if programs in the zone will be able to share (i.e.
  stream,
  like in conference calls) the whole Linux session's screen or any window of any zone;
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+"VM-ONLY"
+\family default
+:
+ name of a VM which users have to use (they will not be allowed to execute applications in the zone,
+ refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "VM-forced"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+);
 \end_layout
 
 \begin_layout Itemize

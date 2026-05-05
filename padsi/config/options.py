@@ -38,7 +38,8 @@ class ZoneOptionType(str, enum.Enum):
     WEB_REDIRECTION = "WEB-REDIRECTION"  # allow web sites to be opened in the web browser of a zone where the URL is accessible
     X11 = "X11"  # zone allows X11 applications
     DNS_BLOCKLIST = "DNS-BLOCKLIST" # block list for DNS resolutions, refer to https://github.com/StevenBlack/hosts
-    MOUNT_POINTS = "MOUNT-POINTS"
+    MOUNT_POINTS = "MOUNT-POINTS" # specify extra mount points
+    VM_ONLY = "VM-ONLY" # force the use of VMs (if enabled, users can't execute applications, only VMs)
 
 
 @dataclass
@@ -141,8 +142,12 @@ class ZoneOption:
                         if len(mode)==1 and mode[0] not in ("ro", "rw"):
                             raise Exception(f"Invalid '{mode[0]}' mode")
                         mpoints[mp_zone]=mp_host # mp_zone does not have to be a full path, as opposed to mp_host
-
                     return StrStrDictOption(option_type, True, mpoints)
+
+                case ZoneOptionType.VM_ONLY:
+                    if not isinstance(data, str):
+                        raise Exception("Expected a file path")
+                    return VMOnlyOption(option_type, True, data)
 
                 case _:
                     raise Exception(f"CODEBUG: unhandled ZoneOptionType '{option_type}'")
@@ -223,4 +228,17 @@ class StrStrDictOption(ZoneOption):
         return "disabled"
 
     def downcast(self:ZoneOption) -> StrStrDictOption:
+        return self # type: ignore[return-value]
+
+@dataclass
+class VMOnlyOption(ZoneOption):
+    default_vm: str|None
+
+    def __repr__(self) -> str:
+        if self.enabled:
+            assert(self.default_vm is not None)
+            return self.default_vm
+        return "disabled"
+
+    def downcast(self:ZoneOption) -> VMOnlyOption:
         return self # type: ignore[return-value]

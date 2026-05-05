@@ -23,7 +23,7 @@ from .main import (Configuration, admin_br_network, tap_ip, users_br_network,
 from .mountpoint import MountPoint
 from .network import DNSEndpoint, FWRule, FWRuleChain, NetworkSpec, ResolvRule
 from .options import (BlockListOption, BoolOption, FIDO2Option, PKCS11Option,
-                      PKIOption, WebRedirectionOption, ZoneOption, StrStrDictOption,
+                      PKIOption, WebRedirectionOption, ZoneOption, StrStrDictOption, VMOnlyOption,
                       ZoneOptionType)
 from .policies import ProgramPoliciesFactory, initialize_home_policies
 from .proxy import Proxy
@@ -38,5 +38,5 @@ __all__=["Configuration", "users_br_network", "admin_br_network", "tap_ip", "vm_
          "VMScript", "VMUsage", "VirtualMachine", "strip_vm_id",
          "Zone", "StartMode", "AdminNS",
          "ZoneOption", "ZoneOptionType", "BoolOption", "WebRedirectionOption", "PKIOption", "PKCS11Option",
-         "FIDO2Option", "BlockListOption", "StrStrDictOption"
+         "FIDO2Option", "BlockListOption", "StrStrDictOption", "VMOnlyOption"
         ]

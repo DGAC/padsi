@@ -28,7 +28,7 @@ import syslog
 from . import network, vm
 from .mountpoint import MountPoint
 from .options import (BlockListOption, BoolOption, StrStrDictOption, FIDO2Option, PKCS11Option,
-                      PKIOption, WebRedirectionOption, ZoneOption,
+                      PKIOption, VMOnlyOption, WebRedirectionOption, ZoneOption,
                       ZoneOptionType)
 from .proxy import Proxy
 from .trafficshaper import TrafficShaper
@@ -156,6 +156,8 @@ class Zone:
 
         # apps
         apps = data.get("apps", [])
+        if apps is None:
+            apps=[]
         if not isinstance(apps, list):
             raise Exception("Invalid 'apps' section")
         for app in apps:
@@ -171,6 +173,15 @@ class Zone:
             if base_run_vm is None:
                 raise Exception(f"Unknown VM '{vmid}'")
             vms[vmid] = base_run_vm.specialize(vmddata, named_netres)
+
+        # checks
+        opt=options.get(ZoneOptionType.VM_ONLY)
+        if opt is not None and opt.enabled:
+            opt=VMOnlyOption.downcast(opt)
+            if opt.default_vm not in vms:
+                raise Exception (f"VM-ONLY's default VM '{opt.default_vm}' is not available in zone")
+            if start_mode==StartMode.ALWAYS:
+                start_mode=StartMode.ALWAYS_INFRA
 
         return cls(name, start_mode, friendly_name, color, options, net, mounts,
             apps, vms, proxies, data, config_dir)
@@ -302,7 +313,8 @@ class Zone:
             ZoneOptionType.GPG_CARD: BoolOption(ZoneOptionType.FUSE, False),
             ZoneOptionType.FIDO2: FIDO2Option(ZoneOptionType.FIDO2, False),
             ZoneOptionType.DNS_BLOCKLIST: BlockListOption(ZoneOptionType.DNS_BLOCKLIST, False, None),
-            ZoneOptionType.MOUNT_POINTS: StrStrDictOption(ZoneOptionType.MOUNT_POINTS, False, {})
+            ZoneOptionType.MOUNT_POINTS: StrStrDictOption(ZoneOptionType.MOUNT_POINTS, False, {}),
+            ZoneOptionType.VM_ONLY: VMOnlyOption(ZoneOptionType.VM_ONLY, False, None)
         }
         if option not in _default:
             raise Exception(f"CODEBUG: option '{option}' does not have any default value")

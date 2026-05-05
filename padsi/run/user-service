@@ -521,7 +521,7 @@ class PadsiUserService:
             zone_conf = self._gconf.get_zone(zone_name)
             if zone_conf.start_mode == padsi.config.StartMode.ALWAYS:
                 try:
-                    await self._start_zone(zone_conf)
+                    await self._get_zone_apps(zone_conf)
                 except Exception as e:
                     syslog.syslog(syslog.LOG_ERR, f"Error while starting zone '{zone_name}': {str(e)}")
             elif zone_conf.start_mode == padsi.config.StartMode.ALWAYS_INFRA:
@@ -776,8 +776,11 @@ class PadsiUserService:
                         return izone
         return None
 
-    async def _start_zone(self, zone_conf: padsi.config.Zone) -> padsi.run.ZoneApps:
-        """Create or reuse a zone and starts it if necessary"""
+    async def _get_zone_apps(self, zone_conf: padsi.config.Zone) -> padsi.run.ZoneApps:
+        """Create or reuse a zone'APPS bubble (start it if necessary)"""
+        if zone_conf.get_option(padsi.config.ZoneOptionType.VM_ONLY).enabled:
+            raise Exception("VM only zone, no apps. allowed")
+
         can_reuse_apps = True # to be modified when we introduce stronger isolation mechanisms for some programs
 
         if can_reuse_apps:
@@ -1170,7 +1173,7 @@ class PadsiUserService:
             if progname == "":
                 raise Exception("Invalid empty program name")
 
-            izone = await self._start_zone(zone_conf)
+            izone = await self._get_zone_apps(zone_conf)
             loop = asyncio.get_running_loop()
             pid = await loop.run_in_executor(None, izone.api.start_process, args) # pyright: ignore
             self._set_zone_autostop(izone)
@@ -1976,7 +1979,7 @@ class PadsiUserService:
             return web.Response(text=f"Invalid input ({str(e)})", status=400)
 
         try:
-            izone = await self._start_zone(zone_conf)
+            izone = await self._get_zone_apps(zone_conf)
             factory = padsi.config.ProgramPoliciesFactory().get_program_policies(browser)
             args = factory.get_open_url_arguments(url)  # pyright: ignore
             loop = asyncio.get_running_loop()
