@@ -741,7 +741,7 @@ class UserServer(Server):
                 case _:
                     raise Exception(f"Unhandled VMVersionType {vtype}")
             if vmversion is None:
-                raise Exception("VM version not found")
+                raise Exception(f"VM version for '{vm_id}' not found")
 
         if vmversion.state==VMState.RUNNING:
             raise Exception("VM version is running")

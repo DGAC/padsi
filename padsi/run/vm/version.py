@@ -84,6 +84,8 @@ class VMVersion:
             self._files[1]=os.path.join(directory, f"{vtype.value}.vars")
             self._files[2]=os.path.join(directory, f"{vtype.value}.infos")
         else:
+            if not isinstance(version, int):
+                raise Exception(f"CODEBUG: VMVersion's version in constructor is a {type(version)}")
             self._files[0]=os.path.join(directory, f"{vtype.value}.{version}.img")
             self._files[1]=os.path.join(directory, f"{vtype.value}.{version}.vars")
             self._files[2]=os.path.join(directory, f"{vtype.value}.{version}.infos")
@@ -202,6 +204,8 @@ class VMVersion:
 
     @property
     def version_number(self) -> int|None:
+        if self._version is not None and not isinstance(self._version, int):
+            raise Exception(f"CODEBUG: VMVersion's version_number is {type(self._version)}")
         return self._version
 
     @property

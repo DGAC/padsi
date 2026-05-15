@@ -304,14 +304,14 @@ class AdminVMFiles:
                 if vmversion is not None:
                     return vmversion
             raise Exception(f"VMVersion with id '{vmvid}' not found")
-        obj=cls(data["vm-dir"], data["uid"], analyse=False) # pyright: ignore
-        obj._users={uid for uid in data["users"]} # pyright: ignore
-        obj._vmfs={int(uid): VMFiles.deserialize(ser) for (uid, ser) in data["vmf-objects"].items()} # pyright: ignore
+        obj=cls(data["vm-dir"], data["uid"], analyse=False)
+        obj._users={uid for uid in data["users"]}
+        obj._vmfs={int(uid): VMFiles.deserialize(ser) for (uid, ser) in data["vmf-objects"].items()}
         vmfs_list=list(obj._vmfs.values())
-        obj._all_versions={_get_vmversion(vmfs_list, id) for id in data["all-versions"]} # pyright: ignore
-        obj._all_versions_by_backing_image={img:{_get_vmversion(vmfs_list, id) for id in vmvlist} for (img, vmvlist) in data["all-versions-b"].items()} # pyright: ignore
-        obj._committable_versions={_get_vmversion(vmfs_list, id) for id in data["committable-versions"]} # pyright: ignore
-        obj._obsolete_versions={_get_vmversion(vmfs_list, id) for id in data["obsolete-versions"]} # pyright: ignore
-        obj._unused_files={fname for fname in data["unused-files"]} # pyright: ignore
+        obj._all_versions={_get_vmversion(vmfs_list, id) for id in data["all-versions"]}
+        obj._all_versions_by_backing_image={img:{_get_vmversion(vmfs_list, id) for id in vmvlist} for (img, vmvlist) in data["all-versions-b"].items()}
+        obj._committable_versions={_get_vmversion(vmfs_list, id) for id in data["committable-versions"]}
+        obj._obsolete_versions={_get_vmversion(vmfs_list, id) for id in data["obsolete-versions"]}
+        obj._unused_files={fname for fname in data["unused-files"]}
 
         return obj

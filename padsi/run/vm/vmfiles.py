@@ -621,11 +621,15 @@ class VMFiles:
 
         for vmv in self._all_versions_by_id.values():
             if vmv.version_type==VMVersionType.BASE and vmv.version_number is not None and \
-               vmv.version_number<last_base_version.version_number and len(self.get_children_versions(vmv))==0: # pyright: ignore
-                self._obsolete_versions.append(vmv)
+                last_base_version is not None and last_base_version.version_number and \
+                vmv.version_number<last_base_version.version_number and len(self.get_children_versions(vmv))==0:
+                    self._obsolete_versions.append(vmv)
             if vmv.version_type==VMVersionType.USER and vmv.version_number is not None and \
-               vmv.version_number<last_user_versions[vmv.zone_name].version_number and len(self.get_children_versions(vmv))==0: # pyright: ignore
-                self._obsolete_versions.append(vmv)
+                vmv.version_number is not None and vmv.zone_name is not None:
+                luv=last_user_versions.get(vmv.zone_name)
+                if luv is not None and luv.version_number is not None and \
+                vmv.version_number<luv.version_number and len(self.get_children_versions(vmv))==0:
+                    self._obsolete_versions.append(vmv)
             if vmv.version_type==VMVersionType.SNAP and vmv.state==VMState.DISCARDED:
                 self._obsolete_versions.append(vmv)
 
@@ -792,9 +796,9 @@ class VMFiles:
         obj._all_versions_by_image={img:obj._all_versions_by_id[id] for (img, id) in data["by-images"].items()}
         obj._reverse_dependencies={obj._all_versions_by_id[key]: {obj._all_versions_by_id[vmvid] for vmvid in vlist} for (key, vlist) in data["rev-deps"].items()}
         obj._staged_versions={VMVersionType(vtype):obj._all_versions_by_id[id] for (vtype, id) in data["staged-versions"].items()}
-        obj._base_versions={vnum:obj._all_versions_by_id[id] for (vnum, id) in data["base-versions"].items()}
-        obj._user_versions={vnum:{obj._all_versions_by_id[id] for id in idslist if obj._all_versions_by_id[id].version_number==vnum} for (vnum, idslist) in data["user-versions"].items()}
-        obj._snap_versions={vnum:{obj._all_versions_by_id[id] for id in idslist if obj._all_versions_by_id[id].version_number==vnum} for (vnum, idslist) in data["snap-versions"].items()}
+        obj._base_versions={int(vnum):obj._all_versions_by_id[id] for (vnum, id) in data["base-versions"].items()}
+        obj._user_versions={int(vnum):{obj._all_versions_by_id[id] for id in idslist if obj._all_versions_by_id[id].version_number==int(vnum)} for (vnum, idslist) in data["user-versions"].items()}
+        obj._snap_versions={int(vnum):{obj._all_versions_by_id[id] for id in idslist if obj._all_versions_by_id[id].version_number==int(vnum)} for (vnum, idslist) in data["snap-versions"].items()}
         obj._obsolete_versions=[obj._all_versions_by_id[id] for id in data["obsolete-versions"]]
         obj._committable_versions=[obj._all_versions_by_id[id] for id in data["committable-versions"]]
         obj._unused_files=data["unused-files"]

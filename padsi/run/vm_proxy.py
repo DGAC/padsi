@@ -172,7 +172,7 @@ async def vm_merge(gconf:Configuration, sys_call:Callable, vm_id: str, zone_name
         raise Exception("CODEBUG: vnum is None")
     vmversion = avmf.get_vm_version(vtype, vnum, zone_name, uid)
     if vmversion is None:
-        raise Exception("VM version not found")
+        raise Exception(f"VM version type {vtype}, num {vnum}, zone {zone_name} for UID {uid} not found")
     if vmversion not in avmf.committable_versions:
         raise Exception("VM version cannot be merged yet")
     _check_privileges_on_vm_version(gconf, vm_id, uid, vmversion)
