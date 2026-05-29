@@ -3648,6 +3648,13 @@ adapted
 
 \begin_layout Subsubsection
 Clipboard sharing restrictions
+\begin_inset CommandInset label
+LatexCommand label
+name "Clipboard sharing restrictions"
+
+\end_inset
+
+
 \end_layout
 
 \begin_layout Standard
@@ -3720,7 +3727,7 @@ IMPORTANT NOTE
 \series default
 \color inherit
 :
- the clipboard sharing restrictions don't apply to contents copied and pasted via the X11 mechanisms,
+ the clipboard sharing restrictions don't apply to contents copied or pasted via the X11 mechanisms,
  so X11 should be disabled accordingly to avoid any policy bypass.
 \end_layout
 
@@ -3734,6 +3741,8 @@ Even though X11 has been superseded by Wayland,
  so,
  if a zone configuration requires it,
  access to the X11 server is provided from within the zone.
+ Wayland offers a must better security model than X11 as clients can't snoop on other client's activity (e.g.
+ can't get its keystrokes) and can't even enumerate connected clients.
 \end_layout
 
 \begin_layout Standard
@@ -15530,7 +15539,8 @@ target "https://winfsp.dev/rel/"
 \end_layout
 
 \begin_layout Itemize
-silent installation can be done () adapt to exact version:
+silent installation can be done,
+ adapt to exact version:
 \begin_inset listings
 lstparams "basicstyle={\footnotesize\ttfamily}"
 inline false
@@ -15587,6 +15597,179 @@ nolink "false"
 \begin_inset Graphics
 	filename Screensharing.png
 	width 90col%
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Section
+Wayland proxy
+\end_layout
+
+\begin_layout Standard
+This annex details the implementation of the Wayland proxy,
+ used in the context of clipboard sharing restriction (refer to section 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "Clipboard sharing restrictions"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+).
+\end_layout
+
+\begin_layout Standard
+The following diagram illustrates how the Wayland proxy is deployed,
+ note that the X11 clients' communications are not intercepted by any Wayland proxy and thus copy/paste policies cannot be implemented when they are involved
+\begin_inset Foot
+status collapsed
+
+\begin_layout Plain Layout
+Creating an X11 proxy could be done but,
+ considering how unsecure X11 is and its deprecation phase,
+ the effort does not seem worth the result.
+\end_layout
+
+\end_inset
+
+.
+\end_layout
+
+\begin_layout Standard
+\align center
+\begin_inset Graphics
+	filename wayland-proxy.png
+	width 50col%
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsection
+Connection to a Wayland compositor's cinematic
+\end_layout
+
+\begin_layout Standard
+In order to understand how the Wayland proxy works,
+ having the connection,
+ and copy/paste cinematic is important.
+\end_layout
+
+\begin_layout Standard
+When a Wayland client connects to the Wayland server (the 
+\series bold
+compositor
+\series default
+),
+ the following happens with regards to the copy/paste feature:
+\end_layout
+
+\begin_layout Standard
+\align center
+\begin_inset Graphics
+	filename wayland-connection.png
+	width 80col%
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+The Wayland proxy analyses the messages and determine the object IDS (OIDs) of the Wayland objects which will later be used while implementing the restrictions.
+\end_layout
+
+\begin_layout Subsection
+Copy/paste cinematic
+\end_layout
+
+\begin_layout Standard
+When data is copied by a Wayland client application,
+ the following happens:
+\end_layout
+
+\begin_layout Standard
+\align center
+\begin_inset Graphics
+	filename wayland-copy.png
+	width 110col%
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+Note:
+ the application from which data was copied always receives the notification (via 
+\series bold
+selection
+\series default
+ events) from the compositor because it has the focus.
+\end_layout
+
+\begin_layout Standard
+The following schema shows what happens when the Wayland client wants to paste the copied data,
+ the Wayland proxy does not perform any filtering at this stage.
+\end_layout
+
+\begin_layout Standard
+\align center
+\begin_inset Graphics
+	filename wayland-paste.png
+	width 110col%
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsection
+Implementation details
+\end_layout
+
+\begin_layout Subsubsection
+X11 filtering
+\end_layout
+
+\begin_layout Standard
+The X11 windowing system provides a rudimentary,
+ text only,
+ copy/paste mechanism.
+ The Wayland compositor (as it usually also implements the X11 protocol via the XWayland program) can also handle this mechanism via the 
+\begin_inset CommandInset href
+LatexCommand href
+name "Primary selection protocol"
+target "https://wayland.app/protocols/primary-selection-unstable-v1"
+literal "false"
+
+\end_inset
+
+ (the native mechanism being part of the 
+\begin_inset CommandInset href
+LatexCommand href
+name "Wayland core protocol"
+target "https://wayland.app/protocols/wayland"
+literal "false"
+
+\end_inset
+
+).
+\end_layout
+
+\begin_layout Standard
+\begin_inset Note Note
+status open
+
+\begin_layout Plain Layout
+blocking vs user consent
+\end_layout
 
 \end_inset
 

@@ -1,0 +1,436 @@
+<mxfile host="Electron" pages="4">
+  <diagram id="HfVuNKTlC5I4T42dQTb6" name="Overview">
+    <mxGraphModel dx="808" dy="482" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="ZUZAZymKezlY8F5Zs81l-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=9;verticalAlign=top;fillColor=#f5f5f5;fontColor=#333333;strokeColor=#666666;" value="Mutter" vertex="1">
+          <mxGeometry height="200" width="140" x="330" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="Wayland compositor" vertex="1">
+          <mxGeometry height="60" width="120" x="340" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="XWayland" vertex="1">
+          <mxGeometry height="60" width="120" x="340" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-5" edge="1" parent="1" source="oO8-Z7d1HX_6f7HT_dE3-3" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;" target="oO8-Z7d1HX_6f7HT_dE3-12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Wayland copy client, in zone A" vertex="1">
+          <mxGeometry height="60" width="120" x="190" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Wayland paste client, in zone B" vertex="1">
+          <mxGeometry height="60" width="120" x="490" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-6" edge="1" parent="1" source="oO8-Z7d1HX_6f7HT_dE3-4" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;" target="oO8-Z7d1HX_6f7HT_dE3-13">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="360" y="120" as="sourcePoint" />
+            <mxPoint x="404" y="150" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="X11 copy client,&lt;div&gt;zone X&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="210" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="X11 paste client,&lt;div&gt;zone Y&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="480" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-9" edge="1" parent="1" source="oO8-Z7d1HX_6f7HT_dE3-7" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;" target="oO8-Z7d1HX_6f7HT_dE3-2">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="340" y="150" as="sourcePoint" />
+            <mxPoint x="384" y="180" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-10" edge="1" parent="1" source="oO8-Z7d1HX_6f7HT_dE3-2" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;" target="oO8-Z7d1HX_6f7HT_dE3-8">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="380" y="180" as="sourcePoint" />
+            <mxPoint x="424" y="210" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-11" edge="1" parent="1" source="oO8-Z7d1HX_6f7HT_dE3-1" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;dashed=1;strokeWidth=2;dashPattern=1 2;" target="oO8-Z7d1HX_6f7HT_dE3-2">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="480" y="220" as="sourcePoint" />
+            <mxPoint x="524" y="250" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-12" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="Wayland proxy for zone A" vertex="1">
+          <mxGeometry height="60" width="120" x="190" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-13" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="Wayland proxy for zone B" vertex="1">
+          <mxGeometry height="60" width="120" x="490" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-14" edge="1" parent="1" source="oO8-Z7d1HX_6f7HT_dE3-13" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;" target="oO8-Z7d1HX_6f7HT_dE3-1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="550" y="120" as="sourcePoint" />
+            <mxPoint x="550" y="150" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oO8-Z7d1HX_6f7HT_dE3-15" edge="1" parent="1" source="oO8-Z7d1HX_6f7HT_dE3-12" style="edgeStyle=none;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;" target="oO8-Z7d1HX_6f7HT_dE3-1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="540" y="120" as="sourcePoint" />
+            <mxPoint x="540" y="150" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="connection" id="FdIbc-bnAcdN43KrMv_P">
+    <mxGraphModel dx="2241" dy="844" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="NM2NuxuTio5ZlMqT0-n7-8" edge="1" parent="1" source="NM2NuxuTio5ZlMqT0-n7-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="110" y="680" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="NM2NuxuTio5ZlMqT0-n7-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Wayland client&amp;nbsp;" vertex="1">
+          <mxGeometry height="60" width="120" x="50" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="NM2NuxuTio5ZlMqT0-n7-2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="Wayland proxy" vertex="1">
+          <mxGeometry height="60" width="120" x="330" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="NM2NuxuTio5ZlMqT0-n7-3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="Wayland compositor" vertex="1">
+          <mxGeometry height="60" width="120" x="610" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="NM2NuxuTio5ZlMqT0-n7-9" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="389.6969230769233" y="300" as="sourcePoint" />
+            <mxPoint x="390" y="680" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="NM2NuxuTio5ZlMqT0-n7-10" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="669.6969230769233" y="300" as="sourcePoint" />
+            <mxPoint x="670" y="680" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="NM2NuxuTio5ZlMqT0-n7-13" parent="1" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="&amp;nbsp;connection&lt;div&gt;to the&lt;/div&gt;&lt;div&gt;compositor&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="110" x="-10" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="NM2NuxuTio5ZlMqT0-n7-14" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;" value="call &lt;b&gt;wl_display.get_registry()&lt;/b&gt;&lt;div&gt;pass the OID of the expected wl_registry&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint as="offset" />
+            <mxPoint x="110" y="345.62" as="sourcePoint" />
+            <mxPoint x="390" y="345.62" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="NM2NuxuTio5ZlMqT0-n7-15" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="390" y="420" as="sourcePoint" />
+            <mxPoint x="110" y="420" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="NM2NuxuTio5ZlMqT0-n7-16" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;" value="&lt;div&gt;call &lt;b&gt;wl_registry.bind()&lt;/b&gt;&lt;/div&gt;to bind the objects which will be used, among&lt;div&gt;which&amp;nbsp;&lt;span style=&quot;background-color: light-dark(#ffffff, var(--ge-dark-color, #121212)); color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;wl_data_device_manager and&lt;/span&gt;&lt;/div&gt;&lt;div&gt;zwp_primary_selection_device_manager_v1&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="110" y="470" as="sourcePoint" />
+            <mxPoint x="390" y="470" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="NM2NuxuTio5ZlMqT0-n7-17" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;" value="call &lt;b&gt;wl_data_device_manager.get_data_device()&lt;/b&gt;&lt;div&gt;pass the OID of the expected wl_data_device&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="110" y="570" as="sourcePoint" />
+            <mxPoint x="390" y="570" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="QstMT5zK8J-rJdoYCE9e-37" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="capture OIDs" vertex="1">
+          <mxGeometry height="40" width="100" x="340" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="QstMT5zK8J-rJdoYCE9e-38" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="capture OIDs" vertex="1">
+          <mxGeometry height="40" width="100" x="340" y="590" as="geometry" />
+        </mxCell>
+        <mxCell id="QstMT5zK8J-rJdoYCE9e-39" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="390" y="550" as="sourcePoint" />
+            <mxPoint x="670" y="550" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="QstMT5zK8J-rJdoYCE9e-40" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="390" y="640" as="sourcePoint" />
+            <mxPoint x="670" y="640" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="QstMT5zK8J-rJdoYCE9e-41" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="390" y="360" as="sourcePoint" />
+            <mxPoint x="670" y="360" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="QstMT5zK8J-rJdoYCE9e-48" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;" value="receive &lt;b&gt;wl_registry.globals events&lt;/b&gt;&lt;div&gt;provides created objects for many interfaces,&lt;/div&gt;&lt;div&gt;among which&amp;nbsp;wl_data_device_manager and&lt;/div&gt;&lt;div&gt;zwp_primary_selection_device_manager_v1,&lt;/div&gt;&lt;div&gt;zwp_primary_selection_device&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="670" y="410" as="sourcePoint" />
+            <mxPoint x="390" y="410" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="copy" id="qMnyqsOWWn5dCEIEPjhE">
+    <mxGraphModel dx="912" dy="545" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-0" />
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-1" parent="oOH-EMHB5jqUdYd7zIV_-0" />
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-2" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="160" y="300" as="sourcePoint" />
+            <mxPoint x="160" y="880" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-3" parent="oOH-EMHB5jqUdYd7zIV_-1" style="rounded=1;whiteSpace=wrap;html=1;" value="Client from which data is copied,&lt;div&gt;in zone A&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="100" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-4" parent="oOH-EMHB5jqUdYd7zIV_-1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="Wayland proxy for zone A" vertex="1">
+          <mxGeometry height="60" width="120" x="330" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-5" parent="oOH-EMHB5jqUdYd7zIV_-1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="Wayland compositor" vertex="1">
+          <mxGeometry height="60" width="120" x="550" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-6" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="389.6969230769233" y="300" as="sourcePoint" />
+            <mxPoint x="390" y="880" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-7" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="609.6969230769233" y="300" as="sourcePoint" />
+            <mxPoint x="610" y="880" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-8" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="send &lt;b&gt;wl_data_device.data_offer&lt;/b&gt; event">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="610" y="620" as="sourcePoint" />
+            <mxPoint x="390" y="620" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-14" parent="oOH-EMHB5jqUdYd7zIV_-1" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="copy data" vertex="1">
+          <mxGeometry height="50" width="110" x="90" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-15" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="call &lt;b&gt;wl_data_device_manager.&lt;/b&gt;&lt;div&gt;&lt;b&gt;create_data_source()&lt;/b&gt;&lt;div&gt;pass the OID of the wl_data_source&lt;/div&gt;&lt;div&gt;object to create&lt;/div&gt;&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="160" y="375" as="sourcePoint" />
+            <mxPoint x="390" y="374.65999999999997" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-16" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="call &lt;b&gt;wl_data_source.offer()&lt;/b&gt;&lt;div&gt;one time for each possible type mime&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="160" y="450" as="sourcePoint" />
+            <mxPoint x="390" y="450" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-17" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="send&lt;b&gt; wl_data_offer.offer&lt;/b&gt; events&lt;div&gt;one per possible mime type&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="610" y="650" as="sourcePoint" />
+            <mxPoint x="390" y="650" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-18" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="send &lt;b&gt;wl_data_device.selection&lt;/b&gt; event">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="610" y="750" as="sourcePoint" />
+            <mxPoint x="390" y="750" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-20" parent="oOH-EMHB5jqUdYd7zIV_-1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="Wayland proxy for zone B" vertex="1">
+          <mxGeometry height="60" width="120" x="770" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-21" parent="oOH-EMHB5jqUdYd7zIV_-1" style="rounded=1;whiteSpace=wrap;html=1;" value="Client to which data is pasted, in zone B" vertex="1">
+          <mxGeometry height="60" width="120" x="990" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-22" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="829.6969230769233" y="300" as="sourcePoint" />
+            <mxPoint x="830" y="880" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-23" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1049.6969230769232" y="300" as="sourcePoint" />
+            <mxPoint x="1050" y="880" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-29" parent="oOH-EMHB5jqUdYd7zIV_-1" style="rounded=1;whiteSpace=wrap;html=1;" value="capture OIDs" vertex="1">
+          <mxGeometry height="40" width="100" x="340" y="390" as="geometry" />
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-30" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="390" y="440" as="sourcePoint" />
+            <mxPoint x="610" y="440" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-31" parent="oOH-EMHB5jqUdYd7zIV_-1" style="rounded=1;whiteSpace=wrap;html=1;" value="add a new mime type to indicate the&lt;div&gt;client&#39;s zone&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="110" x="340" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-32" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="390" y="530" as="sourcePoint" />
+            <mxPoint x="610" y="530" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-34" parent="oOH-EMHB5jqUdYd7zIV_-1" style="rounded=1;whiteSpace=wrap;html=1;" value="get the client&#39;s zone and removes the associated offer event" vertex="1">
+          <mxGeometry height="50" width="125" x="325" y="667" as="geometry" />
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-35" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="390" y="630" as="sourcePoint" />
+            <mxPoint x="160" y="630" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-36" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="offer events always transmitted if&lt;div&gt;program which copied is the&lt;/div&gt;&lt;div&gt;same as where it&#39;s pased&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="390" y="740" as="sourcePoint" />
+            <mxPoint x="160" y="740" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-37" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="390" y="790" as="sourcePoint" />
+            <mxPoint x="160" y="790" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-38" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="send &lt;b&gt;wl_data_device.data_offer&lt;/b&gt; event">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="610" y="720" as="sourcePoint" />
+            <mxPoint x="830" y="720" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-39" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="send &lt;b&gt;wl_data_offer.offer&lt;/b&gt; events&lt;div&gt;one per possible mime type&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="610" y="760" as="sourcePoint" />
+            <mxPoint x="830" y="760" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-40" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="send &lt;b&gt;wl_data_device.selection&lt;/b&gt; event">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="610" y="860" as="sourcePoint" />
+            <mxPoint x="830" y="860" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-41" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="830" y="740" as="sourcePoint" />
+            <mxPoint x="1050" y="740" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-42" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="830" y="880" as="sourcePoint" />
+            <mxPoint x="1050" y="880" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-43" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;dashed=1;dashPattern=8 8;" value="some offer events&lt;div&gt;may be blocked&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="830" y="850" as="sourcePoint" />
+            <mxPoint x="1050" y="850" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-44" parent="oOH-EMHB5jqUdYd7zIV_-1" style="rounded=1;whiteSpace=wrap;html=1;" value="get the client&#39;s zone and removes the associated offer event" vertex="1">
+          <mxGeometry height="50" width="125" x="770" y="780" as="geometry" />
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-45" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="send &lt;b&gt;wl_data_device.set_selection()&lt;/b&gt;&lt;div&gt;to &quot;signal&quot; the data offer&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="160" y="550" as="sourcePoint" />
+            <mxPoint x="390" y="550" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-46" edge="1" parent="oOH-EMHB5jqUdYd7zIV_-1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="390" y="570" as="sourcePoint" />
+            <mxPoint x="610" y="570" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oOH-EMHB5jqUdYd7zIV_-19" parent="oOH-EMHB5jqUdYd7zIV_-1" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;flipH=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="keyboard&lt;div&gt;focus&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="110" x="1010" y="650" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="paste" id="m2mMNBJoOC2AbzOJuBgI">
+    <mxGraphModel dx="1010" dy="603" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="SH0GxbIKyiGMXvSfrefy-0" />
+        <mxCell id="SH0GxbIKyiGMXvSfrefy-1" parent="SH0GxbIKyiGMXvSfrefy-0" />
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-0" edge="1" parent="SH0GxbIKyiGMXvSfrefy-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="380" y="180" as="sourcePoint" />
+            <mxPoint x="380" y="530" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-1" parent="SH0GxbIKyiGMXvSfrefy-1" style="rounded=1;whiteSpace=wrap;html=1;" value="Client from which data is copied,&lt;div&gt;in zone A&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="320" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-2" parent="SH0GxbIKyiGMXvSfrefy-1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="Wayland proxy for zone A" vertex="1">
+          <mxGeometry height="60" width="120" x="540" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-3" parent="SH0GxbIKyiGMXvSfrefy-1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="Wayland compositor" vertex="1">
+          <mxGeometry height="60" width="120" x="760" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-4" edge="1" parent="SH0GxbIKyiGMXvSfrefy-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="599.6969230769232" y="180" as="sourcePoint" />
+            <mxPoint x="600" y="530" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-5" edge="1" parent="SH0GxbIKyiGMXvSfrefy-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="819.6969230769232" y="180" as="sourcePoint" />
+            <mxPoint x="820" y="530" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-6" edge="1" parent="SH0GxbIKyiGMXvSfrefy-1" style="endArrow=classic;html=1;rounded=0;" value="send &lt;b&gt;wl_data_source.send&lt;/b&gt;&amp;nbsp;event&lt;div&gt;with the chosen mime type&lt;/div&gt;&lt;div&gt;and the file descriptor&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="820" y="370" as="sourcePoint" />
+            <mxPoint x="600" y="370" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-12" parent="SH0GxbIKyiGMXvSfrefy-1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="Wayland proxy for zone B" vertex="1">
+          <mxGeometry height="60" width="120" x="980" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-13" parent="SH0GxbIKyiGMXvSfrefy-1" style="rounded=1;whiteSpace=wrap;html=1;" value="Client to which data is pasted,&lt;div&gt;in zone B&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="1200" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-14" edge="1" parent="SH0GxbIKyiGMXvSfrefy-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1039.6969230769232" y="180" as="sourcePoint" />
+            <mxPoint x="1040" y="530" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-15" edge="1" parent="SH0GxbIKyiGMXvSfrefy-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;endArrow=none;endFill=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1259.6969230769232" y="180" as="sourcePoint" />
+            <mxPoint x="1260" y="530" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-16" parent="SH0GxbIKyiGMXvSfrefy-1" style="rounded=1;whiteSpace=wrap;html=1;" value="open a file descriptor to receive the pasted data" vertex="1">
+          <mxGeometry height="50" width="140" x="1190" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-19" edge="1" parent="SH0GxbIKyiGMXvSfrefy-1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="1040" y="350" as="sourcePoint" />
+            <mxPoint x="820" y="350" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SH0GxbIKyiGMXvSfrefy-49" parent="SH0GxbIKyiGMXvSfrefy-1" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;flipH=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="paste data" vertex="1">
+          <mxGeometry height="50" width="110" x="1220" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-34" edge="1" parent="SH0GxbIKyiGMXvSfrefy-1" style="endArrow=classic;html=1;rounded=0;" value="call &lt;b&gt;wl_data_offer.receive()&lt;/b&gt;&lt;div&gt;with the chosen type mime&lt;/div&gt;&lt;div&gt;and the file descriptor&lt;/div&gt;">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="1260" y="330" as="sourcePoint" />
+            <mxPoint x="1040" y="330" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-35" edge="1" parent="SH0GxbIKyiGMXvSfrefy-1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="600" y="390" as="sourcePoint" />
+            <mxPoint x="380" y="390" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-36" parent="SH0GxbIKyiGMXvSfrefy-1" style="rounded=1;whiteSpace=wrap;html=1;" value="write the copied data&lt;div&gt;to the provided file descriptor&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="140" x="310" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="CL5uC33NFDU0rTFo2Wrg-37" parent="SH0GxbIKyiGMXvSfrefy-1" style="rounded=1;whiteSpace=wrap;html=1;" value="close the file descriptor" vertex="1">
+          <mxGeometry height="50" width="140" x="310" y="470" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

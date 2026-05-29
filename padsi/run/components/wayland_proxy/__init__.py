@@ -79,7 +79,8 @@ class WaylandProxy(Component):
                 os.path.join("/bubble/run/wl-proxy", "wayland-proxy.sock"), # proxy's socket
                 self._zone_name, # this zone's name
                 ",".join(self._allowed_zones), # zones from which copy is allowed
-                "block"
+                "allow", # allow copy from the "init" zone
+                "enforce" # enforce policies
             ]
             if _debug:
                 syslog.syslog(syslog.LOG_DEBUG, f"Starting Wayland Proxy component: {' '.join(args)}")

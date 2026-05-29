@@ -19,444 +19,547 @@
 
 /// Test module composed of unitary tests for each functions.
 /// Launch with `cargo test`.
-
-use super::*;
-
+use crate::constants::{self, WORD_SIZE, WlInterface};
+use crate::filter::ProxyState;
+use crate::message::{MessageMeta, parse_header};
+use crate::proxybuffer::{
+    ProxyBuffer, bytes_to_str, create_zone_raw_message, get_zone_tag, search_in_messages_in_vec,
+};
 
 #[test]
-fn test_read_header_1() {
-    let test_bytes_header: Vec<u8> = vec![2, 0, 0, 0, 0, 0, 24, 0, 1];
-    let correct_header: MsgHeader = MsgHeader { object_id: (2), msg_size: (24), opcode: (0) };
-    assert_eq!(read_header(test_bytes_header[0..8].try_into().unwrap()), correct_header);
+fn test_read_header() {
+    let data_header: Vec<u8> = vec![2, 0, 0, 0, 0, 0, 24, 0, 1];
+    let (object_id, opcode, msg_size) = parse_header(&data_header);
+    assert_eq!(object_id, 2);
+    assert_eq!(opcode, 0);
+    assert_eq!(msg_size, 24);
 }
 
 #[test]
-fn test_get_next_msg_start_1() {
-    let header: MsgHeader = MsgHeader { object_id: (2), msg_size: (24), opcode: (0) };
-    assert_eq!(get_next_msg_start(0, &header), 24);
-}
-
-
-#[test]
-fn test_read_message_1() {
-    let test_bytes_msgs: Vec<u8> = vec![2, 0, 0, 0, 0, 0, 36, 0, 1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109,
-        112, 111, 115, 105, 116, 111, 114, 0, 0, 0, 6, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 2, 0, 0, 0, 7, 0, 0, 0, 119,
-        108, 95, 100, 114, 109, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 3, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 115,
-        104, 109, 0, 0, 2, 0, 0, 0,];
-    let correct_header: MsgHeader = MsgHeader { object_id: (2), msg_size: (36), opcode: (0) };
-    let correct_msg: Message = Message {
-        header: (correct_header),
-        payload: (vec![1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0, 0,
-            0, 6, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    assert_eq!(read_message(&test_bytes_msgs[0..92].to_vec(), 0), correct_msg);
-}
-
-#[test]
-fn test_read_all_messages_in_buf_1() {
-    let test_bytes_msgs: Vec<u8> = vec![2, 0, 0, 0, 0, 0, 36, 0, 1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109,
-        112, 111, 115, 105, 116, 111, 114, 0, 0, 0, 6, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 2, 0, 0, 0, 7, 0, 0, 0, 119,
-        108, 95, 100, 114, 109, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 3, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 115,
-        104, 109, 0, 0, 2, 0, 0, 0];
-    let correct_header_1: MsgHeader = MsgHeader { object_id: (2), msg_size: (36), opcode: (0) };
-    let correct_msg_1: Message = Message {
-        header: (correct_header_1),
-        payload: (vec![1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0, 0,
-            0, 6, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_2: MsgHeader = MsgHeader { object_id: (2), msg_size: (28), opcode: (0) };
-    let correct_msg_2: Message = Message {
-        header: (correct_header_2),
-        payload: (vec![2, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 100, 114, 109, 0, 0, 2, 0, 0, 0]),
-        start_in_buf: (36)
-    };
-    let correct_header_3: MsgHeader = MsgHeader { object_id: (2), msg_size: (28), opcode: (0) };
-    let correct_msg_3: Message = Message {
-        header: (correct_header_3),
-        payload: (vec![3, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 115, 104, 109, 0, 0, 2, 0, 0, 0]),
-        start_in_buf: (64)
-    };
-    assert_eq!(read_all_messages_in_buf(&test_bytes_msgs, 92), vec![correct_msg_1, correct_msg_2, correct_msg_3]);
-}
-
-
-#[test]
-fn test_try_read_payload_as_str_1() {
-    let correct_header: MsgHeader = MsgHeader { object_id: (2), msg_size: (36), opcode: (0) };
-    let correct_msg: Message = Message {
-        header: (correct_header),
-        payload: (vec![1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0, 0,
-            0, 6, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    assert_eq!(try_read_payload_as_str(&correct_msg.payload), Some("\u{1}\0\0\0\u{e}\0\0\0wl_compositor\0\0\0\u{6}\0\0\0"));
-}
-
-#[test]
-fn test_read_all_messages_in_buf_2() {
-    let test_bytes_msgs: Vec<u8> = vec![1, 0, 0, 0, 1, 0, 12, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 12, 0, 3, 0, 0, 0];
-    let correct_header_1: MsgHeader = MsgHeader { object_id: (1), msg_size: (12), opcode: (1) };
-    let correct_msg_1: Message = Message {
-        header: (correct_header_1),
-        payload: (vec![2, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_2: MsgHeader = MsgHeader { object_id: (1), msg_size: (12), opcode: (0) };
-    let correct_msg_2: Message = Message {
-        header: (correct_header_2),
-        payload: (vec![3, 0, 0, 0]),
-        start_in_buf: (12)
-    };
-    assert_eq!(read_all_messages_in_buf(&test_bytes_msgs, 24), vec![correct_msg_1, correct_msg_2]);
-}
-
-#[test]
-fn test_try_read_payload_as_str_2() {
-    let correct_header_1: MsgHeader = MsgHeader { object_id: (1), msg_size: (12), opcode: (1) };
-    let correct_msg_1: Message = Message {
-        header: (correct_header_1),
-        payload: (vec![2, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    assert_eq!(try_read_payload_as_str(&correct_msg_1.payload), Some("\u{2}\0\0\0"));
-}
-
-
-#[test]
-fn test_search_for_msg_1() {
-    let correct_header_1: MsgHeader = MsgHeader { object_id: (2), msg_size: (36), opcode: (0) };
-    let correct_msg_1: Message = Message {
-        header: (correct_header_1),
-        payload: (vec![1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0, 0,
-            0, 6, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_2: MsgHeader = MsgHeader { object_id: (2), msg_size: (28), opcode: (0) };
-    let correct_msg_2: Message = Message {
-        header: (correct_header_2),
-        payload: (vec![2, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 100, 114, 109, 0, 0, 2, 0, 0, 0]),
-        start_in_buf: (36)
-    };
-    let correct_header_3: MsgHeader = MsgHeader { object_id: (1), msg_size: (12), opcode: (1) };
-    let correct_msg_3: Message = Message {
-        header: (correct_header_3),
-        payload: (vec![2, 0, 0, 0]),
-        start_in_buf: (64)
-    };
-    assert_eq!(search_for_msg(&vec![correct_msg_1.clone(), correct_msg_2.clone(), correct_msg_3.clone()], 2, 0, "compo"), Some(0));
-    assert_eq!(search_for_msg(&vec![correct_msg_1.clone(), correct_msg_2.clone(), correct_msg_3.clone()], 2, 0, ""), Some(0));
-    assert_eq!(search_for_msg(&vec![correct_msg_1.clone(), correct_msg_2.clone(), correct_msg_3.clone()], 0, 0, "Abracadabra"), None);
-    assert_eq!(search_for_msg(&vec![correct_msg_1.clone(), correct_msg_2.clone(), correct_msg_3.clone()], 0, 1, ""), Some(64));
-    assert_eq!(search_for_msg(&vec![correct_msg_1.clone(), correct_msg_2.clone(), correct_msg_3.clone()], 0, 0, "drm"), Some(36));
-    assert_eq!(search_for_msg(&vec![correct_msg_1, correct_msg_2, correct_msg_3], 23, 0, ""), None);
-}
-
-
-#[test]
-fn test_get_last_id_in_msg_1() {
-    let correct_header_1: MsgHeader = MsgHeader { object_id: (2), msg_size: (36), opcode: (0) };
-    let correct_msg_1: Message = Message {
-        header: (correct_header_1),
-        payload: (vec![1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0, 0,
-            0, 6, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_2: MsgHeader = MsgHeader { object_id: (1), msg_size: (12), opcode: (1) };
-    let correct_msg_2: Message = Message {
-        header: (correct_header_2),
-        payload: (vec![2, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_3: MsgHeader = MsgHeader { object_id: (2), msg_size: (28), opcode: (0) };
-    let correct_msg_3: Message = Message {
-        header: (correct_header_3),
-        payload: (vec![3, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 115, 104, 0, 0, 0, 84, 0, 0, 0]),
-        start_in_buf: (64)
-    };
-    assert_eq!(get_last_id_in_msg(&correct_msg_1.clone(), false), 6 as u32);
-    assert_eq!(get_last_id_in_msg(&correct_msg_2.clone(), false), 2 as u32);
-    assert_eq!(get_last_id_in_msg(&correct_msg_3.clone(), false), 84 as u32);
-    assert_eq!(get_last_id_in_msg(&correct_msg_3.clone(), true), 104 as u32);
-}
-
-
-#[test]
-fn test_get_last_id_in_msg_via_buffer_1() {
-    let test_bytes_msgs: Vec<u8> = vec![2, 0, 0, 0, 0, 0, 36, 0, 1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109,
-        112, 111, 115, 105, 116, 111, 114, 0, 0, 0, 6, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 2, 0, 0, 0, 7, 0, 0, 0, 119,
-        108, 95, 100, 114, 109, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 3, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 115,
-        104, 0, 0, 0, 84, 0, 0, 0];
-    assert_eq!(get_last_id_in_msg_via_buffer(&test_bytes_msgs, 36, false), 2);
-    assert_eq!(get_last_id_in_msg_via_buffer(&test_bytes_msgs, 0, false), 6);
-    assert_eq!(get_last_id_in_msg_via_buffer(&test_bytes_msgs, 64, false), 84);
-    assert_eq!(get_last_id_in_msg_via_buffer(&test_bytes_msgs, 64, true), 104);
-}
-
-
-#[test]
-fn test_extract_msgs_by_id_if_1() {
-    let correct_header_1: MsgHeader = MsgHeader { object_id: (2), msg_size: (36), opcode: (0) };
-    let correct_msg_1: Message = Message {
-        header: (correct_header_1),
-        payload: (vec![1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0, 0,
-            0, 6, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_2: MsgHeader = MsgHeader { object_id: (1), msg_size: (12), opcode: (1) };
-    let correct_msg_2: Message = Message {
-        header: (correct_header_2),
-        payload: (vec![2, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_3: MsgHeader = MsgHeader { object_id: (2), msg_size: (28), opcode: (0) };
-    let correct_msg_3: Message = Message {
-        header: (correct_header_3),
-        payload: (vec![3, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 115, 104, 0, 0, 0, 84, 0, 0, 0]),
-        start_in_buf: (64)
-    };
-    let msgs_vec: Vec<Message> = vec![correct_msg_1.clone(), correct_msg_2.clone(), correct_msg_3.clone()];
-    let id_if_2: Vec<(&str, u32)> = vec![("two", 2)].into_iter().collect();
-    let id_if_1: Vec<(&str, u32)> = vec![("one", 1)].into_iter().collect();
-    let id_if_0: Vec<(&str, u32)> = vec![].into_iter().collect();
-    let id_if_12: Vec<(&str, u32)> = vec![("two", 2), ("one", 1)].into_iter().collect();
-    assert_eq!(extract_msgs_by_id_if(&msgs_vec, &id_if_2), vec![correct_msg_1.clone(), correct_msg_3.clone()]);
-    assert_eq!(extract_msgs_by_id_if(&msgs_vec, &id_if_1), vec![correct_msg_2.clone()]);
-    assert_eq!(extract_msgs_by_id_if(&msgs_vec, &id_if_0), vec![]);
-    assert_eq!(extract_msgs_by_id_if(&msgs_vec, &id_if_12), vec![correct_msg_1.clone(), correct_msg_2, correct_msg_3.clone()]);
-}
-
-
-#[test]
-fn test_search_and_try_get_id_1() {
-    let test_bytes_msgs: Vec<u8> = vec![2, 0, 0, 0, 0, 0, 36, 0, 1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109,
-        112, 111, 115, 105, 116, 111, 114, 0, 0, 0, 6, 0, 0, 0, 1, 0, 0, 0, 0, 0, 28, 0, 2, 0, 0, 0, 7, 0, 0, 0, 119,
-        108, 95, 100, 114, 109, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 0, 0, 28, 0, 3, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 115,
-        104, 0, 0, 0, 2, 0, 0, 0];
-    let correct_header_1: MsgHeader = MsgHeader { object_id: (2), msg_size: (36), opcode: (0) };
-    let correct_msg_1: Message = Message {
-        header: (correct_header_1),
-        payload: (vec![1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0, 0,
-            0, 6, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_2: MsgHeader = MsgHeader { object_id: (1), msg_size: (28), opcode: (0) };
-    let correct_msg_2: Message = Message {
-        header: (correct_header_2),
-        payload: (vec![2, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 100, 114, 109, 0, 0, 2, 0, 0, 0]),
-        start_in_buf: (36)
-    };
-    let correct_header_3: MsgHeader = MsgHeader { object_id: (4), msg_size: (28), opcode: (0) };
-    let correct_msg_3: Message = Message {
-        header: (correct_header_3),
-        payload: (vec![3, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 115, 104, 0, 0, 0, 2, 0, 0, 0]),
-        start_in_buf: (64)
-    };
-    let msgs_vec = vec![correct_msg_1, correct_msg_2, correct_msg_3];
-    let empty_vec: Vec<Message> = vec![];
-    assert_eq!(search_and_try_get_id(&test_bytes_msgs, &msgs_vec, 4, 0, "sh", false), Some(2));
-    assert_eq!(search_and_try_get_id(&test_bytes_msgs, &msgs_vec, 0, 0, "sh", false), Some(2));
-    assert_eq!(search_and_try_get_id(&test_bytes_msgs, &msgs_vec, 4, 0, "sherpa", false), None);
-    assert_eq!(search_and_try_get_id(&test_bytes_msgs, &msgs_vec, 3, 0, "", false), None);
-    assert_eq!(search_and_try_get_id(&test_bytes_msgs, &msgs_vec, 0, 0, "sh", true), Some(104));
-    assert_eq!(search_and_try_get_id(&test_bytes_msgs, &msgs_vec, 0, 0, "", false), Some(6));
-    assert_eq!(search_and_try_get_id(&test_bytes_msgs, &msgs_vec, 0, 1, "", false), None);
-    assert_eq!(search_and_try_get_id(&test_bytes_msgs, &empty_vec, 0, 0, "", false), None);
-}
-
-
-
-#[test]
-fn test_delete_id_1() {
-    let id_if_2: Vec<(&str, u32)> = vec![("two", 2)].into_iter().collect();
-    let mut id_if_0: Vec<(&str, u32)> = vec![].into_iter().collect();
-    let mut id_if_12: Vec<(&str, u32)> = vec![("two", 2), ("one", 1)].into_iter().collect();
-    // Tests on id_if_12
-    delete_id(&mut id_if_12, 1);
-    assert_eq!(id_if_12, id_if_2);
-    delete_id(&mut id_if_12, 1);
-    assert_eq!(id_if_12, id_if_2);
-    delete_id(&mut id_if_12, 2);
-    assert_eq!(id_if_12, id_if_0);
-
-    // Tests on id_if_0
-    delete_id(&mut id_if_0, 4);
-    assert_eq!(id_if_0, id_if_0);
-}
-
-
-#[test]
-fn test_get_oid_via_name_1() {
-    let id_if_0: Vec<(&str, u32)> = vec![].into_iter().collect();
-    let id_if_12: Vec<(&str, u32)> = vec![("two", 2), ("one", 1)].into_iter().collect();
-    assert_eq!(get_oid_via_name(&id_if_12, "one"), 1);
-    assert_eq!(get_oid_via_name(&id_if_12, "two"), 2);
-    assert_eq!(get_oid_via_name(&id_if_12, "four"), 0);
-    assert_eq!(get_oid_via_name(&id_if_0, "four"), 0);
-}
-
-#[test]
-fn test_get_msgs_to_block_1() {
-    let correct_header_1: MsgHeader = MsgHeader { object_id: (2), msg_size: (36), opcode: (0) };
-    let correct_msg_1: Message = Message {
-        header: (correct_header_1),
-        payload: (vec![1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0, 0,
-            0, 6, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_2: MsgHeader = MsgHeader { object_id: (1), msg_size: (12), opcode: (1) };
-    let correct_msg_2: Message = Message {
-        header: (correct_header_2),
-        payload: (vec![2, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_3: MsgHeader = MsgHeader { object_id: (2), msg_size: (28), opcode: (2) };
-    let correct_msg_3: Message = Message {
-        header: (correct_header_3),
-        payload: (vec![3, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 115, 104, 0, 0, 0, 84, 0, 0, 0]),
-        start_in_buf: (64)
-    };
-    let msgs_vec: Vec<Message> = vec![correct_msg_1.clone(), correct_msg_2.clone(), correct_msg_3.clone()];
-    let id_if_12: Vec<(&str, u32)> = vec![("two", 2), ("one", 1)].into_iter().collect();
-    let elt_to_block_22: Vec<(&str, u16)> = vec![("two", 2)];
-    let elt_to_block_11: Vec<(&str, u16)> = vec![("one", 1)];
-    let elt_to_block_20: Vec<(&str, u16)> = vec![("two", 0)];
-    let elt_to_block_40: Vec<(&str, u16)> = vec![("four", 0)];
-    let elt_to_block_20_22_11: Vec<(&str, u16)> = vec![("two", 0), ("two", 2), ("one", 1)];
-    assert_eq!(get_msgs_to_block(&msgs_vec, &id_if_12, &elt_to_block_22), vec![correct_msg_3.clone()]);
-    assert_eq!(get_msgs_to_block(&msgs_vec, &id_if_12, &elt_to_block_11), vec![correct_msg_2.clone()]);
-    assert_eq!(get_msgs_to_block(&msgs_vec, &id_if_12, &elt_to_block_20), vec![correct_msg_1.clone()]);
-    assert_eq!(get_msgs_to_block(&msgs_vec, &id_if_12, &elt_to_block_20_22_11), msgs_vec);
-    assert_eq!(get_msgs_to_block(&msgs_vec, &id_if_12, &elt_to_block_40), vec![]);
-}
-
-
-
-#[test]
-fn test_check_for_deleted_obj_1() {
-    let correct_header_1: MsgHeader = MsgHeader { object_id: (2), msg_size: (36), opcode: (0) };
-    let correct_msg_1: Message = Message {
-        header: (correct_header_1),
-        payload: (vec![1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0, 0,
-            0, 6, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_2: MsgHeader = MsgHeader { object_id: (1), msg_size: (12), opcode: (DS_R_DESTROY) };
-    let correct_msg_2: Message = Message {
-        header: (correct_header_2),
-        payload: (vec![2, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_3: MsgHeader = MsgHeader { object_id: (2), msg_size: (28), opcode: (DO_R_DESTROY) };
-    let correct_msg_3: Message = Message {
-        header: (correct_header_3),
-        payload: (vec![3, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 115, 104, 0, 0, 0, 84, 0, 0, 0]),
-        start_in_buf: (64)
-    };
-    let msgs_vec: Vec<Message> = vec![correct_msg_1.clone(), correct_msg_2.clone(), correct_msg_3.clone()];
-    let mut id_if_2: Vec<(&str, u32)> = vec![("wl_data_source", 1)].into_iter().collect();
-    let mut id_if_1: Vec<(&str, u32)> = vec![("wl_data_offer", 2)].into_iter().collect();
-    let mut id_if_0: Vec<(&str, u32)> = vec![].into_iter().collect();
-    let mut id_if_12: Vec<(&str, u32)> = vec![("wl_data_offer", 2), ("wl_data_source", 1)].into_iter().collect();
-    check_for_deleted_obj(&msgs_vec, &mut id_if_1);
-    assert_eq!(id_if_1, id_if_0);
-    check_for_deleted_obj(&msgs_vec, &mut id_if_2);
-    assert_eq!(id_if_2, id_if_0);
-    check_for_deleted_obj(&msgs_vec, &mut id_if_12);
-    assert_eq!(id_if_12, id_if_0);
-    check_for_deleted_obj(&msgs_vec, &mut id_if_0);
-    assert_eq!(id_if_0, vec![]);
-}
-
-
-#[test]
-fn test_get_reverse_indexes_to_delete_1() {
-    let correct_header_2: MsgHeader = MsgHeader { object_id: (1), msg_size: (12), opcode: (1) };
-    let correct_msg_2: Message = Message {
-        header: (correct_header_2),
-        payload: (vec![2, 0, 0, 0]),
-        start_in_buf: (0)
-    };
-    let correct_header_3: MsgHeader = MsgHeader { object_id: (2), msg_size: (28), opcode: (2) };
-    let correct_msg_3: Message = Message {
-        header: (correct_header_3),
-        payload: (vec![3, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 115, 104, 0, 0, 0, 84, 0, 0, 0]),
-        start_in_buf: (64)
-    };
-    let v1:Vec<Message>=vec![];
-    let v2:Vec<usize>=vec![];
-    assert_eq!(get_reverse_indexes_to_delete(&v1), v2);
+fn test_read_message() {
+    let test_data: Vec<u8> = vec![
+        2, 0, 0, 0, 34, 0, 36, 0, 1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111,
+        115, 105, 116, 111, 114, 0, 0, 0, 6, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 2, 0, 0, 0, 7, 0, 0,
+        0, 119, 108, 95, 100, 114, 109, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 3, 0, 0, 0, 7,
+        0, 0, 0, 119, 108, 95, 115, 104, 109, 0, 0, 2, 0, 0, 0,
+    ];
+    let msg = MessageMeta::from_data(&test_data, 0).unwrap();
+    assert_eq!(msg.object_id, 2);
+    assert_eq!(msg.opcode, 34);
+    assert_eq!(msg.size, 36);
     assert_eq!(
-        get_reverse_indexes_to_delete(&vec![correct_msg_3]),
-        vec![91, 90, 89, 88, 87, 86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75, 74, 73, 72, 71, 70, 69, 68, 67, 66, 65, 64]
-    );
-    assert_eq!(
-        get_reverse_indexes_to_delete(&vec![correct_msg_2]),
-        vec![11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+        msg.payload(&test_data),
+        &[
+            1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114,
+            0, 0, 0, 6, 0, 0, 0
+        ]
     );
 }
 
-
 #[test]
-fn test_delete_indexes_from_buf_1 (){
-    let mut test_bytes: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-    assert_eq!(delete_indexes_from_buf(&mut test_bytes, &vec![]), 0);
-    assert_eq!(test_bytes, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-    assert_eq!(delete_indexes_from_buf(&mut test_bytes, &vec![3, 2, 1, 0]), 4);
-    assert_eq!(test_bytes, vec![4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-    assert_eq!(delete_indexes_from_buf(&mut test_bytes, &vec![22, 21]), 0);
-}
-
-#[test]
-fn test_object_found_in_id_if_1 (){
-    let id_if_125: Vec<(&str, u32)> = vec![("two", 2), ("one", 1), ("five", 1)].into_iter().collect();
-    assert_eq!(object_found_in_id_if(&id_if_125, "one"),  true);
-    assert_eq!(object_found_in_id_if(&id_if_125, "on"),  false);
-    assert_eq!(object_found_in_id_if(&id_if_125, "six"),  false);
-    assert_eq!(object_found_in_id_if(&vec![], "one"),  false);
-    assert_eq!(object_found_in_id_if(&id_if_125, ""),  false);
-}
-
-#[test]
-fn test_create_zone_msg_1 (){
-    let bytes_1:Vec<u8> = vec![22, 0, 0, 0, 0, 0, 32, 0, 20, 0, 0, 0, 112, 97, 100, 115, 105, 47, 122, 111, 110, 101, 59, 122, 61, 116, 101, 115, 116, 0, 0, 0];
-    let bytes_2 = vec![231, 3, 0, 0, 0, 0, 32, 0, 20, 0, 0, 0, 112, 97, 100, 115, 105, 47, 122, 111, 110, 101, 59, 122, 61, 116, 101, 115, 116, 0, 0, 0];
-    let bytes_3 = vec![22, 0, 0, 0, 0, 0, 28, 0, 16, 0, 0, 0, 112, 97, 100, 115, 105, 47, 122, 111, 110, 101, 59, 122, 61, 0, 0, 0];
-    assert_eq!(create_zone_msg(22, String::from("test")), (bytes_1.clone(), bytes_1.len() as u16));
-    assert_eq!(create_zone_msg(999, String::from("test")), (bytes_2.clone(), bytes_2.len() as u16));
-    assert_eq!(create_zone_msg(22, String::from("")), (bytes_3.clone(), bytes_3.len() as u16));
-}
-
-
-#[test]
-fn test_try_get_custom_zone_in_msgs_1 (){
-    let bytes_1 = vec![22, 0, 0, 0, 0, 0, 28, 0, 16, 0, 0, 0, 122, 45, 67, 97, 115, 115, 101, 114, 111, 108, 101, 0, 0, 0, 0, 0];
-    let header_1: MsgHeader = MsgHeader { object_id: (22), msg_size: (28), opcode: (0) };
-    let msg_1: Message = Message {
-        header: (header_1),
-        payload: (vec![16, 0, 0, 0, 122, 45, 67, 97, 115, 115, 101, 114, 111, 108, 101, 0, 0, 0, 0, 0]),
-        start_in_buf: (0)
+fn test_read_all_messages() {
+    let mut test_data: Vec<u8> = vec![
+        2, 0, 0, 0, 0, 0, 36, 0, 1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111,
+        115, 105, 116, 111, 114, 0, 0, 0, 6, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 2, 0, 0, 0, 7, 0, 0,
+        0, 119, 108, 95, 100, 114, 109, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 3, 0, 0, 0, 7,
+        0, 0, 0, 119, 108, 95, 115, 104, 109, 0, 0, 2, 0, 0, 0,
+    ];
+    let msg1 = MessageMeta {
+        index: 0,
+        size: 36,
+        object_id: 2,
+        opcode: 0,
     };
-    let bytes_2 = vec![16, 0, 0, 0, 0, 0, 28, 0, 16, 0, 0, 0, 122, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let header_2: MsgHeader = MsgHeader { object_id: (16), msg_size: (28), opcode: (0) };
-    let msg_2: Message = Message {
-        header: (header_2),
-        payload: (vec![16, 0, 0, 0, 0, 0, 28, 0, 16, 0, 0, 0, 122, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-        start_in_buf: (0)
+    let msg2 = MessageMeta {
+        index: msg1.size,
+        size: 28,
+        object_id: 2,
+        opcode: 0,
     };
-    assert_eq!(try_get_custom_zone_in_msgs(&vec![msg_1], &bytes_1, 22), Some(String::from("Casserole")));
-    assert_eq!(try_get_custom_zone_in_msgs(&vec![], &bytes_1, 1), None);
-    assert_eq!(try_get_custom_zone_in_msgs(&vec![msg_2], &bytes_2, 16), None);
+    let msg3 = MessageMeta {
+        index: msg1.size + msg2.size,
+        size: 28,
+        object_id: 2,
+        opcode: 0,
+    };
+
+    let pbuffer = ProxyBuffer::from_data(&mut test_data, 92);
+    assert_eq!(pbuffer.messages(), vec![msg1, msg2, msg3]);
 }
 
+#[test]
+fn test_bytes_to_str() {
+    let data = vec![
+        1, 0, 0, 0, 0, 0, 14, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0,
+        0, 0, 0, 0, 0, 6,
+    ];
+    assert_eq!(
+        bytes_to_str(&data),
+        Some("\u{1}\0\0\0\0\0\u{e}\0wl_compositor\0\0\0\0\0\0\u{6}")
+    );
+}
 
 #[test]
-fn test_insert_zone_msg_in_buf_1 (){
-    let test_buf = vec![];
-    let bytes_4 = vec![22, 0, 0, 0, 0, 0, 28, 0, 16, 0, 0, 0, 122, 45, 67, 97, 115, 115, 101, 114, 111, 108, 101, 0, 0, 0, 0, 0];
-    let bytes_3 = vec![22, 0, 0, 0, 0, 0, 28, 0, 16, 0, 0, 0, 122, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+fn test_read_all_messages_2() {
+    let mut test_data: Vec<u8> = vec![
+        1, 0, 0, 0, 1, 0, 12, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 12, 0, 3, 0, 0, 0,
+    ];
+    let msg1 = MessageMeta {
+        index: 0,
+        size: 12,
+        object_id: 1,
+        opcode: 1,
+    };
+    let msg2 = MessageMeta {
+        index: msg1.size,
+        size: 12,
+        object_id: 1,
+        opcode: 0,
+    };
 
-    assert_eq!(insert_zone_msg_in_buf(test_buf.clone(), 0, 22, String::from("Casserole")), (bytes_4.clone(), 28));
-    assert_eq!(insert_zone_msg_in_buf(test_buf.clone(), 0, 22, String::from("")), (bytes_3.clone(), 28));
+    let pbuffer = ProxyBuffer::from_data(&mut test_data, 24);
+    assert_eq!(pbuffer.messages(), vec![msg1, msg2]);
+}
+
+#[test]
+fn test_bytes_to_str_2() {
+    let data = vec![2, 0, 0, 0];
+    assert_eq!(bytes_to_str(&data), Some("\u{2}\0\0\0"));
+}
+
+#[test]
+fn test_search_for_msg() {
+    let data = vec![
+        2, 0, 0, 0, 0, 0, 28, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0,
+        0, 0, 6, 0, 0, 0, 20, 0, 0, 0, 2, 0, 28, 0, 2, 0, 0, 0, 7, 0, 0, 0, 119, 108, 95, 100, 114,
+        109, 0, 0, 2, 0, 0, 0, 22, 0, 0, 0, 8, 0, 4, 0,
+    ];
+    let msg1 = MessageMeta {
+        index: 0,
+        size: 28,
+        object_id: 2,
+        opcode: 0,
+    };
+    let msg2 = MessageMeta {
+        index: msg1.size,
+        size: 28,
+        object_id: 20,
+        opcode: 2,
+    };
+    let msg3 = MessageMeta {
+        index: msg1.size + msg2.size,
+        size: 8,
+        object_id: 22,
+        opcode: 4,
+    };
+    assert_eq!(
+        search_in_messages_in_vec(
+            &data,
+            &vec![msg1.clone(), msg2.clone(), msg3.clone()],
+            Some(2),
+            0,
+            Some("compo")
+        ),
+        Some(msg1.clone())
+    );
+    assert_eq!(
+        search_in_messages_in_vec(
+            &data,
+            &vec![msg1.clone(), msg2.clone(), msg3.clone()],
+            Some(2),
+            0,
+            None
+        ),
+        Some(msg1.clone())
+    );
+    assert_eq!(
+        search_in_messages_in_vec(
+            &data,
+            &vec![msg1.clone(), msg2.clone(), msg3.clone()],
+            None,
+            0,
+            Some("Abracadabra")
+        ),
+        None
+    );
+    assert_eq!(
+        search_in_messages_in_vec(
+            &data,
+            &vec![msg1.clone(), msg2.clone(), msg3.clone()],
+            None,
+            4,
+            None
+        ),
+        Some(msg3.clone())
+    );
+    assert_eq!(
+        search_in_messages_in_vec(
+            &data,
+            &vec![msg1.clone(), msg2.clone(), msg3.clone()],
+            None,
+            2,
+            Some("drm")
+        ),
+        Some(msg2.clone())
+    );
+    assert_eq!(
+        search_in_messages_in_vec(&data, &vec![msg1, msg2, msg3], Some(23), 0, None),
+        None
+    );
+}
+
+#[test]
+fn test_get_global_event_oid() {
+    let data = vec![
+        1, 0, 0, 0, 0, 0, 16, 0, 42, 0, 0, 0, 40, 0, 0, 0, 2, 0, 0, 0, 0, 0, 48, 0, 7, 0, 0, 0, 23,
+        0, 0, 0, 119, 108, 95, 100, 97, 116, 97, 95, 100, 101, 118, 105, 99, 101, 95, 109, 97, 110,
+        97, 103, 101, 114, 0, 0, 3, 0, 0, 0, 11, 0, 0, 0,
+    ];
+    let msg1 = MessageMeta {
+        index: 0,
+        size: 16,
+        object_id: 1,
+        opcode: 0,
+    };
+    let msg2 = MessageMeta {
+        index: msg1.size,
+        size: 48,
+        object_id: 2,
+        opcode: 0,
+    };
+
+    assert_eq!(
+        msg1.extract_referenced_object_id(&data, WORD_SIZE),
+        Some(42)
+    );
+    assert_eq!(msg2.extract_referenced_object_id(&data, 0), Some(11));
+    assert_eq!(msg2.extract_referenced_object_id(&data, WORD_SIZE), Some(3));
+}
+
+#[test]
+fn test_get_global_event_oid_2() {
+    let data: Vec<u8> = vec![
+        2, 0, 0, 0, 0, 0, 36, 0, 1, 0, 0, 0, 14, 0, 0, 0, 119, 108, 95, 99, 111, 109, 112, 111,
+        115, 105, 116, 111, 114, 0, 0, 0, 6, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 2, 0, 0, 0, 7, 0, 0,
+        0, 119, 108, 95, 100, 114, 109, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 0, 28, 0, 3, 0, 0, 0, 7,
+        0, 0, 0, 119, 108, 95, 115, 104, 0, 0, 0, 84, 0, 0, 0,
+    ];
+    let msg = MessageMeta::from_data(&data, 36).unwrap();
+    assert_eq!(msg.extract_referenced_object_id(&data, 0), Some(2));
+
+    let msg = MessageMeta::from_data(&data, 0).unwrap();
+    assert_eq!(msg.extract_referenced_object_id(&data, 0), Some(6));
+
+    let msg = MessageMeta::from_data(&data, 64).unwrap();
+    assert_eq!(msg.extract_referenced_object_id(&data, 0), Some(84));
+    assert_eq!(
+        msg.extract_referenced_object_id(&data, WORD_SIZE),
+        Some(104)
+    );
+}
+
+#[test]
+fn test_matching_messages() {
+    let msg1 = MessageMeta {
+        index: 0,
+        size: 36,
+        object_id: 2,
+        opcode: 0,
+    };
+    let msg2 = MessageMeta {
+        index: msg1.size,
+        size: 12,
+        object_id: 1,
+        opcode: 1,
+    };
+    let msg3 = MessageMeta {
+        index: msg1.size + msg2.size,
+        size: 28,
+        object_id: 1,
+        opcode: 0,
+    };
+
+    let msgs_vec: Vec<MessageMeta> = vec![msg1.clone(), msg2.clone(), msg3.clone()];
+
+    let pstate0 = ProxyState::new(false);
+
+    let mut pstate1 = ProxyState::new(false);
+    pstate1.object_created(WlInterface::wl_data_device_manager, 1);
+
+    let mut pstate2 = ProxyState::new(false);
+    pstate2.object_created(WlInterface::wl_data_device, 2);
+
+    let mut pstate12 = ProxyState::new(false);
+    pstate12.object_created(WlInterface::wl_data_device_manager, 1);
+    pstate12.object_created(WlInterface::wl_data_device, 2);
+
+    assert_eq!(pstate0.get_matching_messages(&msgs_vec), vec![]);
+    assert_eq!(pstate2.get_matching_messages(&msgs_vec), vec![msg1.clone()]);
+    assert_eq!(
+        pstate1.get_matching_messages(&msgs_vec),
+        vec![msg2.clone(), msg3.clone()]
+    );
+    assert_eq!(
+        pstate12.get_matching_messages(&msgs_vec),
+        vec![msg1.clone(), msg2, msg3.clone()]
+    );
+}
+
+#[test]
+fn test_search_message() {
+    let data = vec![
+        1, 0, 0, 0, 0, 0, 28, 0, 119, 108, 95, 99, 111, 109, 112, 111, 115, 105, 116, 111, 114, 0,
+        0, 0, 6, 0, 0, 0, 2, 0, 0, 0, 0, 0, 20, 0, 119, 108, 95, 100, 114, 109, 0, 0, 2, 0, 0, 0,
+        4, 0, 0, 0, 0, 0, 20, 0, 119, 108, 95, 115, 104, 0, 0, 0, 2, 0, 0, 0,
+    ];
+
+    let msg1 = MessageMeta {
+        index: 0,
+        size: 28,
+        object_id: 1,
+        opcode: 0,
+    };
+    let msg2 = MessageMeta {
+        index: msg1.size,
+        size: 20,
+        object_id: 2,
+        opcode: 0,
+    };
+    let msg3 = MessageMeta {
+        index: msg1.size + msg2.size,
+        size: 20,
+        object_id: 4,
+        opcode: 0,
+    };
+
+    let msgs_vec = vec![msg1, msg2, msg3];
+    let empty_vec: Vec<MessageMeta> = vec![];
+    let msg = search_in_messages_in_vec(&data, &msgs_vec, Some(4), 0, Some("sh")).unwrap();
+    assert_eq!(msg.extract_referenced_object_id(&data, 0), Some(2));
+
+    let msg = search_in_messages_in_vec(&data, &msgs_vec, None, 0, Some("sh")).unwrap();
+    assert_eq!(msg.extract_referenced_object_id(&data, 0), Some(2));
+
+    assert_eq!(
+        search_in_messages_in_vec(&data, &msgs_vec, Some(4), 0, Some("sherpa")).is_none(),
+        true
+    );
+
+    assert_eq!(
+        search_in_messages_in_vec(&data, &msgs_vec, Some(3), 0, None).is_none(),
+        true
+    );
+
+    let msg = search_in_messages_in_vec(&data, &msgs_vec, None, 0, Some("sh")).unwrap();
+    assert_eq!(
+        msg.extract_referenced_object_id(&data, WORD_SIZE),
+        Some(104)
+    );
+
+    let msg = search_in_messages_in_vec(&data, &msgs_vec, None, 0, None).unwrap();
+    assert_eq!(msg.extract_referenced_object_id(&data, 0), Some(6));
+
+    assert_eq!(
+        search_in_messages_in_vec(&data, &msgs_vec, None, 1, None).is_none(),
+        true
+    );
+    assert_eq!(
+        search_in_messages_in_vec(&data, &empty_vec, None, 1, None).is_none(),
+        true
+    );
+}
+
+#[test]
+fn test_get_oid() {
+    let pstate0 = ProxyState::new(false);
+    let mut pstate12 = ProxyState::new(false);
+    pstate12.object_created(WlInterface::wl_data_device, 1);
+    pstate12.object_created(WlInterface::wl_data_device_manager, 2);
+
+    assert_eq!(
+        pstate12.get_object_id(&WlInterface::wl_data_device),
+        Some(&1)
+    );
+    assert_eq!(
+        pstate12.get_object_id(&WlInterface::wl_data_device_manager),
+        Some(&2)
+    );
+    assert_eq!(pstate12.get_object_id(&WlInterface::wl_data_offer), None);
+    assert_eq!(pstate0.get_object_id(&WlInterface::wl_data_source), None);
+}
+
+#[test]
+fn test_get_msgs_to_block() {
+    let msg1 = MessageMeta {
+        index: 0,
+        size: 36,
+        object_id: 2,
+        opcode: 0,
+    };
+    let msg2 = MessageMeta {
+        index: msg1.size,
+        size: 12,
+        object_id: 1,
+        opcode: 1,
+    };
+    let msg3 = MessageMeta {
+        index: msg1.size + msg2.size,
+        size: 28,
+        object_id: 2,
+        opcode: 2,
+    };
+
+    let msgs_vec: Vec<MessageMeta> = vec![msg1.clone(), msg2.clone(), msg3.clone()];
+
+    let mut pstate = ProxyState::new(true);
+    pstate.object_created(WlInterface::wl_data_device, 2);
+    pstate.object_created(WlInterface::wl_data_device_manager, 1);
+
+    let mut ps22 = pstate.clone();
+    ps22.block_element(false, WlInterface::wl_data_device, 2);
+
+    let mut ps11 = pstate.clone();
+    ps11.block_element(false, WlInterface::wl_data_device_manager, 1);
+
+    let mut ps20 = pstate.clone();
+    ps20.block_element(false, WlInterface::wl_data_device, 0);
+
+    let mut ps40 = pstate.clone();
+    ps40.block_element(false, WlInterface::wl_data_offer, 0);
+
+    let mut ps20_22_11 = pstate.clone();
+    ps20_22_11.block_element(false, WlInterface::wl_data_device, 0);
+    ps20_22_11.block_element(false, WlInterface::wl_data_device, 2);
+    ps20_22_11.block_element(false, WlInterface::wl_data_device_manager, 1);
+
+    assert_eq!(
+        ps22.get_messages_to_block(true, false, &msgs_vec),
+        vec![msg3.clone()]
+    );
+    assert_eq!(
+        ps11.get_messages_to_block(true, false, &msgs_vec),
+        vec![msg2.clone()]
+    );
+    assert_eq!(
+        ps20.get_messages_to_block(true, false, &msgs_vec),
+        vec![msg1.clone()]
+    );
+    assert_eq!(
+        ps20_22_11.get_messages_to_block(true, false, &msgs_vec),
+        msgs_vec
+    );
+    assert_eq!(ps40.get_messages_to_block(true, false, &msgs_vec), vec![]);
+}
+
+#[test]
+fn test_check_for_deleted_obj() {
+    let msg1 = MessageMeta {
+        index: 0,
+        size: 36,
+        object_id: 2,
+        opcode: 0,
+    };
+    let msg2 = MessageMeta {
+        index: msg1.size,
+        size: 12,
+        object_id: 1,
+        opcode: constants::DS_R_DESTROY,
+    };
+    let msg3 = MessageMeta {
+        index: msg1.size + msg2.size,
+        size: 28,
+        object_id: 2,
+        opcode: constants::DO_R_DESTROY,
+    };
+
+    let mut pstate0 = ProxyState::new(true);
+
+    let mut pstate1 = ProxyState::new(true);
+    pstate1.object_created(WlInterface::wl_data_offer, 2);
+
+    let mut pstate2 = ProxyState::new(true);
+    pstate2.object_created(WlInterface::wl_data_source, 1);
+
+    let mut pstate12 = ProxyState::new(true);
+    pstate12.object_created(WlInterface::wl_data_offer, 2);
+    pstate12.object_created(WlInterface::wl_data_source, 1);
+
+    let msgs_vec: Vec<MessageMeta> = vec![msg1.clone(), msg2.clone(), msg3.clone()];
+
+    pstate1.handle_destroy_messages(&msgs_vec);
+    assert_eq!(pstate1, pstate0);
+    pstate2.handle_destroy_messages(&msgs_vec);
+    assert_eq!(pstate2, pstate0);
+    pstate12.handle_destroy_messages(&msgs_vec);
+    assert_eq!(pstate12, pstate0);
+    pstate0.handle_destroy_messages(&msgs_vec);
+}
+
+#[test]
+fn test_object_found() {
+    let pstate0 = ProxyState::new(true);
+    let mut pstate = ProxyState::new(true);
+    pstate.object_created(WlInterface::wl_data_device, 2);
+    pstate.object_created(WlInterface::wl_data_device_manager, 1);
+    pstate.object_created(WlInterface::wl_data_source, 5);
+
+    assert_eq!(
+        pstate.has_interface(&WlInterface::wl_data_device_manager),
+        true
+    );
+    assert_eq!(pstate.has_interface(&WlInterface::wl_data_offer), false);
+    assert_eq!(
+        pstate.has_interface(&WlInterface::zwp_primary_selection_offer),
+        false
+    );
+    assert_eq!(
+        pstate0.has_interface(&WlInterface::wl_data_device_manager),
+        false
+    );
+}
+
+#[test]
+fn test_create_zone_msg() {
+    let bytes_1: Vec<u8> = vec![
+        22, 0, 0, 0, 0, 0, 32, 0, 18, 0, 0, 0, 112, 97, 100, 115, 105, 47, 122, 111, 110, 101, 59,
+        122, 61, 116, 101, 115, 116, 0, 0, 0,
+    ];
+    let bytes_2 = vec![
+        231, 3, 0, 0, 0, 0, 32, 0, 18, 0, 0, 0, 112, 97, 100, 115, 105, 47, 122, 111, 110, 101, 59,
+        122, 61, 116, 101, 115, 116, 0, 0, 0,
+    ];
+    let bytes_3 = vec![
+        22, 0, 0, 0, 0, 0, 28, 0, 14, 0, 0, 0, 112, 97, 100, 115, 105, 47, 122, 111, 110, 101, 59,
+        122, 61, 0, 0, 0,
+    ];
+    assert_eq!(create_zone_raw_message(22, "test"), bytes_1.clone());
+    assert_eq!(create_zone_raw_message(999, "test"), bytes_2.clone());
+    assert_eq!(create_zone_raw_message(22, ""), bytes_3.clone());
+}
+
+#[test]
+fn test_zone_tag() {
+    let data = vec![
+        24, 0, 0, 0, 0, 0, 36, 0, 22, 0, 0, 0, 112, 97, 100, 115, 105, 47, 122, 111, 110, 101, 59,
+        122, 61, 85, 78, 83, 69, 67, 85, 82, 69, 0, 0, 0, 16, 0, 0, 0, 0, 0, 28, 0, 16, 0, 0, 0,
+        122, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let msg1 = MessageMeta {
+        index: 0,
+        size: 36,
+        object_id: 24,
+        opcode: 0,
+    };
+    let msg2 = MessageMeta {
+        index: msg1.size,
+        size: 28,
+        object_id: 16,
+        opcode: 0,
+    };
+
+    assert_eq!(
+        get_zone_tag(&msg1.payload(&data)),
+        Some(String::from("UNSECURE"))
+    );
+    assert_eq!(get_zone_tag(&msg2.payload(&data)), None);
 }
