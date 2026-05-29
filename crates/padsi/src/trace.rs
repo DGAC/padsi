@@ -39,6 +39,7 @@ pub struct TraceConfig<'a> {
     file_prefix: &'a str,
     program_id: &'a str,
     with_stdout_output: bool,
+    stdout_level: tracing_subscriber::filter::LevelFilter,
     file_level: tracing_subscriber::filter::LevelFilter,
     syslog_level: tracing_subscriber::filter::LevelFilter
 }
@@ -46,6 +47,7 @@ pub struct TraceConfig<'a> {
 impl <'a> TraceConfig<'a> {
     pub fn new(directory: &'a str, file_prefix:&'a str) -> Self {
         Self { directory, file_prefix, program_id:file_prefix, with_stdout_output: true,
+            stdout_level: tracing_subscriber::filter::LevelFilter::INFO,
             file_level: tracing_subscriber::filter::LevelFilter::INFO,
             syslog_level: tracing_subscriber::filter::LevelFilter::INFO
         }
@@ -58,6 +60,10 @@ impl <'a> TraceConfig<'a> {
 
     pub fn with_stdout_output(self, with_stdout_output:bool) -> Self {
         Self{with_stdout_output, ..self}
+    }
+
+    pub fn with_stdout_level(self, stdout_level: tracing_subscriber::filter::LevelFilter) -> Self {
+        Self{stdout_level, ..self}
     }
 
     pub fn with_file_level(self, file_level: tracing_subscriber::filter::LevelFilter) -> Self {
@@ -118,7 +124,8 @@ pub fn tracing_setup_json(config: &TraceConfig) -> Result<TraceGuard>{
             false => None
         },
         false => None
-    };
+    }
+    .with_filter(config.stdout_level);
 
     // JSON lines file append
     let file_appender = tracing_appender::rolling::Builder::new()
