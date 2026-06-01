@@ -11,10 +11,11 @@ mutter-appid.so: mutter-appid.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -DSONAME="$@" -o $@ $^
 	strip $@
 
-testing: utils.h utils.c testing.c
-	$(CC) $(CFLAGS) -g -o $@ testing.c
+test: utils.h utils.c test.c
+	$(CC) $(CFLAGS) -g -o $@ test.c
+	./test
 
 clean:
 	rm -f mutter-appid.so
 	rm -f *.o
-	rm -f testing
+	rm -f test

@@ -159,15 +159,15 @@ pid_foreach_cleanup(uint index, PIDData *element, Array *pids_to_remove) {
 }
 
 static void
-pids_cleanups(Array *custom_app_ids) {
+pids_cleanups(Array *zone_pids) {
     Array *pids_to_remove=array_new(sizeof(uint), NULL);
-    array_foreach(custom_app_ids, (ArrayForeachFunction) pid_foreach_cleanup, pids_to_remove);
+    array_foreach(zone_pids, (ArrayForeachFunction) pid_foreach_cleanup, pids_to_remove);
     if (array_len(pids_to_remove)>0) {
         uint i;
         for (i=0; i<array_len(pids_to_remove); i++) {
             uint *index;
             index=array_get_element(pids_to_remove, i);
-            array_del(custom_app_ids, *index);
+            array_del(zone_pids, *index);
         }
     }
     array_free(pids_to_remove);
@@ -186,46 +186,68 @@ pid_data_search(PIDData *element, pid_t* searched_pid_p) {
 static const char *
 _customize_app_id(MetaWindow *window, int index, const char *actual_app_id) {
     /* static data held between calls */
-    static Array *custom_app_ids_array[NB_OVERRIDE_FUNCS]={NULL, NULL, NULL, NULL};
-    Array *custom_app_ids=custom_app_ids_array[index];
+    static Array *zones_pids_arrays[NB_OVERRIDE_FUNCS]={NULL, NULL, NULL, NULL};
+    Array *zone_pids=zones_pids_arrays[index];
+    static char *last_result=NULL;
 
     /* actual function implementation */
     if (! actual_app_id)
         return NULL;
 
     if (_real_meta_window_get_pid) {
-        if (! custom_app_ids) {
-            custom_app_ids=array_new(sizeof(PIDData), (FreeFunction) pid_data_free_c);
-            custom_app_ids_array[index]=custom_app_ids;
+        if (! zone_pids) {
+            zone_pids=array_new(sizeof(PIDData), (FreeFunction) pid_data_free_c);
+            zones_pids_arrays[index]=zone_pids;
         }
 
-        pids_cleanups(custom_app_ids);
+        pids_cleanups(zone_pids);
 
         pid_t pid=_real_meta_window_get_pid(window);
         if (pid>0) {
-            /* search if work has already been done */
-            PIDData *edata=array_search(custom_app_ids, (ArraySearchFunction) pid_data_search, (void *)& pid, NULL);
-            if (edata)
-                return edata->app_id;
-
-            /* compute prefix, possibly using the namespaces of the parent processes to
-             * take into account sub-namespaces (like when Flatpak apps. are run)
-             */
             const char *prefix=NULL;
-            pid_t tpid=pid; /* actual PID used to get the prefix */
-            while(tpid>0 && !prefix) {
-                prefix=_compute_padsi_prefix(tpid);
-                if (!prefix)
-                    tpid=get_ppid(tpid);
+
+            /* search if work has already been done */
+            PIDData *edata=array_search(zone_pids, (ArraySearchFunction) pid_data_search, (void *)& pid, NULL);
+            if (edata) {
+#ifdef DEBUG
+                syslog(LOG_DEBUG, "_customize_app_id(pid:%d) ==> already got prefix %s", pid, edata->zone_prefix);
+#endif
+                prefix=edata->zone_prefix;
             }
+            else {
+                /* compute prefix, possibly using the namespaces of the parent processes to
+                * take into account sub-namespaces (like when Flatpak apps. are run)
+                */
+                pid_t tpid=pid; /* actual PID used to get the prefix */
+                while(tpid>0 && !prefix) {
+                    prefix=_compute_padsi_prefix(tpid);
+                    if (!prefix)
+                        tpid=get_ppid(tpid);
+                }
+                /*
+                 * keep the prefix for next time we get to use the same PID
+                 */
+                if (prefix) {
+                    PIDData pid_data={
+                        .pid=pid,
+                        .zone_prefix=prefix
+                    };
+                    array_add(zone_pids, &pid_data);
+                }
+#ifdef DEBUG
+                syslog(LOG_DEBUG, "_customize_app_id(pid:%d) ==> computed prefix %s", pid, prefix);
+#endif
+            }
+
             if (prefix) {
                 char *new_app_id=strdup_printf("%s.%s", prefix, actual_app_id);
-                PIDData pid_data={
-                    .pid=pid,
-                    .app_id=new_app_id
-                };
-                array_add(custom_app_ids, &pid_data);
-                return new_app_id;
+                if (last_result)
+                    free(last_result);
+                last_result=new_app_id;
+#ifdef DEBUG
+                syslog(LOG_DEBUG, "_customize_app_id(pid:%d) ==> %s", pid, last_result);
+#endif
+                return last_result;
             }
         }
     }

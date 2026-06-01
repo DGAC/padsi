@@ -174,9 +174,8 @@ array_search(Array *array, ArraySearchFunction search_func, void *search_arg, ui
  * PID'a associated data
  */
 static void
-pid_data_free_c(PIDData *pdata) {
-    if (pdata)
-        free(pdata->app_id);
+pid_data_free_c(__attribute__((unused)) PIDData *pdata) {
+    // nothing to do here
 }
 
 /**
@@ -211,8 +210,8 @@ load_prefixes_file(const char *prefixes_file) {
     /* check if file needs to be re-loaded */
     struct stat statbuf;
     if (stat(prefixes_file, &statbuf)<0) {
-        if (errno != ENOENT)
-            syslog(LOG_ERR, "Could not stat prefixes file '%s': %s", prefixes_file, strerror(errno));
+        printf("Could not stat prefixes file '%s': %s\n", prefixes_file, strerror(errno));
+
         return prefixes_array;
     }
 

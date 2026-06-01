@@ -28,7 +28,7 @@
 
 void
 print_PIDData_element_func(uint index, PIDData *pdata, void *arg) {
-    printf("==> @%d PID %d, zone %s\n", index, pdata->pid, pdata->app_id);
+    printf("==> @%d PID %d, zone %s\n", index, pdata->pid, pdata->zone_prefix);
 }
 
 void
@@ -53,7 +53,7 @@ ns_data_search(NSData *element, char *ns_key) {
 void test_array() {
     PIDData pdata={
         .pid=1,
-        .app_id=strdup("pasdi.myzone1")
+        .zone_prefix=strdup("pasdi.myzone1")
     };
     Array *array=array_new(sizeof(PIDData), (FreeFunction) pid_data_free_c);
     printf("Empty array contents (len: %d):\n", array_len(array));
@@ -66,7 +66,7 @@ void test_array() {
     uint index;
     for (index=2; index<12; index++) {
         pdata.pid=index;
-        pdata.app_id=strdup_printf("padsi.myzone%d", index);
+        pdata.zone_prefix=strdup_printf("padsi.myzone%d", index);
         array_add(array, &pdata);
     }
     printf("Array contents (len: %d):\n", array_len(array));
@@ -87,7 +87,7 @@ void test_array() {
     int searched_pid=9;
     PIDData *entry=array_search(array, (ArraySearchFunction) pid_data_search, (void *)&searched_pid, NULL);
     if (entry)
-        printf("Found entry with PID %d: %s\n", searched_pid, entry->app_id);
+        printf("Found entry with PID %d: %s\n", searched_pid, entry->zone_prefix);
     else {
         printf("Entry with PID %d not found :-(\n", searched_pid);
         exit(1);
@@ -97,18 +97,18 @@ void test_array() {
 }
 
 void test_parsing() {
-    Array *array=load_prefixes_file("prefixes");
+    Array *array=load_prefixes_file("test-data.txt");
     if (array) {
         printf("Array contents (len: %d):\n", array_len(array));
         array_foreach(array, (ArrayForeachFunction) print_NSData_element_func, NULL);
 
-        if (array_len(array)!=2) {
-            printf("Got %d entries, expected 2\n", array_len(array));
+        if (array_len(array)!=3) {
+            printf("Got %d entries, expected 3\n", array_len(array));
             exit(1);
         }
 
         NSData *nsdata;
-        char *ns_key="mnt:[5673531841]net:[4026796220]";
+        char *ns_key="mnt:[4026535247]net:[4026535250]";
         nsdata=array_search(array, (ArraySearchFunction) ns_data_search, ns_key, NULL);
         if (!nsdata) {
             printf("Entry with ns_key '%s' not found :-(\n", ns_key);
@@ -142,5 +142,5 @@ int main() {
     test_parsing();
     test_ppid();
 
-    printf("OK\n");
+    printf("All OK\n");
 }

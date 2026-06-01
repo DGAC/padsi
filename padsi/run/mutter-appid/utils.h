@@ -56,7 +56,7 @@ static Array  *load_prefixes_file(const char *prefixes_file);
  */
 typedef struct {
     pid_t  pid;
-    char  *app_id;
+    const char *zone_prefix;
 } PIDData;
 static void pid_data_free_c(PIDData *pdata);
 
