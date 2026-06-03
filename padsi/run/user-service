@@ -44,6 +44,7 @@ import padsi.config
 import padsi.misc
 import padsi.namesgenerator as namesgenerator
 import padsi.run
+from padsi.run.vm.version import VMState
 import padsi.run.vm_proxy as vm_proxy
 from padsi.simple_comm import Client, Message, MessageType, ServerProcessDied
 
@@ -1331,19 +1332,7 @@ class PadsiUserService:
                 # get rid of that VM version
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"Getting rid of snapshot {vm_version}")
-                await self._call_system_service(
-                    {
-                        "cmde": "vm-discard-files",
-                        "zone": zone_name,
-                        "vmversion-uid": vm_version.uid,
-                        "vm-id": vm_id,
-                        "vtype": vm_version.version_type,  # pyright: ignore
-                        "vnum": vm_version.version_number,
-                        "staged": vm_version.staged,
-                        "nickname": nname,
-                        "force": False,
-                    }
-                )
+                await vm_proxy.vm_discard(self._gconf, self._call_system_service, vm_id, str(vm_version), zone_name, False)
                 vm_files = await loop.run_in_executor(None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid)
                 vm_version=None
 
@@ -1385,9 +1374,14 @@ class PadsiUserService:
                 # start a new snapshot based on the last user VMVersion (creating one if none exist)
                 user_vmversion = vm_files.get_last_user_version(zone_name)
                 if user_vmversion is None or vm_files.last_user_version_is_obsolete(zone_name):
-                    # instanciate a USER VM version, customization will be done elsewhere
+                    # instanciate a USER VM version
                     if vm_files.last_base_version is None:
                         raise Exception("No BASE VM version available")
+                    if user_vmversion is not None and user_vmversion.state==VMState.DISCARDED:
+                        # get rid of that VM version
+                        if _debug:
+                            syslog.syslog(syslog.LOG_DEBUG, f"Getting rid of snapshot {vm_version}")
+                        await vm_proxy.vm_discard(self._gconf, self._call_system_service, vm_id, str(user_vmversion), zone_name, False)
                     user_vmversion = await loop.run_in_executor(
                         None,
                         vm_files.create_user_version,
@@ -1473,7 +1467,7 @@ class PadsiUserService:
                         (compat, failed)=vm_conf.is_network_compatible(z.network_spec, z.web_proxies)
                         if compat:
                             zone_conf = z
-                            syslog.syslog(syslog.LOG_ERR,f"VM '{vm_id}' ('{usage.value}') will use zone '{zone_name}' networking as compatible",)
+                            syslog.syslog(syslog.LOG_INFO, f"VM '{vm_id}' ('{usage.value}') will use zone '{zone_name}' networking as compatible",)
                             break
                 if zone_conf is None:
                     raise Exception("Could not identify a zone which networking restrictions are compatible with VM network requirements for installation")

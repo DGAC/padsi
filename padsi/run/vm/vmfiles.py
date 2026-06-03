@@ -219,7 +219,7 @@ class VMFiles:
         return None
 
     def last_user_version_is_obsolete(self, zone_name:str) -> bool|None:
-        """Tell if the last user version, if it exists, is based on the laset available base version
+        """Tell if the last user version, if it exists, is based on the latest available base version
         of not.
         Returns:
         - None if there is no last user version
@@ -229,9 +229,12 @@ class VMFiles:
         vmv=self.get_last_user_version(zone_name)
         if vmv is None:
             return None
+        if vmv.state==VMState.DISCARDED:
+            return True
         base_vmv=self.last_base_version
         if base_vmv is None:
             # code bug somewhere
+            syslog.syslog(syslog.LOG_WARNING, f"CODEBUG: last user VM version is '{vmv}' but there is no last base VM version")
             return None
         return not vmv.derives_from(base_vmv)
 
