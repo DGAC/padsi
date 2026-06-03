@@ -472,8 +472,9 @@ def _compute_until_timestamp(until:str|None):
 def _get_logs_dirs(object:padsi.config.Zone|padsi.config.AdminNS|None, vms:list[str]|None) -> dict[str|None,str]:
     """Get a list of log directories indexed by VM name (<VM ID>:<VM nickname>) or None if no VM"""
     # get top logs directory
+    uid=get_user_id()
     if isinstance(object, padsi.config.Zone):
-        logs_dir=conf.get_zone_logs_dir(object.name, get_user_id())
+        logs_dir=conf.get_zone_logs_dir(object.name, uid)
     elif isinstance(object, padsi.config.AdminNS):
         logs_dir=conf.get_admin_ns_logs_dir(object.name)
     elif object is None:
@@ -482,7 +483,9 @@ def _get_logs_dirs(object:padsi.config.Zone|padsi.config.AdminNS|None, vms:list[
         raise Exception(f"CODEBUG: unexpected object type {type(object)}")
 
     if not os.path.isdir(logs_dir):
-        raise Exception(f"Logs directory '{logs_dir}' is not a directory, something is very wrong")
+        if uid==0:
+            raise Exception(f"Logs directory '{logs_dir}' is not a directory, maybe use the --user command line option")
+        raise Exception(f"Logs directory '{logs_dir}' is not a directory or permission denied")
 
     res:dict[str|None,str]={}
     if vms is None or vms==[]:
@@ -1029,7 +1032,7 @@ def prepare_extra_isos(resources:list[str]|None) -> tuple[list[str],str|None]:
             res2=tempfile.mkstemp(".iso")[1]
             padsi.misc.generate_iso_image(files, "Resources", res2)
     except Exception as e:
-        raise Exception(f"Invalid extra list of files: {str(e)}")
+        raise Exception(f"Error: {str(e)}")
     return (res1, res2)
 
 #

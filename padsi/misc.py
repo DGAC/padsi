@@ -233,17 +233,22 @@ def generate_iso_image(contents:list[str], volume_name:str|None=None, iso_file:s
         tmp=tempfile.NamedTemporaryFile(suffix=".iso")
         iso_file=tmp.name
 
-    args:list[str]=["genisoimage", "-o", iso_file, "-graft-points", "-R", "-J"]
+    args:list[str]=["genisoimage", "-o", iso_file, "-graft-points", "-R", "-J", "-input-charset", "utf-8"]
     if volume_name:
         args+=["-V", volume_name]
 
     aliases:set[str]=set()
+    rootnames:set[str]=set()
     for fname in contents:
         if not isinstance(fname, str):
-            raise Exception(f"Invalid ISO content '{fname}'")
+            raise Exception(f"Invalid non string specification '{fname}'")
         try:
             realname=os.path.realpath(os.path.expanduser(fname))
             if os.path.isfile(realname):
+                base=os.path.basename(realname)
+                if base in rootnames:
+                    raise Exception(f"several files have the same name '{base}'")
+                rootnames.add(base)
                 args+=[realname]
             elif os.path.isdir(realname):
                 alias=os.path.basename(realname)
@@ -258,7 +263,7 @@ def generate_iso_image(contents:list[str], volume_name:str|None=None, iso_file:s
             else:
                 raise Exception("not a file or directory")
         except Exception as e:
-            raise Exception(f"Invalid ISO content '{fname}': {str(e)}")
+            raise Exception(f"failed to create ISO file: {str(e)}")
 
     proc=subprocess.run(args, capture_output=True, text=True)
     if proc.returncode!=0:

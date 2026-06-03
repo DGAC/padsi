@@ -1,6 +1,6 @@
 # PADSI
 
-PADSI is a security software package designed for Linux desktop users which allows them to run programs within constrained environments regarding access to files and network resources. It is in a way similar to what [Qubes OS](https://www.qubes-os.org/) achieves but using Linux's kernel isolation mechanisms instead of virtual machines (and is thus inherently less secure, but more flexible), in a way it can be seen as using containers on a desktop setup.
+PADSI is a security software package designed for Linux desktop users which allows them to run programs within constrained environments regarding access to files and network resources. It is in a way similar to what [Qubes OS](https://www.qubes-os.org/) achieves but using Linux's kernel isolation mechanisms instead of virtual machines (and is thus inherently less secure when using sandboxing, but more flexible), in a way it can be seen as using containers on a desktop setup.
 
 As opposed to traditional system where security primarily aims at preventing threat actors from executing any malicious code on a system, PADSI is built to tolerate that threat actors execute some malicious code but ensures they cannot do anything nefarious (barring any unknown vulnerability). Of course, a system where PADSI is deployed should also be hardened to further limit risks.
 
@@ -15,7 +15,7 @@ A _correctly configured_ PADSI system (refer to the Configuration section below)
 - data exfiltration,
 - other various social engineering attacks like ClickFix.
 
-PADSI also allows entities to build a “multi environment workstation” as defined by the French ANSSI (refer to the [Sécurisation du poste de travail multi-environnements (non classifiés)](https://messervices.cyber.gouv.fr/guides/fondamentaux-poste-multi-environnements)) where each “user domain” can be implemented via a VM (and “support domains” remain isolated via sandboxing mechanisms). Note that PADSI only covers some of the requirements for a secure workstation, specifically OS hardening must be implemented by the administrators.
+PADSI also allows entities to build a “multi environment workstation” as defined by the French ANSSI (refer to the [Sécurisation du poste de travail multi-environnements (non classifiés)](https://messervices.cyber.gouv.fr/guides/fondamentaux-poste-multi-environnements) document) where each “user domain” can be implemented via a VM (and “support domains” remain isolated via sandboxing mechanisms). Note that PADSI only covers some of the requirements for a secure workstation, specifically OS hardening must be implemented by the administrators.
 
 ## Features
 

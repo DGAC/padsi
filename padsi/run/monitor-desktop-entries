@@ -221,6 +221,8 @@ class DesktopEntriesDirectoryMonitor:
         while True:
             try:
                 event=await self._watcher.get_event()
+                if _debug:
+                    logging.info(f"Got event: {event}")
                 if event is None:
                     msg="CODEBUG: self._watcher.get_event() returned None"
                     syslog.syslog(syslog.LOG_ERR, msg)
