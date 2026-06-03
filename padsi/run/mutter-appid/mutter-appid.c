@@ -50,7 +50,6 @@ const char *(*_real_meta_window_get_wm_class) (MetaWindow *)=NULL;
 const char *(*_real_meta_window_get_wm_class_instance) (MetaWindow *)=NULL;
 const char *(*_real_meta_window_get_gtk_application_id) (MetaWindow *)=NULL;
 const char *(*_real_meta_window_get_sandboxed_app_id) (MetaWindow *)=NULL;
-#define NB_OVERRIDE_FUNCS 4
 
 /**
  * init function
@@ -184,10 +183,9 @@ pid_data_search(PIDData *element, pid_t* searched_pid_p) {
     return NULL;
 }
 static const char *
-_customize_app_id(MetaWindow *window, int index, const char *actual_app_id) {
+_customize_app_id(MetaWindow *window, const char *actual_app_id) {
     /* static data held between calls */
-    static Array *zones_pids_arrays[NB_OVERRIDE_FUNCS]={NULL, NULL, NULL, NULL};
-    Array *zone_pids=zones_pids_arrays[index];
+    static Array *zone_pids=NULL;
     static char *last_result=NULL;
 
     /* actual function implementation */
@@ -197,7 +195,6 @@ _customize_app_id(MetaWindow *window, int index, const char *actual_app_id) {
     if (_real_meta_window_get_pid) {
         if (! zone_pids) {
             zone_pids=array_new(sizeof(PIDData), (FreeFunction) pid_data_free_c);
-            zones_pids_arrays[index]=zone_pids;
         }
 
         pids_cleanups(zone_pids);
@@ -261,7 +258,7 @@ meta_window_get_wm_class(MetaWindow *window)
 {
     if (_real_meta_window_get_wm_class) {
         const char *actual_app_id=_real_meta_window_get_wm_class(window);
-        const char *app_id=_customize_app_id(window, 0, actual_app_id);
+        const char *app_id=_customize_app_id(window, actual_app_id);
 #ifdef DEBUG
         syslog(LOG_DEBUG, "meta_window_get_wm_class() %s ==> %s", actual_app_id, app_id);
 #endif
@@ -275,7 +272,7 @@ const char *
 meta_window_get_wm_class_instance(MetaWindow *window) {
     if (_real_meta_window_get_wm_class_instance) {
         const char *actual_app_id=_real_meta_window_get_wm_class_instance(window);
-        const char *app_id=_customize_app_id(window, 1, actual_app_id);
+        const char *app_id=_customize_app_id(window, actual_app_id);
 #ifdef DEBUG
         syslog(LOG_DEBUG, "meta_window_get_wm_class_instance() %s ==> %s", actual_app_id, app_id);
 #endif
@@ -289,7 +286,7 @@ const char *
 meta_window_get_gtk_application_id (MetaWindow *window) {
     if (_real_meta_window_get_gtk_application_id) {
         const char *actual_app_id=_real_meta_window_get_gtk_application_id(window);
-        const char *app_id=_customize_app_id(window, 2, actual_app_id);
+        const char *app_id=_customize_app_id(window, actual_app_id);
 #ifdef DEBUG
         syslog(LOG_DEBUG, "meta_window_get_gtk_application_id() %s ==> %s", actual_app_id, app_id);
 #endif
@@ -303,7 +300,7 @@ const char *
 meta_window_get_sandboxed_app_id (MetaWindow *window) {
     if (_real_meta_window_get_sandboxed_app_id) {
         const char *actual_app_id=_real_meta_window_get_sandboxed_app_id(window);
-        const char *app_id=_customize_app_id(window, 3, actual_app_id);
+        const char *app_id=_customize_app_id(window, actual_app_id);
 #ifdef DEBUG
         syslog(LOG_DEBUG, "meta_window_get_sandboxed_app_id() %s ==> %s", actual_app_id, app_id);
 #endif
