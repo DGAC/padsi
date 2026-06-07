@@ -12,4 +12,4 @@ Crates for programs and libraries used in PADSI
 - `wayland-proxy`: Wayland proxy to filter copy/paste
 - `web-infra`: filtering Web proxy, WPAD server and Web redirection
 
-- `nflog-rs`:           crate imported AS-IS from https://github.com/chifflier/nflog-rs (required by fw-logger)
+- `nflog-rs`: crate imported AS-IS from https://github.com/DGAC/nflog-rs (required by fw-logger)
