@@ -2,11 +2,10 @@
 # Run this script to install the PADSI agent in a Windows VM
 #
 
+$svcename="padsi-agent"
+$installdir="C:\Program Files\PADSI\agent"
 $files=@(
-    "padsi_agent.py",
-    "common.py",
-    "windows.py",
-    "padsi-service.py",
+    "padsi-agent.exe",
     "user-session-opened.ps1"
 )
 
@@ -17,13 +16,11 @@ foreach ($f in $files) {
     }
 }
 
-$installdir="C:\Program Files\PADSI\agent"
 if (Test-Path $installdir) {
     # uninstall first
     Write-Output "Uninstalling already installed PADSI agent service"
-    $shortinstalldir=(New-Object -com scripting.filesystemobject).getFolder($installdir).ShortPath # yeah, "C:\Program Files" has spaces...
-    Start-Process -NoNewWindow -FilePath "python" -ArgumentList "$shortinstalldir\padsi-service.py stop" -Wait
-    Start-Process -NoNewWindow -FilePath "python" -ArgumentList "$shortinstalldir\padsi-service.py remove" -Wait
+    sc.exe stop $svcename
+    sc.exe delete $svcename
     Start-Sleep -Seconds 5
 
     # remove files
@@ -39,10 +36,12 @@ foreach ($f in $files) {
 
 # install service
 Write-Output "Installing PADSI agent service"
-$shortinstalldir=(New-Object -com scripting.filesystemobject).getFolder($installdir).ShortPath
-Start-Process -NoNewWindow -FilePath "python" -ArgumentList "$shortinstalldir\padsi-service.py --startup auto install"
-
+sc.exe create $svcename binPath= "$installdir/padsi-agent.exe --service" start= auto DisplayName="PADSI VM agent"
 Write-Output "PADSI agent service is now installed"
+
+Write-Output "Starting the PADSI agent service"
+sc.exe start $svcename
+
 
 Write-Output "Hiding drive letters from the GUI via a registry key"
 Start-Process "REG" "ADD HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer /v NoDrives /t REG_DWORD /d 67108739 /f" -Wait

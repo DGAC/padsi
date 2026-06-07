@@ -21,19 +21,30 @@
 
 set -e
 
+# get the physical network interface, no "lo" or "docker*"
 function get_first_interface() {
     for iface in /sys/class/net/*
     do
-        [ "$iface" != "lo" ] && {
+        liface=$(readlink "$iface")
+        [[ "$liface" =~ virtual ]] || {
             echo $(basename "$iface")
             return
         }
     done
 }
 
+# tell if the specified network interface is already configured
 function interface_configured() {
-    ip a show "$1" | grep -q " inet " && echo "true" || echo "false"
+    local iface="$1"
+    ip a show "$iface" | grep -q " inet " && echo "true" || echo "false"
 }
+
+# tell if the specified network interface is managed via the ifup/ifdown scripts
+function interface_managed() {
+    local iface="$1"
+    ifquery "$iface" && echo "true"  || echo "false"
+}
+
 
 # determine interface to use
 iface=$(get_first_interface)
@@ -41,7 +52,13 @@ iface=$(get_first_interface)
     logger -p user.err "Could not identify network interface to use"
     exit 1
 }
-logger -p user.info "Using network interface $iface"
+logger -p user.info "Identified physical network interface $iface"
+
+managed=$(interface_managed "$iface")
+[ "$managed" == "true" ] && {
+    logger -p user.info "Interface $iface is managed by ifup/ifdown (/etc/network/interfaces*), not running the dhcp client"
+    exit 0
+}
 
 # configure interface if not yet done
 configured=$(interface_configured "$iface")
@@ -50,7 +67,7 @@ configured=$(interface_configured "$iface")
     command dchlient >/dev/null 2>&1 && {
         dhclient "$iface"
     } || {
-        dhcpcd -q -b -w -p -n "$iface"
+        dhcpcd -b -w -p -n "$iface"
     }
 
     true

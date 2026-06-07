@@ -18,6 +18,7 @@
 //
 
 use anyhow::{Result, anyhow};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use padsi::trace::info;
@@ -40,9 +41,11 @@ pub trait OsAgent {
     /// The order is used as search order
     fn platform_extensions(&self) -> &Vec<&str>;
 
-    /// Get a "runner" program, i.e. a program to use to actually
-    /// depending on the script's extension, may run a script (maybe with some arguments hence the Vec)
-    fn platform_runner(&self, ext: &str) -> Option<Vec<&str>>;
+    /// Create a Command to be executed
+    fn build_command<S, A, I>(&self, program:S, args:Option<I>) -> Command
+        where S:AsRef<OsStr>,
+            A:AsRef<OsStr>,
+            I: IntoIterator<Item = A>;
 
     /// Tell if the user session is opened
     fn user_session_opened(&self) -> bool;
@@ -78,13 +81,7 @@ pub trait OsAgent {
             script.push(format!("on-boot.{}", *ext));
             if script.try_exists().is_ok_and(|x| x) {
                 info!(script=script.display().to_string(), "running boot script");
-
-                // if let Some(args) = self.platform_runner(ext) {
-                //     for arg in args {
-                //         script.push(arg)
-                //     }
-                // }
-                let mut cmd = Command::new(&script);
+                let mut cmd=self.build_command(&script, None::<Vec<&String>>);
                 self.add_environment_variables(&mut cmd);
                 match cmd.output() {
                     Ok(output) => {

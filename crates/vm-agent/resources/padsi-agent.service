@@ -3,8 +3,7 @@ Description=PADSI VM agent service
 
 [Service]
 Type=simple
-Environment="PYTHONPATH=/usr/share/padsi"
-ExecStart=/usr/share/padsi/padsi-agent.py
+ExecStart=/usr/bin/padsi-agent
 Restart=always
 
 [Install]

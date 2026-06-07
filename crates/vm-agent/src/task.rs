@@ -17,9 +17,8 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
-use std::{ffi::OsStr, process::{Child, Command, Output, Stdio}};
+use std::{process::{Child, Output, Stdio}};
 use anyhow::{Result, anyhow};
-use std::path::Path;
 
 use crate::agent::OsAgent;
 #[cfg(target_os = "linux")]
@@ -38,33 +37,15 @@ impl Task {
         if args.len()==0 {
             return Err(anyhow!("invalid empty command arguments"))
         }
-
-        // get program's extension
-        let prog=Path::new(&args[0]);
-        let mut cmd = match prog.extension().and_then(OsStr::to_str) {
-            Some(ext) => {
-                match agent.platform_runner(ext) {
-                    Some(eargs) => {
-                        if eargs.len()==0 {
-                            return Err(anyhow!("CODEBUG: platform runner for extention '{}' returned an empty vector", ext))
-                        }
-                        let mut cmd=Command::new(&eargs[0]);
-                        if eargs.len()>1 {
-                            cmd.args(&eargs[1..]);
-                        }
-                        cmd.arg(&prog);
-                        cmd
-                    },
-                    None => Command::new(&prog)
-                }
-            },
-            None => Command::new(&prog)
+        let mut cmd= if args.len()>1 {
+            agent.build_command(&args[0], Some(&args[1..]))
+        }
+        else {
+            agent.build_command(&args[0], None::<Vec<&String>>)
         };
 
         cmd.stdout(Stdio::piped());
-        if args.len()>1 {
-            cmd.args(&args[1..]);
-        }
+
         match cmd.spawn() {
             Ok(child) => Ok(Task{keep_status, child: Some(child), output: None}),
             Err(err) => {

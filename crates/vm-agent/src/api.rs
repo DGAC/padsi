@@ -67,6 +67,8 @@ struct TaskResult {
     stderr: Option<String>
 }
 
+#[allow(dead_code)]
+#[allow(unused)]
 #[post("/task")]
 async fn post_task(
     data: web::Data<Arc<Mutex<PlatformAgent>>>,

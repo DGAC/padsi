@@ -17,11 +17,11 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::env;
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 
 use actix_web::{App, HttpServer, web};
 use anyhow::Result;
@@ -34,6 +34,8 @@ mod config;
 mod task;
 #[cfg(target_os = "windows")]
 mod windows;
+#[cfg(target_os = "windows")]
+mod win_service;
 #[cfg(target_os = "linux")]
 mod linux;
 
@@ -58,6 +60,28 @@ fn system_setup() -> Result<PlatformAgent> {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    if env::args().any(|a| a == "--service") {
+        #[cfg(windows)]
+        {
+            // service mode (Windows)
+            if let Err(e) = win_service::start() {
+                use std::process::exit;
+                eprintln!("Error: {e}");
+                exit(1)
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            eprintln!("--service flag is only supported on Windows");
+            std::process::exit(1);
+        }
+    }
+
+    let stop_signal = CancellationToken::new();
+    run_app(stop_signal).await
+}
+
+async fn run_app(token: CancellationToken) -> std::io::Result<()>{
     // init logging
     let log_dir=match env::var("LOG_DIR") {
         Ok(v) => String::from(v),
@@ -95,6 +119,7 @@ async fn main() -> std::io::Result<()> {
             .service(api::get_file)
             .service(api::post_file)
     })
+    .shutdown_signal(token.cancelled_owned())
     .bind(("0.0.0.0", ADMIN_PORT))?
     .run().await
 }

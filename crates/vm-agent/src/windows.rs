@@ -22,11 +22,12 @@ use shell_words;
 use std::cell::{RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
 use std::process::{Command, Output};
 use padsi::trace::{info, debug, warn, error};
 use std::{thread, time};
 
-use crate::config::AgentConfig;
+use crate::config::{AgentConfig, VMUsage};
 use crate::agent::OsAgent;
 use crate::task::Task;
 
@@ -38,7 +39,7 @@ const WINFSP_EXE: &str = r"C:\Program Files\Virtio-Win\VioFS\virtiofs.exe";
 
 pub struct WindowsAgent {
     vm_config: AgentConfig,
-    user: User,
+    user: Option<User>, // will never be None if mode is RUN
     extensions: Vec<&'static str>,
     last_drive_used: char,
     user_session_opened: RefCell<bool>,
@@ -68,18 +69,18 @@ impl WindowsAgent {
         let vm_config = AgentConfig::from_config_in_dir(PADSI_AGENT_MOUNTPOINT)?;
         debug!("User name: {}", &vm_config.user_name);
         let user = get_local_user(&vm_config.user_name);
-        match user {
-            Some(u) => Ok(Self {
-                vm_config,
-                user: u,
-                extensions: vec!["ps1", "bat"],
-                last_drive_used: 'Z',
-                user_session_opened: RefCell::new(false),
-                next_task_id:RefCell::new(0),
-                tasks: RefCell::new(HashMap::default())
-            }),
-            None => return Err(anyhow!("User '{}' does not exist", vm_config.user_name))
+        if let None=user && vm_config.usage==VMUsage::RUN {
+            return Err(anyhow!("User {} does not exist (in RUN mode)", vm_config.user_id))
         }
+        Ok(Self {
+            vm_config,
+            user: user,
+            extensions: vec!["ps1", "bat"],
+            last_drive_used: 'Z',
+            user_session_opened: RefCell::new(false),
+            next_task_id:RefCell::new(0),
+            tasks: RefCell::new(HashMap::default())
+        })
     }
 
     fn start_win_fsp() -> Result<()> {
@@ -91,6 +92,7 @@ impl WindowsAgent {
             Ok(res) => {
                 if ! res.status.success() {
                     let errstr = String::from_utf8_lossy(&res.stderr[..]).into_owned();
+                    error!("failed to start WinFSP: {}", errstr);
                     return Err(anyhow!("failed to start WinFSP: {}", errstr))
                 }
             },
@@ -111,27 +113,35 @@ impl OsAgent for WindowsAgent {
     }
 
     fn user_home_dir(&self) -> &Path {
-        debug!("User homedir: {}", self.user.home_dir().display());
-        self.user.home_dir()
+        match &self.user {
+            Some(u) => {
+                debug!("User homedir: {}", u.home_dir().display());
+                u.home_dir()
+            },
+            None => panic!("CODEBUG: user is not yet defined")
+        }
     }
 
     fn platform_extensions(&self) -> &Vec<&str> {
         &self.extensions
     }
 
-    fn platform_runner(&self, ext: &str) -> Option<Vec<&str>> {
-        platform_runner(ext)
+    fn build_command<S, A, I>(&self, program:S, args:Option<I>) -> Command
+        where S:AsRef<OsStr>,
+            A:AsRef<OsStr>,
+            I: IntoIterator<Item = A> {
+        build_command(program, args)
     }
 
     fn user_session_opened(&self) -> bool {
         let mut b_val=self.user_session_opened.borrow_mut();
         if ! *b_val {
-            let mut cmd=build_command("user-session-opened.ps1", None);
+            let mut cmd=build_command("user-session-opened.ps1", None::<Vec<String>>);
             cmd.env("PADSI_USER_NAME", &self.config().user_name);
             match cmd.output() {
                 Ok(output) => {
                     if output.status.success() {
-                        if String::from_utf8_lossy(&output.stdout[..]).to_lowercase()=="true" {
+                        if String::from_utf8_lossy(&output.stdout[..]).to_lowercase().trim()=="true" {
                             *b_val=true;
                         }
                     }
@@ -168,16 +178,19 @@ impl OsAgent for WindowsAgent {
     }
 
     fn shutdown(&self) -> Result<()>{
-        match Command::new("poweroff").output() {
-            Ok(o) => {
-                if o.status.success() {
-                    Ok(())
+        info!("Shutting down the system");
+        let args:Vec<&str>=vec!["/s", "/t", "0"];
+        let mut cmd=build_command("shutdown", Some(args));
+        match cmd.output() {
+            Ok(out) => {
+                if !out.status.success() {
+                    let msg=String::from_utf8_lossy(&out.stderr);
+                    error!("could not shut down the system: {}", msg);
+                    return Err(anyhow!("could not shut down the system: {}", msg))
                 }
-                else {
-                    Err(anyhow!("failed to run 'poweroff': {}", String::from_utf8_lossy(&o.stderr)))
-                }
-            }
-            Err(err) => Err(anyhow!(err))
+                Ok(())
+            },
+            Err(err) => Err(anyhow!("could not shut down the system: {}", err.to_string()))
         }
     }
 
@@ -311,6 +324,8 @@ fn virtiofs_map_drive(fsname: &str, drive_letter:char) -> Result<()> {
                             if e {
                                 info!("VirtioFS '{}' is now mapped to {}", fsname, drive);
                                 return Ok(())
+                            } else {
+                                debug!("VirtioFS '{}' is not yet mapped to {}, waiting a bit...", fsname, drive);
                             }
                         },
                         Err(err) => {
@@ -363,6 +378,7 @@ fn virtio_mount(fsname: &str, mountpoint: &str, drive_letter:char, home_dir:Opti
     // prepare mount point, creating directories if necessary
     let mut mp_path = PathBuf::from(mountpoint);
     let mut mp_path_display=mp_path.display();
+    info!("Virtio mount FS '{}' to mountpoint '{}', drive '{}', home dir: '{:?}'", fsname, mountpoint, drive_letter, home_dir);
     let mut mp_path_str=match mp_path.to_str() {
         Some(p) => p,
         None => return Err(anyhow!("could not convert directory {} to &str", mp_path_display))
@@ -377,9 +393,11 @@ fn virtio_mount(fsname: &str, mountpoint: &str, drive_letter:char, home_dir:Opti
         new_mp_path.push(mp_path);
 
         // create directory if it does not exist
-        debug!("Creating directory {}", new_mp_path.display());
+        debug!("Creating directory {} if not yet present", new_mp_path.display());
         if let Err(err)=std::fs::create_dir_all(&new_mp_path) {
-            return Err(anyhow!("could not create mountpoint directory {}: {}", new_mp_path.display(), err.to_string()))
+            if err.kind()!=std::io::ErrorKind::AlreadyExists {
+                return Err(anyhow!("could not create mountpoint directory {}: {} ({})", new_mp_path.display(), err.to_string(), err.kind()))
+            }
         }
         mp_path=new_mp_path;
 
@@ -394,12 +412,14 @@ fn virtio_mount(fsname: &str, mountpoint: &str, drive_letter:char, home_dir:Opti
         if let Err(err)=std::fs::remove_dir(&mp_path) {
             if err.kind()==std::io::ErrorKind::PermissionDenied {
                 info!("Unlinking {}", mp_path_display);
-                let args:Vec<&str>=vec!["cmd", "/c", "rmdir", "/Q", "/S", mp_path_str];
+                let args:Vec<&str>=vec!["/c", "rmdir", "/Q", "/S", mp_path_str];
                 let mut cmd=build_command("cmd", Some(args));
                 match cmd.output() {
                     Ok(out) => {
                         if !out.status.success() {
-                            return Err(anyhow!("could not unlink directory {}: {}", mp_path_display, String::from_utf8_lossy(&out.stderr)))
+                            let msg=format!("could not unlink directory {}: {}", mp_path_display, String::from_utf8_lossy(&out.stderr));
+                            error!(msg);
+                            return Err(anyhow!(msg))
                         }
                     },
                     Err(err) => return Err(anyhow!("could not unlink directory {}: {}", mp_path_display, err.to_string()))
@@ -438,12 +458,14 @@ fn virtio_mount(fsname: &str, mountpoint: &str, drive_letter:char, home_dir:Opti
     // link mountpoint to drive
     if ! is_drive_only(&mp_path) {
         info!("Linking drive '{}' to mountpoint {}", drive, mp_path_display);
-        let args:Vec<&str>=vec!["cmd", "/c", "mklink", "/d", mp_path_str, &drive];
+        let args:Vec<&str>=vec!["/c", "mklink", "/d", mp_path_str, &drive];
         let mut cmd=build_command("cmd", Some(args));
         match cmd.output() {
             Ok(out) => {
                 if !out.status.success() {
-                    return Err(anyhow!("could not link directory {} to drive {}: {}", mp_path_display, drive, String::from_utf8_lossy(&out.stderr)))
+                    let msg=format!("could not link directory {} to drive {}: {}", mp_path_display, drive, String::from_utf8_lossy(&out.stderr));
+                    error!(msg);
+                    return Err(anyhow!(msg))
                 }
             },
             Err(err) => return Err(anyhow!("could not link directory {} to drive {}: {}", mp_path_display, drive, err.to_string()))
@@ -487,11 +509,16 @@ fn get_local_user(username: &str) -> Option<User> {
                 // in most cases, the previous method does not work for whatever reason, so fall back to what should be
                 // the actual user's home directory
                 if home_dir=="" {
+                    info!("Microsoft's API return '' as the actual profile directory");
                     home_dir=format!(r"C:\Users\{}", username);
                 }
                 Some(User{
                     home_dir: home_dir.into()
                 })
+            },
+            2221 => {
+                // user not found
+                None
             },
             code => {
                 error!("failed to get information about user '{}': code {}", username, code);
@@ -517,14 +544,18 @@ fn platform_runner(ext: &str) -> Option<Vec<&'static str>> {
 /// Create a command object which can be specialized before
 /// being executed
 ///
-fn build_command(progname: &str, args:Option<Vec<&str>>) -> Command {
-    let mut prog_path=PathBuf::from(progname);
+fn build_command<S, A, I>(program:S, args:Option<I>) -> Command
+        where S:AsRef<OsStr>,
+            A:AsRef<OsStr>,
+            I: IntoIterator<Item = A> {
+    let mut prog_path=PathBuf::from(program.as_ref());
     if ! prog_path.is_absolute() {
         let exe=std::env::current_exe().expect("current_exe() failed");
         let dir=exe.parent().expect(&format!("WTF: current exe '{:?}' has no parent directory!", exe));
         prog_path=PathBuf::from(dir);
-        prog_path.push(progname);
+        prog_path.push(program.as_ref());
     }
+
     let ext=prog_path.extension().and_then(|s| s.to_str());
     let mut cmd=match ext {
         Some (e) => {
@@ -535,24 +566,25 @@ fn build_command(progname: &str, args:Option<Vec<&str>>) -> Command {
                         if runner.len()>1 {
                             cmd.args(&runner[1..]);
                         }
-                        cmd.arg(progname);
+                        cmd.arg(prog_path);
                         cmd
                     }
                     else {
-                        Command::new(progname)
+                        Command::new(program)
                     }
                 },
                 None => {
-                    Command::new(progname)
+                    Command::new(program)
                 }
             }
         },
         None => {
-            Command::new(progname)
+            Command::new(program)
         }
     };
     if args.is_some() {
         cmd.args(args.unwrap());
     }
+    debug!("Full command to run: {:?}", cmd);
     cmd
 }

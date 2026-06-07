@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum VMUsage {
     INSTALL,
+    CUSTOMIZE,
     UPDATE,
     RUN,
 }

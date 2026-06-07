@@ -25,9 +25,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use users::os::unix::UserExt;
 use users::{User, get_user_by_uid};
-use padsi::trace::info;
+use padsi::trace::{info, error};
 
-use crate::config::AgentConfig;
+use crate::config::{AgentConfig, VMUsage};
 use crate::agent::OsAgent;
 use crate::task::Task;
 
@@ -36,7 +36,7 @@ const LOG_DIR: &str = "/var/log/padsi-agent";
 
 pub struct LinuxAgent {
     vm_config: AgentConfig,
-    user: User,
+    user: Option<User>, // will never be None if mode is RUN
     extensions: Vec<&'static str>,
     has_gui: RefCell<Option<bool>>,
     user_session_opened: RefCell<bool>,
@@ -55,18 +55,18 @@ impl LinuxAgent {
         virtio_mount("padsi-agent", PADSI_AGENT_MOUNTPOINT, None, 0, 0)?;
         let vm_config = AgentConfig::from_config_in_dir(PADSI_AGENT_MOUNTPOINT)?;
         let user = get_user_by_uid(vm_config.user_id);
-        match user {
-            Some(u)=> Ok(Self {
-                vm_config,
-                user: u,
-                extensions: vec!["sh", "py"],
-                has_gui: RefCell::new(None),
-                user_session_opened: RefCell::new(false),
-                next_task_id:RefCell::new(0),
-                tasks: RefCell::new(HashMap::default())
-            }),
-            None => return Err(anyhow!("User {} does not exist", vm_config.user_id))
+        if let None=user && vm_config.usage==VMUsage::RUN {
+            return Err(anyhow!("User {} does not exist (in RUN mode)", vm_config.user_id))
         }
+        Ok(Self {
+            vm_config,
+            user: user,
+            extensions: vec!["sh", "py"],
+            has_gui: RefCell::new(None),
+            user_session_opened: RefCell::new(false),
+            next_task_id:RefCell::new(0),
+            tasks: RefCell::new(HashMap::default())
+        })
     }
 
     // Tell if the OS has a GUI
@@ -90,7 +90,10 @@ impl LinuxAgent {
                         Some(false)
                     }
                 },
-                Err(_err) => Some(false)
+                Err(_err) => {
+                    error!("systemctl cound not be run...");
+                    Some(false)
+                }
             };
         }
         b_has_gui.unwrap()
@@ -107,15 +110,25 @@ impl OsAgent for LinuxAgent {
     }
 
     fn user_home_dir(&self) -> &Path {
-        self.user.home_dir()
+        match &self.user {
+            Some(u) => u.home_dir(),
+            None => panic!("CODEBUG: user is not yet defined")
+        }
     }
 
     fn platform_extensions(&self) -> &Vec<&str> {
         &self.extensions
     }
 
-    fn platform_runner(&self, _ext: &str) -> Option<Vec<&str>> {
-        None
+    fn build_command<S, A, I>(&self, program:S, args:Option<I>) -> Command
+        where S:AsRef<OsStr>,
+            A:AsRef<OsStr>,
+            I: IntoIterator<Item = A> {
+        let mut cmd = Command::new(&program);
+        if let Some(sargs)=args {
+            cmd.args(sargs);
+        }
+        cmd
     }
 
     fn user_session_opened(&self) -> bool {
@@ -146,8 +159,12 @@ impl OsAgent for LinuxAgent {
 
     fn mount_shared_dirs(&mut self) -> Result<()> {
         let mut warnings: Vec<String> = vec![];
+        let user=match &self.user {
+            Some(u) => u,
+            None => panic!("CODEBUG: user is not yet defined")
+        };
         for (fsname, mountpoint) in self.vm_config.mountpoints.iter() {
-            if let Err(e) = virtio_mount(fsname, mountpoint, Some(self.user_home_dir()), self.user.uid(), self.user.primary_group_id()) {
+            if let Err(e) = virtio_mount(fsname, mountpoint, Some(self.user_home_dir()), user.uid(), user.primary_group_id()) {
                 warnings.push(e.to_string());
             }
         }
@@ -165,10 +182,15 @@ impl OsAgent for LinuxAgent {
                     Ok(())
                 }
                 else {
-                    Err(anyhow!("failed to run 'poweroff': {}", String::from_utf8_lossy(&o.stderr)))
+                    let msg=format!("failed to run 'poweroff': {}", String::from_utf8_lossy(&o.stderr));
+                    error!(msg);
+                    Err(anyhow!(msg))
                 }
             }
-            Err(err) => Err(anyhow!(err))
+            Err(err) => {
+                error!("failed to run poweroff: {}", err.to_string());
+                Err(anyhow!(err))
+            }
         }
     }
 
@@ -224,20 +246,29 @@ impl OsAgent for LinuxAgent {
 
 fn virtiofs_mounted(mountpoint: impl AsRef<Path>) -> Result<bool> {
     let mp: &OsStr = OsStr::new(mountpoint.as_ref());
-    let res = Command::new("findmnt")
+    match Command::new("findmnt")
         .arg("-n")
         .arg("-o")
         .arg("SOURCE")
         .arg(mp)
-        .output()?;
-    if res.status.success() {
-        return Ok(true);
+        .output() {
+            Ok(res) => {
+                if res.status.success() {
+                return Ok(true);
+            }
+            if res.stderr.len() == 0 {
+                return Ok(false);
+            }
+            let msg = String::from_utf8_lossy(&res.stderr[..]).into_owned();
+            error!(msg);
+            Err(anyhow!(msg))
+        },
+        Err(err) => {
+            let msg=format!("could not run findmnt: {}", err.to_string());
+            error!(msg);
+            Err(anyhow!(msg))
+        }
     }
-    if res.stderr.len() == 0 {
-        return Ok(false);
-    }
-    let errstr = String::from_utf8_lossy(&res.stderr[..]).into_owned();
-    Err(anyhow!(errstr))
 }
 
 fn virtio_mount(fsname: &str, mountpoint: &str, home_dir:Option<&Path>, uid:u32, gid:u32) -> Result<()> {
@@ -298,19 +329,24 @@ fn virtio_mount(fsname: &str, mountpoint: &str, home_dir:Option<&Path>, uid:u32,
     }
 
     info!("Mounting fs '{}' to mountpoint '{}'", fsname, mp_path_display);
-    let res = Command::new("mount")
+    match Command::new("mount")
         .arg("-t")
         .arg("virtiofs")
         .arg(fsname)
         .arg(mp_path.as_os_str())
-        .output()?;
-    match res.status.success() {
-        true => Ok(()),
-        false => Err(anyhow!(
-            "failed to mount virtiofs named {} to {:?}: {}",
-            fsname,
-            mp_path_display,
-            String::from_utf8_lossy(&res.stderr)
-        )),
-    }
+        .output() {
+            Ok(res) => match res.status.success() {
+                true => Ok(()),
+                false => {
+                    let msg=format!("failed to mount virtiofs named {} to {:?}: {}", fsname, mp_path_display, String::from_utf8_lossy(&res.stderr));
+                    error!(msg);
+                    Err(anyhow!(msg))
+                }
+            },
+            Err(err) => {
+                let msg=format!("failed to mount virtiofs named {} to {:?}: {}", fsname, mp_path_display, err.to_string());
+                error!(msg);
+                Err(anyhow!(msg))
+            }
+        }
 }

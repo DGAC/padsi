@@ -31,15 +31,16 @@ out_dir="$srcdir/packages"
 mkdir -p "$out_dir"
 
 function create_main_package() {
-    local vm_lx_pkg="$1"
-    local vm_win_pkg="$2"
+    local vm_deb_pkg="$1"
+    local vm_lx_pkg="$2"
+    local vm_win_pkg="$3"
     tmpdir=$(mktemp -d)
 
     # prepare diretory structure
     bindir="$tmpdir/usr/bin"
     etcdir="$tmpdir/etc"
     installdir="$tmpdir/usr/share/padsi"
-    systemddir="$tmpdir/lib/systemd/system"
+    systemddir="$tmpdir/usr/lib/systemd/system"
     docdir="$tmpdir/usr/share/doc/padsi"
     pbindir="$installdir/bin"
 
@@ -147,7 +148,7 @@ function create_main_package() {
     # agent packages
     pkg_dir="$installdir/packages"
     mkdir "$pkg_dir"
-    cp "$vm_lx_pkg" "$vm_win_pkg" "$pkg_dir"
+    cp "$vm_deb_pkg" "$vm_lx_pkg" "$vm_win_pkg" "$pkg_dir"
 
     # final DEB file
     debfile=$(mktemp)
@@ -162,17 +163,16 @@ function create_main_package() {
     echo "$outfile"
 }
 
-function build_padsi_vm_agent_package_linux() {
+function build_padsi_vm_agent_package_debian() {
     tmpdir=$(mktemp -d)
+    crate_dir="$vm_mgmt_srcdir/vm-agent"
 
     # prepare diretory structure
     bindir="$tmpdir/usr/bin"
-    installdir="$tmpdir/usr/share/padsi"
-    systemddir="$tmpdir/lib/systemd/system"
+    systemddir="$tmpdir/usr/lib/systemd/system"
     docdir="$tmpdir/usr/share/doc/padsi"
 
     mkdir -p "$bindir"
-    mkdir -p "$installdir"
     mkdir -p "$systemddir"
     mkdir -p "$docdir"
 
@@ -187,11 +187,8 @@ function build_padsi_vm_agent_package_linux() {
     gzip -n -9 "$docdir/changelog.md"
 
     # copy PADSI files
-    cp "$vm_mgmt_srcdir/padsi-agent/service/linux/padsi-agent.service" "$systemddir/"
-    for file in "padsi-agent.py" "common.py" "linux.py"
-    do
-        cp "$vm_mgmt_srcdir/padsi-agent/$file" "$installdir/"
-    done
+    cp "$crate_dir/resources/padsi-agent.service" "$systemddir"
+    cp "$crate_dir/target/release/vm-agent" "$bindir/padsi-agent"
 
     # build the DEB file
     debfile=$(mktemp)
@@ -206,24 +203,92 @@ function build_padsi_vm_agent_package_linux() {
     echo "$outfile"
 }
 
+function build_padsi_vm_agent_package_linux() {
+    tmpdir=$(mktemp -d)
+    crate_dir="$vm_mgmt_srcdir/vm-agent"
+
+    # prepare diretory structure
+    bindir="$tmpdir/usr/bin"
+    systemddir="$tmpdir/usr/lib/systemd/system"
+    docdir="$tmpdir/usr/share/doc/padsi"
+
+    mkdir -p "$bindir"
+    mkdir -p "$systemddir"
+    mkdir -p "$docdir"
+
+    # doc
+    cp "$srcdir/Changelog.md" "$docdir/changelog.md"
+    gzip -n -9 "$docdir/changelog.md"
+
+    # copy PADSI files
+    cp "$crate_dir/resources/padsi-agent.service" "$systemddir"
+    cp "$crate_dir/target/release/vm-agent" "$bindir/padsi-agent"
+
+    # build the archive
+    pushd "$tmpdir" >/dev/null
+    outfile="$out_dir/padsi-vm-agent_${VERSION}_linux.tar.gz"
+    tar czf "$outfile" * >/dev/null 2>&1
+    popd >/dev/null
+
+    # cleanups
+    rm -rf "$tmpdir"
+    echo "$outfile"
+}
+
 function build_padsi_vm_agent_package_windows() {
     tmpdir=$(mktemp -d)
 
-    for file in "padsi-agent.py" "common.py" "windows.py"
+    crate_dir="$vm_mgmt_srcdir/vm-agent"
+    for file in install.ps1 user-session-opened.ps1
     do
-        cp "$vm_mgmt_srcdir/padsi-agent/$file" "$tmpdir/"
+        cp "$crate_dir/resources/$file" "$tmpdir/"
     done
-    mv "$tmpdir/padsi-agent.py" "$tmpdir/padsi_agent.py"
-    cp "$vm_mgmt_srcdir/padsi-agent/service/windows/"* "$tmpdir/"
+    cp "$crate_dir/target/x86_64-pc-windows-gnu/release/vm-agent.exe" "$tmpdir/padsi-agent.exe"
 
     pushd "$tmpdir" >/dev/null
     outfile="$out_dir/padsi-vm-agent_${VERSION}_windows.zip"
+    rm -f "$outfile" # in case it was present, we don't want to add files to the existing archive
     zip "$outfile" * >/dev/null 2>&1
     popd >/dev/null
 
     # cleanups
     rm -rf "$tmpdir"
+    echo "$outfile"
+}
 
+function build_vm_ISO() {
+    tmpdir=$(mktemp -d)
+
+    for file in $@
+    do
+        cp "$file" "$tmpdir/"
+
+        # extract ZIP and targz archives in the ISO
+        ext="${file##*.}"
+        prefix="${file%.*}"
+        case "$ext" in
+            zip)
+                prefix=$(basename "$prefix")
+                mkdir "$tmpdir/$prefix"
+                unzip "$file" -d "$tmpdir/$prefix" >/dev/null
+                ;;
+            gz)
+                ext2="${prefix##*.}"
+                [ "$ext2" == "tar" ] && {
+                    prefix2="${prefix%.*}"
+                    prefix=$(basename "$prefix2")
+                    mkdir "$tmpdir/$prefix"
+                    tar xzf "$file" -C "$tmpdir/$prefix"
+                }
+                ;;
+        esac
+    done
+
+    outfile="$out_dir/padsi-vm-agent_${VERSION}.iso"
+    mkisofs -V "PADSI-VM-agent-${VERSION}" -r -o "$outfile" -quiet "$tmpdir"
+
+    # cleanups
+    rm -rf "$tmpdir"
     echo "$outfile"
 }
 
@@ -232,7 +297,11 @@ command -v dpkg-name >/dev/null || {
     exit 1
 }
 
-echo -n "building Linux VM padsi-agent package "
+echo -n "building Debian VM padsi-agent package "
+vm_deb_pkg=$(build_padsi_vm_agent_package_debian)
+echo "=> $vm_deb_pkg"
+
+echo -n "building generic Linux padsi-agent package "
 vm_lx_pkg=$(build_padsi_vm_agent_package_linux)
 echo "=> $vm_lx_pkg"
 
@@ -240,6 +309,10 @@ echo -n "building Windows VM padsi-agent package "
 vm_win_pkg=$(build_padsi_vm_agent_package_windows)
 echo "=> $vm_win_pkg"
 
-echo -n "building main padsi package "
-pkg=$(create_main_package "$vm_lx_pkg" "$vm_win_pkg")
+echo -n "building VM install ISO "
+vm_iso=$(build_vm_ISO "$vm_deb_pkg" "$vm_lx_pkg" "$vm_win_pkg")
+echo "=> $vm_iso"
+
+echo -n "building main Debian padsi package "
+pkg=$(create_main_package "$vm_deb_pkg" "$vm_lx_pkg" "$vm_win_pkg")
 echo "=> $pkg"

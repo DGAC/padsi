@@ -183,7 +183,7 @@ class VMViewerApplication(Gtk.Application):
             try:
                 data=self._queue_to_thread.get_nowait()
                 self._queue_from_thread.put_nowait("DONE")
-                return # therminate the thread
+                return # terminate the thread
             except queue.Empty:
                 pass
 
@@ -191,18 +191,20 @@ class VMViewerApplication(Gtk.Application):
                 self._queue_from_thread.put_nowait("DONE")
                 return # therminate the thread, not needed anymore
 
-            if counter==15:
+            if counter==45:
                 counter=0
                 # ask the padsi agent if the user's session is ready
                 try:
-                    response=requests.get(f"http://{vm_ip_address}:{admin_port}/status?context=user-session-opened", timeout=3) # Windows is very slow
+                    response=requests.get(f"http://{vm_ip_address}:{admin_port}/status/user-session-opened", timeout=1) # Windows can be very slow
                     response.raise_for_status()
                     data=response.json()
-                    if data.get("user-session-opened"):
+                    if data.get("UserSessionOpened"):
                         self._queue_from_thread.put_nowait("DONE")
                         return # end of thread
-                except requests.exceptions.HTTPError:
-                    syslog.syslog(syslog.LOG_WARNING, "Wrong PADSI agent version!")
+                    else:
+                        syslog.syslog(syslog.LOG_DEBUG, f"UserSessionOpened is: {data.get('UserSessionOpened')}")
+                except requests.exceptions.HTTPError as e:
+                    syslog.syslog(syslog.LOG_WARNING, f"Wrong PADSI VM agent API version: {str(e)}")
                 except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError):
                     pass # the PADSI agent may not be listening yet
                 except Exception as e:
