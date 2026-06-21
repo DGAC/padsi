@@ -93,27 +93,6 @@ def makedirs_with_owner(path:str, set_owner_after:str, uid:int, gid:int):
             if set_owner:
                 os.chown(cpath, uid, gid)
 
-def makedirs_keep_owner(path: str):
-    """Create directories if they don't already exist keeping the same owner as the last directory
-    which exists in the path.
-    Intended to be run as root to avoid having directories belonging to root
-    """
-    uid:int|None=None
-    gid:int|None=None
-    cpath="/"
-    for part in path.split("/"):
-        cpath=os.path.join(cpath, part)
-        if os.path.exists(cpath):
-            st=os.stat(cpath)
-            uid=st.st_uid
-            gid=st.st_gid
-            if not os.path.isdir(cpath):
-                raise Exception(f"Path '{cpath}' is supposed to be a directory by is not")
-        else:
-            os.mkdir(cpath)
-            if uid is not None and gid is not None:
-                os.chown(cpath, uid, gid)
-
 xdg_dirs=("DESKTOP", "DOWNLOAD", "TEMPLATES", "PUBLICSHARE", "DOCUMENTS", "MUSIC", "PICTURES", "VIDEOS")
 
 def compute_user_xdg_subdirectories(uid:int) -> dict[str,str]:

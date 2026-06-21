@@ -19,6 +19,7 @@
 
 from abc import ABC, abstractmethod
 
+import nsbubble
 
 class ProgramPolicies(ABC):
     """Generic class representing policies which can be applied for a given program like Firefox or Chrome.
@@ -36,16 +37,13 @@ class ProgramPolicies(ABC):
     - The home_dir specified the path in the host to the $HOME in the zone
     """
     @abstractmethod
-    def initialize_policies(self, system_dir:str|None=None, home_dir:str|None=None):
-      """Allow policies to be (re)initialized.
-      Refer to class doculentation for system_dir and home_dir.
-
-      Depending on the context, system_dir or home_dir may be None
+    def initialize_user_policies(self, home_dir:str):
+      """Allow user's policies to be (re)initialized.
       """
       pass
 
     @abstractmethod
-    def get_writable_directories(self) -> list[str]:
+    def get_directories(self) -> list[str]:
         """Get the list of directories in which some configuration files may be
         writen to implement the policy
 
@@ -54,14 +52,14 @@ class ProgramPolicies(ABC):
         return []
 
     @abstractmethod
-    def add_trusted_ca(self, system_dir:str, home_dir:str, nickname:str, ca_cert:str):
+    def add_trusted_ca(self, mountpoint_set:nsbubble.MountPointSet, home_dir:str, nickname:str, ca_cert:str):
         """Add a trusted CA certificate (PEM encoded string)
-        Refer to class doculentation for system_dir and home_dir.
+        Refer to class documentation for system_dir and home_dir.
         """
         pass
 
     @abstractmethod
-    def add_pkcs11_driver(self, system_dir:str, home_dir:str, driver_name:str, driver_path:str):
+    def add_pkcs11_driver(self, mountpoint_set:nsbubble.MountPointSet, home_dir:str, driver_name:str, driver_path:str):
         """Ensure the program is set up to use the PKCS#11 specified driver
         Refer to class doculentation for system_dir and home_dir.
         """

@@ -23,6 +23,10 @@ from .nsbubble import (Bubble, BubbleAPI, BubbleState, DisplayEnvironment,
 from .vm import (BubbleVM, NotEnoughMemory, QEMUImageFile, Viewer,
                  VirtioSharedDirectory, VMSpecs)
 
-__all__=["BubbleState", "Features", "DisplayEnvironment", "Bubble", "BubbleAPI", "VDESwitch", "ProcessNotYetTerminatedException", "get_display_env", "named_netns_create", "named_netns_remove",
-         "QEMUImageFile", "VirtioSharedDirectory", "NotEnoughMemory", "VMSpecs", "BubbleVM", "Viewer"
-        ]
+from .mountpoint import (MountPoint, MountPointGroup, MountPointSet)
+
+__all__=["BubbleState", "Features", "DisplayEnvironment", "Bubble", "BubbleAPI", "VDESwitch", "ProcessNotYetTerminatedException",
+    "get_display_env", "named_netns_create", "named_netns_remove",
+    "QEMUImageFile", "VirtioSharedDirectory", "NotEnoughMemory", "VMSpecs", "BubbleVM", "Viewer",
+    "MountPoint", "MountPointGroup", "MountPointSet"
+]

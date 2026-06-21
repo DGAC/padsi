@@ -389,15 +389,13 @@ class ZoneApps(ZoneFoundations):
         for progname in factory.supported_programs:
             policies=factory.get_program_policies(progname)
             if policies is not None:
-                for dirname in policies.get_writable_directories():
+                for dirname in policies.get_directories():
                     if dirname[0]!="/":
                         syslog.syslog(syslog.LOG_WARNING, f"CODEBUG: {self.syslog_prefix}: writable directory '{dirname}' for {progname}'s policies should be absolute")
-                    else:
-                        dirname=dirname[1:]
-                    fdirname=f"/{dirname}"
+                    fdirname=dirname
                     if fdirname[-1]!="/":
                         fdirname+="/"
-                    mounts[f"-{dirname}"]={ # hack to say we just want a writable directory
+                    mounts[dirname]={
                         "mount-point": fdirname,
                         "read-only": False,
                         "monitored": False
@@ -428,7 +426,7 @@ class ZoneApps(ZoneFoundations):
                                         "WAYLAND_DISPLAY": "wayland-0"
                                    })
 
-    def _apply_policies(self, zuf:ZoneUserFiles):
+    def _apply_policies(self, mp_set:nsbubble.MountPointSet, zuf:ZoneUserFiles):
         factory=padsi.config.ProgramPoliciesFactory()
 
         # extra ROOT CA certificate for browsers
@@ -438,7 +436,7 @@ class ZoneApps(ZoneFoundations):
                 policies=factory.get_program_policies(progname)
                 if policies is not None:
                     try:
-                        policies.add_trusted_ca(self.run_dir, zuf.zone_home_dir, "Web redirection CA", self._extra_root_cert)
+                        policies.add_trusted_ca(mp_set, zuf.zone_home_dir, "Web redirection CA", self._extra_root_cert)
                     except Exception as e:
                         syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add Root CA to {progname}: {str(e)}")
 
@@ -451,7 +449,7 @@ class ZoneApps(ZoneFoundations):
                     for (nickname, ca_cert) in pki_option.ca_certs.items():
                         try:
                             syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: adding trusted CA '{nickname}' for '{progname}'")
-                            policies.add_trusted_ca(self.run_dir, zuf.zone_home_dir, nickname, ca_cert)
+                            policies.add_trusted_ca(mp_set, zuf.zone_home_dir, nickname, ca_cert)
                         except Exception as e:
                             syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add trusted CA '{nickname}' to {progname}: {str(e)}")
 
@@ -462,9 +460,8 @@ class ZoneApps(ZoneFoundations):
                 syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: adding PKCS#11 driver for '{progname}'")
                 policies=factory.get_program_policies(progname)
                 if policies is not None and pkcs11_option.driver_name is not None and pkcs11_option.driver_path is not None:
-                    base_pol_dir=os.path.join(self.run_dir, "policies", progname)
                     try:
-                        policies.add_pkcs11_driver(base_pol_dir, zuf.zone_home_dir, pkcs11_option.driver_name, pkcs11_option.driver_path)
+                        policies.add_pkcs11_driver(mp_set, zuf.zone_home_dir, pkcs11_option.driver_name, pkcs11_option.driver_path)
                     except Exception as e:
                         syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add PKCS#11 driver '{pkcs11_option.driver_path}' to {progname}: {str(e)}")
 
@@ -485,7 +482,11 @@ class ZoneApps(ZoneFoundations):
                 syslog.syslog(syslog.LOG_WARNING, f"{self.syslog_prefix}: failed to force starting of XWayland: determined DISPLAY={denv.x11_display}, XAUTHORITY={denv.x11_auth}")
 
         super().start()
-        self._apply_policies(self._zuf)
+        assert(self.bubble is not None)
+        mp_set=self.bubble.mountpoint_set
+        if mp_set is None:
+            raise Exception("CODEBUG: bubble's MountpointSet is None")
+        self._apply_policies(mp_set, self._zuf)
         self._start_zone_dbus()
 
         router_enabled=False

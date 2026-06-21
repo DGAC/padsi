@@ -19,6 +19,7 @@
 
 import os
 
+from nsbubble import MountPointSet
 from .nssdb import NSSDB
 from .policies import ProgramPolicies
 
@@ -38,7 +39,7 @@ class ChromiumPolicies(ProgramPolicies):
             self._uid=uid
             self._gid=gid
 
-    def get_writable_directories(self) -> list[str]:
+    def get_directories(self) -> list[str]:
         return ["/etc/chromium", "/etc/chromium.d"]
 
     def _get_nssdb_path(self, home_dir:str) -> str:
@@ -50,23 +51,22 @@ class ChromiumPolicies(ProgramPolicies):
             os.chown(path, self._uid, self._gid)
         return path
 
-    def initialize_policies(self, system_dir:str|None=None, home_dir:str|None=None):
-        if home_dir:
-            # remove any trusted certificate from the NSS database
-            nssdb=NSSDB(self._get_nssdb_path(home_dir))
-            if nssdb.exists:
-                nssdb.clear_ca_certificates()
-                if self._uid is not None and self._gid is not None:
-                    nssdb.chown(self._uid, self._gid)
+    def initialize_user_policies(self, home_dir:str):
+        # remove any trusted certificate from the NSS database
+        nssdb=NSSDB(self._get_nssdb_path(home_dir))
+        if nssdb.exists:
+            nssdb.clear_ca_certificates()
+            if self._uid is not None and self._gid is not None:
+                nssdb.chown(self._uid, self._gid)
 
-    def add_trusted_ca(self, system_dir:str, home_dir:str, nickname:str, ca_cert:str):
+    def add_trusted_ca(self, mountpoint_set:MountPointSet, home_dir:str, nickname:str, ca_cert:str):
         # chromium uses the $HOME/.pki/nssdb NSS file for its certificates
         nssdb=NSSDB(self._get_nssdb_path(home_dir))
         nssdb.add_ca_certificate(ca_cert, nickname)
         if self._uid is not None and self._gid is not None:
             nssdb.chown(self._uid, self._gid)
 
-    def add_pkcs11_driver(self, system_dir:str, home_dir:str, driver_name:str, driver_path:str):
+    def add_pkcs11_driver(self, mountpoint_set:MountPointSet, home_dir:str, driver_name:str, driver_path:str):
         nssdb=NSSDB(self._get_nssdb_path(home_dir))
         nssdb.add_pkcs11_driver(driver_name, driver_path)
         if self._uid is not None and self._gid is not None:

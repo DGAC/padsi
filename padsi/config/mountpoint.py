@@ -38,7 +38,7 @@ class MountPoint:
     def is_mounted(self) -> bool:
         """Tell if the mount point is mounted and, if mounted, verifies that the correct source path is mounted
         Note: does not check the read-only status
-        """ 
+        """
         proc=subprocess.run(["findmnt", "-n", "-o", "SOURCE", self.mountpoint], capture_output=True, text=True)
         if proc.returncode!=0:
             if not proc.stderr:

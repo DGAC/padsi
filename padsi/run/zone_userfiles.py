@@ -60,7 +60,7 @@ class ZoneUserFiles:
     """Object which keeps a list of all the directories which are somehow mounted from a zone's definition
     to create the home directory of the user in that zone.
 
-    Note: all the instances of a zone (ZoneIntance objects) are "associated" to
+    Note: all the instances of a zone (ZoneApps and ZoneVM objects) are "associated" to
           the same ZoneUserFiles object
     """
     def __init__(self, zone_conf:padsi.config.Zone, uid:int, run_dir:str):
@@ -209,7 +209,7 @@ class ZoneUserFiles:
             policies=factory.get_program_policies(progname, uid, gid)
             if policies is not None:
                 try:
-                    policies.initialize_policies(home_dir=top_dir)
+                    policies.initialize_user_policies(home_dir=top_dir)
                 except Exception as e:
                     syslog.syslog(syslog.LOG_ERR, f"{syslog_prefix}: failed to initialize (HOME) policies for {progname}: {str(e)}")
 
