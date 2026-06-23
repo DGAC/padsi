@@ -19,7 +19,7 @@
 # along with this software.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-VERSION=0.9.29-pre
+VERSION=0.9.29
 
 set -e
 
