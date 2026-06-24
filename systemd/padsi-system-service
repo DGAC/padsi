@@ -338,43 +338,46 @@ class UserServer(Server):
         if os.path.exists(user_run_dir):
             # we need to take a specific care about the userfiles directory as it may still contain some user data
             # if any bug prevented the mount points from being unmounted
+            all_ok=True
             userfiles_zones_dir=ZoneUserFiles.compute_all_zones_dir(user_run_dir) # directories where all the per-zone filesystem are mounted
             if os.path.exists(userfiles_zones_dir):
-                all_done=True
                 for fname in os.listdir(userfiles_zones_dir):
                     fpath=os.path.join(userfiles_zones_dir, fname)
                     try:
                         os.rmdir(fpath)
                     except PermissionError as e:
-                        all_done=False
+                        all_ok=False
                         syslog.syslog(syslog.LOG_WARNING, f"Could not remove userfiles directory '{fpath}': {str(e)} (filesystem may still be mounted)")
                     except Exception as e:
-                        all_done=False
+                        all_ok=False
                         syslog.syslog(syslog.LOG_ERR, f"Could not remove userfiles directory '{fpath}': {str(e)} (exception type {type(e)})")
 
-                if all_done:
+                if all_ok:
                     try:
                         os.rmdir(userfiles_zones_dir)
                     except Exception as e:
                         syslog.syslog(syslog.LOG_ERR, f"Could not remove top userfiles directory '{userfiles_zones_dir}': {str(e)}")
+                else:
+                    syslog.syslog(syslog.LOG_INFO, f"Failsafe prevented removal of top userfiles directory '{userfiles_zones_dir}'")
 
-            # remove the rest of the run directory for the zone where there is no data loss risk
+            # remove the rest of the run directory for the zone
             loop=asyncio.get_event_loop()
-            all_done=True
             if os.path.exists(user_run_dir):
                 for fname in os.listdir(user_run_dir):
                     fpath=os.path.join(user_run_dir, fname)
                     if fpath!=userfiles_zones_dir:
                         try:
                             await loop.run_in_executor(None, shutil.rmtree, fpath)
-                            all_done=False
                         except Exception as e:
-                            syslog.syslog(syslog.LOG_ERR, f"Could not remove directory user run dir '{fpath}': {str(e)}")
-                if all_done:
+                            all_ok=False
+                            syslog.syslog(syslog.LOG_ERR, f"Could not remove user directory '{fpath}': {str(e)}")
+                if all_ok:
                     try:
                         await loop.run_in_executor(None, shutil.rmtree, user_run_dir)
                     except Exception as e:
                         syslog.syslog(syslog.LOG_ERR, f"Could not remove user run dir '{user_run_dir}': {str(e)}")
+                else:
+                    syslog.syslog(syslog.LOG_INFO, f"Failsafe prevented removal of files in user run dir '{user_run_dir}'")
 
     async def _zone_userfiles_setup(self, args:dict) -> Message:
         try:
