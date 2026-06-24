@@ -3,6 +3,6 @@ Version: @VERSION@
 Maintainer: Vivien MALERBA <vivien.malerba@aviation-civile.gouv.fr>
 Section: utils
 Priority: optional
-Architecture: all
+Architecture: amd64
 Description: Management service to be included in virtual machine used in PADSI
 Depends: python3, python3-aiohttp
