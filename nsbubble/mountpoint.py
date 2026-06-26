@@ -55,34 +55,39 @@ def _prefixed_mount_path(mpoint:MountPoint, prefix:str|None) -> str:
     return mpoint.mount_path
 
 def _existing_source_path(mpoint:MountPoint, tmp_dir:str) -> str:
+    if not os.path.isabs(mpoint._source_path):
+        raise Exception(f"source path {mpoint._source_path} is not absoltue")
     if os.path.exists(mpoint.source_path):
         return mpoint.source_path
-    if mpoint.is_dir:
+    if mpoint._is_dir:
         dir=os.path.join(tmp_dir, "_nmount_", mpoint.source_path[1:])
         os.makedirs(dir, exist_ok=True)
         if _debug:
-            syslog.syslog(syslog.LOG_ERR, f"Created dir for inexisting mount point '{mpoint.source_path}' => {dir}")
+            syslog.syslog(syslog.LOG_DEBUG, f"Created dir for inexisting mount point '{mpoint.source_path}' => {dir}")
         return dir
     else:
         dir=os.path.join(tmp_dir, "_nmount_", os.path.dirname(mpoint.source_path)[1:])
         os.makedirs(dir, exist_ok=True)
         path=os.path.join(dir, os.path.basename(mpoint.source_path))
         if _debug:
-            syslog.syslog(syslog.LOG_ERR, f"Created file for inexisting mount point'{mpoint.source_path}' => {path}")
+            syslog.syslog(syslog.LOG_DEBUG, f"Created file for inexisting mount point'{mpoint.source_path}' => {path}")
         return path
 
 class MountPoint:
     """Mount point to mount a directory or a file from the "host" (the source_path argument) to a path in a bubble (the mount_path argument)
     source_path may not exist (e.g. in an empty writable directory is needed).
-    If mount_path's last character is a "/" then the source_path must either not exist or be a directory
     """
-    def __init__(self, source_path:str, mount_path:str, readonly:bool=True, monitored:bool=False) -> None:
+    def __init__(self, source_path:str, mount_path:str, readonly:bool=True, monitored:bool=False, require_abs_mount_path:bool=True) -> None:
         if not source_path:
             raise Exception(f"invalid mount point's source path '{source_path}'")
-        self._source_path=os.path.realpath(source_path) # what is mounted, may not yet exist
-        self._is_dir=os.path.isdir(self.source_path)
+        self._is_dir:bool|None=None
+        if os.path.isabs(source_path):
+            self._source_path=os.path.realpath(source_path) # what is mounted, may not yet exist
+            self._is_dir=os.path.isdir(self.source_path)
+        else:
+            self._source_path=source_path
 
-        if not mount_path or not os.path.isabs(mount_path):
+        if not mount_path or (require_abs_mount_path and not os.path.isabs(mount_path)):
             raise Exception(f"invalid mount point's mount path '{mount_path}'")
 
         self._mount_path=mount_path # where it is mounted
@@ -124,10 +129,6 @@ class MountPoint:
     def monitored(self) -> bool:
         return self._monitored
 
-    @property
-    def is_dir(self) -> bool:
-        return self._is_dir
-
     def is_mounted(self) -> bool:
         """Tell if the mount point is mounted and, if mounted, verifies that the correct source path is mounted
         Note: does not check the read-only status
@@ -148,6 +149,9 @@ class MountPoint:
 
         if _debug:
             syslog.syslog(syslog.LOG_DEBUG, f"Mounting {self.source_path} on {self.mount_path}")
+
+        if not os.path.isabs(self._source_path):
+            raise Exception(f"source path {self._source_path} is not absoltue")
         if not os.path.exists(self.mount_path):
             makedirs_keep_owner(self.mount_path)
 
@@ -222,7 +226,7 @@ class MountPointGroup:
             elif os.access(esp, os.W_OK):
                 # directly bind file if we have write permission
                 args+=["--bind", esp, mpoint.mount_path]
-            elif mpoint.is_dir:
+            elif mpoint._is_dir:
                 # add an overlay to allow write to directory
                 ovl_dir=_prefixed_mount_path(mpoint, run_dir)
                 if _debug:
@@ -347,7 +351,7 @@ class MountPointSet:
         """
         for mpgroup in self._groups:
             if _debug:
-                syslog.syslog(syslog.LOG_WARNING, f"file_source_path({mpgroup=}, {filename=}, {to_write=}, {self._run_dir=}) -> {mpgroup.file_source_path(filename, to_write, self._run_dir)}")
+                syslog.syslog(syslog.LOG_DEBUG, f"file_source_path({mpgroup=}, {filename=}, {to_write=}, {self._run_dir=}) -> {mpgroup.file_source_path(filename, to_write, self._run_dir)}")
             res=mpgroup.file_source_path(filename, to_write, self._run_dir)
             if res:
                 return res

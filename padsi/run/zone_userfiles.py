@@ -86,14 +86,14 @@ class ZoneUserFiles:
 
     @classmethod
     def compute_all_zones_dir(cls, run_dir:str) -> str:
-        """Get the directory where all the userfiles are located, for a user and
+        """Get the directory where all the user files are located, for a user and
         for all the zones. Will be like "/run/padsi/user/<uid>/userfiles"
         """
         return os.path.join(run_dir, "userfiles")
 
     @classmethod
     def _compute_assembled_home_dir(cls, zone_conf:padsi.config.Zone, run_dir:str) -> str:
-        """Home directory as seen in the zone
+        """Zone's home directory in the "host"
         """
         return os.path.join(cls.compute_all_zones_dir(run_dir), zone_conf.name)
 
@@ -131,7 +131,7 @@ class ZoneUserFiles:
     @classmethod
     def compute_actual_mount_points(cls, gconf:padsi.config.Configuration, zone_conf:padsi.config.Zone,
                                     run_dir:str, uid:int, gid:int) -> list[padsi.config.MountPoint]:
-        """Get the actual mount points in the specified context, all the mount points are below the self.zone_home_dir directory
+        """Get the actual mount points in the specified context
         """
         user_xdg_subdirectories=padsi.misc.compute_user_xdg_subdirectories(uid)
         all_zones_dirs=_compute_all_zones_xdg_directories(gconf, uid, gid)
@@ -146,12 +146,12 @@ class ZoneUserFiles:
 
         # HOME dir of the zone as a mount point
         zone_home=gconf.get_zone_user_home_dir(uid, zone_conf.name)
-        res.append(padsi.config.MountPoint(top_dir, zone_home, False))
+        res.append(padsi.config.MountPoint(zone_home, top_dir , False))
 
         # one mount point per mount point defined in the zone's configuration
         all_zones_home=gconf.get_zone_user_home_dir(uid)
         for mp in zone_conf.mount_points:
-            mountpoint=os.path.join(top_dir, padsi.misc.expand_variables_in_string(mp.mountpoint, user_xdg_subdirectories))
+            mountpoint=os.path.join(top_dir, padsi.misc.expand_variables_in_string(mp.mount_path, user_xdg_subdirectories))
             source_path=padsi.misc.expand_variables_in_string(mp.source_path, all_zones_dirs)
             if not os.path.isabs(source_path):
                 source_path=os.path.join(host_home_dir, source_path)
@@ -165,8 +165,8 @@ class ZoneUserFiles:
                 else:
                     os.makedirs(source_path)
 
-            #syslog.syslog(syslog.LOG_ERR, f"userfiles: {source_path} will be mounted as {mountpoint} (RO: {mp.readonly})")
-            res.append(padsi.config.MountPoint(mountpoint, source_path, mp.readonly))
+            #syslog.syslog(syslog.LOG_ERR, f"{source_path} will be mounted as {mountpoint} (RO: {mp.read_only})")
+            res.append(padsi.config.MountPoint(source_path, mountpoint, mp.read_only))
         return res
 
     @classmethod
@@ -182,7 +182,8 @@ class ZoneUserFiles:
         try:
             for mp in cls.compute_actual_mount_points(gconf, zone_conf, run_dir, uid, gid):
                 if _debug:
-                    syslog.syslog(syslog.LOG_DEBUG, f"{syslog_prefix}: mounting {mp.source_path} to {mp.mountpoint} ({'RO' if mp.readonly else 'RW'})")
+                    mode="RO" if mp.read_only else "RW"
+                    syslog.syslog(syslog.LOG_DEBUG, f"{syslog_prefix}: mounting {mp.source_path} to {mp.mount_path} ({mode})")
                 if mp.mount():
                     mounted.append(mp)
             if _debug:
@@ -190,12 +191,12 @@ class ZoneUserFiles:
         except Exception as e:
             for mp in mounted[::-1]:
                 if _debug:
-                    syslog.syslog(syslog.LOG_DEBUG, f"{syslog_prefix}: unmounting {mp.mountpoint} from {mp.source_path}")
+                    syslog.syslog(syslog.LOG_DEBUG, f"{syslog_prefix}: unmounting {mp.mount_path} from {mp.source_path}")
                 try:
                     mp.umount()
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_WARNING, f"{syslog_prefix}: {str(e)}")
-            msg=f"{syslog_prefix}: setup failed: {str(e)}" # pyright: ignore
+                except Exception as se:
+                    syslog.syslog(syslog.LOG_WARNING, f"{syslog_prefix}: {str(se)}")
+            msg=f"{syslog_prefix}: setup failed: {str(e)}"
             syslog.syslog(syslog.LOG_ERR, msg)
             raise Exception(msg)
 
@@ -217,7 +218,7 @@ class ZoneUserFiles:
         if zone_conf.has_virtual_machines:
             cls._generate_ssh_keypair(zone_conf, run_dir, uid, gid)
 
-        return [mp.mountpoint for mp in mounted[::-1]]
+        return [mp.mount_path for mp in mounted[::-1]]
 
     @classmethod
     def cleanup(cls, gconf:padsi.config.Configuration, zone_conf:padsi.config.Zone, uid:int, gid:int, run_dir:str, syslog_prefix:str):
@@ -225,7 +226,7 @@ class ZoneUserFiles:
         for mp in revmp:
             try:
                 if _debug:
-                    syslog.syslog(syslog.LOG_DEBUG, f"{syslog_prefix}: unmounting {mp.mountpoint} from {mp.source_path}")
+                    syslog.syslog(syslog.LOG_DEBUG, f"{syslog_prefix}: unmounting {mp.mount_path} from {mp.source_path}")
                 mp.umount()
             except Exception as e:
                 syslog.syslog(syslog.LOG_WARNING, f"{syslog_prefix}: {str(e)}")

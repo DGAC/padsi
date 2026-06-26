@@ -20,64 +20,11 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import syslog
-from dataclasses import dataclass
 
-import padsi.misc
+from nsbubble import MountPoint as BubbleMountPoint
 
-_debug=False
-
-@dataclass
-class MountPoint:
-    """Represent a mount point"""
-    mountpoint: str
-    source_path: str
-    readonly: bool
-
-    def is_mounted(self) -> bool:
-        """Tell if the mount point is mounted and, if mounted, verifies that the correct source path is mounted
-        Note: does not check the read-only status
-        """
-        proc=subprocess.run(["findmnt", "-n", "-o", "SOURCE", self.mountpoint], capture_output=True, text=True)
-        if proc.returncode!=0:
-            if not proc.stderr:
-                return False
-            raise Exception(f"Could not run findmnt: {proc.stderr}")
-        return True
-
-    def mount(self) -> bool:
-        """Mount a MountPoint
-        Returns True if the mount point was not already mounted
-        """
-        if self.is_mounted():
-            return False
-
-        if _debug:
-            syslog.syslog(syslog.LOG_DEBUG, f"Mounting {self.source_path} on {self.mountpoint}")
-        if not os.path.exists(self.mountpoint):
-            padsi.misc.makedirs_keep_owner(self.mountpoint)
-
-        opt="bind,ro" if self.readonly else "bind"
-        proc=subprocess.run(["mount", "-o", opt, self.source_path, self.mountpoint], capture_output=True, text=True)
-        if proc.returncode!=0:
-            raise Exception(f"Could not mount '{self.source_path}' on '{self.mountpoint}': {proc.stderr}")
-        return True
-
-    def umount(self) -> bool:
-        """Unmount a mount point
-        Returns True if the mount point was effectively mounted
-        """
-        if not self.is_mounted():
-            return False
-        if _debug:
-            syslog.syslog(syslog.LOG_DEBUG, f"Unmounting {self.mountpoint} from {self.source_path}")
-        proc=subprocess.run(["umount", self.mountpoint], capture_output=True, text=True)
-        if proc.returncode!=0:
-            raise Exception(f"Could not umount '{self.mountpoint}' from '{self.source_path}': {proc.stderr}")
-        return True
-
-
+class MountPoint(BubbleMountPoint):
+    """Represent a mount point, a simple wrapper around nsbubble's MountPoint"""
     @staticmethod
     def load_from_data(mounts_data:dict, allow_absolute_destination_path:bool) -> list[MountPoint]|None:
         """Load a configuration block about mount points
@@ -104,6 +51,6 @@ class MountPoint:
             if os.path.isabs(source):
                 raise Exception(f"Invalid mount point: source path {source} must be relative and not absolute")
 
-            mounts.append(MountPoint(mp, source, mode!="rw"))
+            mounts.append(MountPoint(source, mp, mode!="rw", require_abs_mount_path=False))
 
         return mounts

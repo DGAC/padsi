@@ -237,7 +237,8 @@ class ZoneVM(ZoneFoundations):
             self.add_component(comp)
 
         # virtiofs component for the VM management's shared directory
-        comp = virtiofs.VirtioFSServer(padsi.config.MountPoint("padsi-agent", self._vmm.management_files_dir, True))
+        mp=padsi.config.MountPoint(self._vmm.management_files_dir, "padsi-agent", True)
+        comp = virtiofs.VirtioFSServer(mp)
         self.add_component(comp, False)
         self._virtiofs_srvs.append(comp)
         self._virtiofs_data.append(nsbubble.VirtioSharedDirectory(comp.fsname, comp.socket_path))
@@ -246,10 +247,10 @@ class ZoneVM(ZoneFoundations):
         if len(self._vm_conf.mount_points) > 0:
             user_xdg_subdirectories = compute_user_xdg_subdirectories(self.uid)
             for mp in self._vm_conf.mount_points:
-                actual_mp = expand_variables_in_string(mp.mountpoint, user_xdg_subdirectories)
+                actual_mp = expand_variables_in_string(mp.mount_path, user_xdg_subdirectories)
                 actual_sp = expand_variables_in_string(mp.source_path, user_xdg_subdirectories)
-                comp = virtiofs.VirtioFSServer(padsi.config.MountPoint(actual_mp, actual_sp, mp.readonly),
-                    self._zuf.zone_home_dir)
+                mp=padsi.config.MountPoint(actual_sp, actual_mp, mp.read_only)
+                comp = virtiofs.VirtioFSServer(mp, self._zuf.zone_home_dir)
                 self.add_component(comp, False)
                 self._virtiofs_srvs.append(comp)
                 self._virtiofs_data.append(nsbubble.VirtioSharedDirectory(comp.fsname, comp.socket_path))

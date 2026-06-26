@@ -257,9 +257,9 @@ class Configuration:
 
         def _check_mountpoint(mp: MountPoint, context: str):
             try:
-                padsi.misc.expand_variables_in_string(mp.mountpoint, all_vars)
+                padsi.misc.expand_variables_in_string(mp.mount_path, all_vars)
             except Exception:
-                raise Exception(f"Invalid mount point in {context}: destination path '{mp.mountpoint}' uses invalid variable")
+                raise Exception(f"Invalid mount point in {context}: destination path '{mp.mount_path}' uses invalid variable")
             try:
                 padsi.misc.expand_variables_in_string(mp.source_path, all_vars)
             except Exception:

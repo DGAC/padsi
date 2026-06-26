@@ -52,7 +52,7 @@ class VirtioFSServer(Component):
             self._shared_dir_in_host=os.path.join(reference_dir, self._mountpoint.source_path)
         if not os.path.exists(self._shared_dir_in_host):
             os.makedirs(self._shared_dir_in_host)
-        self._fsname=self._mountpoint.mountpoint.replace("/", "_")
+        self._fsname=self._mountpoint.mount_path.replace("/", "_")
         self._shared_dir_in_bubble=f"/shared-{self._fsname}"
 
     @property
@@ -82,7 +82,7 @@ class VirtioFSServer(Component):
         """
         if self._pid is None:
             args=["/tmp/virtiofsd", "--shared-dir", self._shared_dir_in_bubble, "--socket-path", self.socket_path, "--sandbox", "none", "--syslog"]
-            if self._mountpoint.readonly:
+            if self._mountpoint.read_only:
                 args.append("--readonly")
             self._pid=api.start_process(args, ignore_status=False, restart=True)
 
@@ -100,9 +100,9 @@ class VirtioFSServer(Component):
             "class": self.__class__.__name__,
             "data": {
                 "pid": self._pid,
-                "mountpoint": self._mountpoint.mountpoint,
+                "mountpoint": self._mountpoint.mount_path,
                 "source-path": self._mountpoint.source_path,
-                "read-only": self._mountpoint.readonly
+                "read-only": self._mountpoint.read_only
             }
         }
 
@@ -111,7 +111,7 @@ class VirtioFSServer(Component):
         ldata=data.get("data")
         if ldata is None:
             raise Exception("CODEBUG: no 'data' found in deserialized data")
-        mp=MountPoint(ldata["mountpoint"], ldata["source-path"], ldata["read-only"])
+        mp=MountPoint(ldata["source-path"], ldata["mountpoint"], ldata["read-only"])
         obj=cls(mountpoint=mp)
         obj._pid=ldata["pid"]
         return obj

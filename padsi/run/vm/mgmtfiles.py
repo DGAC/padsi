@@ -216,7 +216,7 @@ class VMManagementFiles:
             for mp in self._vm_conf.mount_points:
                 actual_sp=padsi.misc.expand_variables_in_string(mp.source_path, host_user_xdg_subdirectories)
                 fsname=actual_sp.replace("/", "_")
-                actual_mp=padsi.misc.expand_variables_in_string(mp.mountpoint, vm_user_xdg_subdirectories)
+                actual_mp=padsi.misc.expand_variables_in_string(mp.mount_path, vm_user_xdg_subdirectories)
                 mountpoints[fsname]=actual_mp
 
             with open(os.path.join(etc_dir, "mountpoints.txt"), "wt") as fd:
@@ -236,7 +236,7 @@ class VMManagementFiles:
         lib_dir=os.path.join(self._mgmt_dir, "lib")
         top_src_dir=_get_top_source_dir()
         osvpath=os.path.join(top_src_dir, "vm-management", "scripts", self._vm_conf.os_variant)
-        res.append(MountPoint(lib_dir, osvpath, True))
+        res.append(MountPoint(osvpath, lib_dir, True))
 
         # user's ~/.padsi-agent/ directory, if it exists is mounted read-only
         padsi_agent_user_dir=os.path.join(self._zone_home_dir, ".padsi-agent")
@@ -244,7 +244,7 @@ class VMManagementFiles:
         if not check_user_dir_exists or os.path.isdir(padsi_agent_user_dir):
             user_dir=os.path.join(self._mgmt_dir, "user")
             os.makedirs(user_dir, exist_ok=True)
-            res.append(MountPoint(user_dir, padsi_agent_user_dir, True))
+            res.append(MountPoint(padsi_agent_user_dir, user_dir, True))
 
         return res
 
@@ -290,19 +290,19 @@ class VMManagementFiles:
         mounted:list[MountPoint]=[]
         try:
             for mp in vmm._get_mount_points(True):
-                syslog.syslog(syslog.LOG_INFO, f"{vmm._syslog_prefix}: mounting {mp.source_path} to {mp.mountpoint}")
+                syslog.syslog(syslog.LOG_INFO, f"{vmm._syslog_prefix}: mounting {mp.source_path} to {mp.mount_path}")
                 if mp.mount():
                     mounted.append(mp)
             syslog.syslog(syslog.LOG_DEBUG, f"{vmm._syslog_prefix}: setup done")
         except Exception as e:
             for mp in mounted[::-1]:
-                syslog.syslog(syslog.LOG_INFO, f"{vmm._syslog_prefix}: unmounting {mp.mountpoint} from {mp.source_path}")
+                syslog.syslog(syslog.LOG_INFO, f"{vmm._syslog_prefix}: unmounting {mp.mount_path} from {mp.source_path}")
                 try:
                     mp.umount()
                 except Exception as se:
                     syslog.syslog(syslog.LOG_WARNING, f"{vmm._syslog_prefix}: {str(se)}")
             syslog.syslog(syslog.LOG_ERR, f"{vmm._syslog_prefix}: setup failed: {str(e)}")
-        return [mp.mountpoint for mp in mounted[::-1]]
+        return [mp.mount_path for mp in mounted[::-1]]
 
     async def cleanup(self):
         """Cleanup"""
@@ -333,7 +333,7 @@ class VMManagementFiles:
         revmp=vmm._get_mount_points(False)[::-1]
         for mp in revmp:
             try:
-                syslog.syslog(syslog.LOG_INFO, f"{vmm._syslog_prefix}: unmounting {mp.mountpoint} from {mp.source_path} (actually mounted: {mp.is_mounted()})")
+                syslog.syslog(syslog.LOG_INFO, f"{vmm._syslog_prefix}: unmounting {mp.mount_path} from {mp.source_path} (actually mounted: {mp.is_mounted()})")
                 if mp.is_mounted():
                     mp.umount()
             except Exception as e:
