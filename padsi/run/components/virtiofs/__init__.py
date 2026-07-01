@@ -52,7 +52,12 @@ class VirtioFSServer(Component):
             self._shared_dir_in_host=os.path.join(reference_dir, self._mountpoint.source_path)
         if not os.path.exists(self._shared_dir_in_host):
             os.makedirs(self._shared_dir_in_host)
-        self._fsname=self._mountpoint.mount_path.replace("/", "_")
+
+        fsname=self._mountpoint.mount_path
+        if fsname.endswith("/"):
+            fsname=fsname[:-1]
+        self._fsname=fsname.replace("/", "_")
+
         self._shared_dir_in_bubble=f"/shared-{self._fsname}"
 
     @property
