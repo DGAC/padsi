@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import syslog
@@ -294,7 +295,23 @@ class ZoneFoundations:
         """Get all the mount points for the zone, to be overridden by sub classes if necessary,
         not taking into account the mount points required by the components used
         """
+        # load /etc/machine-id
+        mid=""
+        with open("/etc/machine-id", "rt") as fd:
+            mid=fd.read().strip()
+        mid=hashlib.md5(f"{mid}-{self.zone_conf.name}".encode()).hexdigest()[:32]
+
+        mid_path=os.path.join(self.tmp_dir, "machine-id")
+        with open(mid_path, "wt") as fd:
+            fd.write(mid)
+            fd.write("\n")
+
         return {
+            mid_path: {
+                "mount-point": "/etc/machine-id",
+                "read-only": True,
+                "monitored": False
+            },
             self.logs_dir: {
                 "mount-point": "/var/log",
                 "read-only": False,
