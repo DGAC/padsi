@@ -817,6 +817,7 @@ class PadsiUserService:
             # create a new zone
             syslog.syslog(syslog.LOG_INFO,f"Starting zone '{zone_conf.name}' as UID {os.getuid()}, EUID {os.geteuid()}")
             logs_dir = self._gconf.get_zone_logs_dir(zone_conf.name, self._uid)
+            logs_dir=os.path.join(logs_dir, str(uuid.uuid4())) # per ZoneApps directory
             zone_ip_addr = zinfra.get_next_unused_ip() if zinfra is not None else None
             izone = padsi.run.ZoneApps(
                 self._gconf,
