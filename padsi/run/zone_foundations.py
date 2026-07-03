@@ -299,7 +299,8 @@ class ZoneFoundations:
         mid=""
         with open("/etc/machine-id", "rt") as fd:
             mid=fd.read().strip()
-        mid=hashlib.md5(f"{mid}-{self.zone_conf.name}".encode()).hexdigest()[:32]
+        if self._z_conf is not None:
+            mid=hashlib.md5(f"{mid}-{self._z_conf.name}".encode()).hexdigest()[:32]
 
         mid_path=os.path.join(self.tmp_dir, "machine-id")
         with open(mid_path, "wt") as fd:
