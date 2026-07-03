@@ -103,14 +103,12 @@ class WebInfra(Component):
         fw_rules=[]
         resolv_rules = []
         for proxy in self._proxies:
-            fw_rules = [
-                FWRule(
-                    "allow",
-                    "Web proxy access",
-                    Endpoint.from_repr(f"{proxy.host} ^ tcp ^ {proxy.port}"),
-                    FWRuleChain.OUTPUT,
-                )
-            ]
+            fw_rules.append(FWRule(
+                "allow",
+                "Web proxy access",
+                Endpoint.from_repr(f"{proxy.host} ^ tcp ^ {proxy.port}"),
+                FWRuleChain.OUTPUT,
+            ))
 
         if len(self._proxies)>0:
             # allow access to the proxy's own DNS server and web-infra (redirection purposes)
