@@ -23,8 +23,8 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use users::os::unix::UserExt;
-use users::{User, get_user_by_uid};
+use uzers::os::unix::UserExt;
+use uzers::{User, get_user_by_uid};
 use padsi::trace::{info, error};
 
 use crate::config::{AgentConfig, VMUsage};

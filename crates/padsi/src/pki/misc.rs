@@ -21,7 +21,7 @@
 //! Misc. functions
 //!
 use anyhow::{Result, anyhow};
-use rand::Rng;
+use rand::RngExt;
 use std::{
     io::Write,
     process::{Command, Output, Stdio},
