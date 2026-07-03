@@ -19,18 +19,23 @@
 
 //!
 //! Possible usages of certificates, which can be used to build certificate templates
-//! 
-use rcgen::CertificateParams;
+//!
 use anyhow::Result;
+use rcgen::CertificateParams;
 
 mod tls_server;
 
-pub use tls_server::TlsServer; 
+pub use tls_server::TlsServer;
 
 ///
 /// Defines the attributes a certificate will have for a specific usage (like KU and EKU).
-/// 
+///
 pub trait CertificateUsage {
     fn name(&self) -> &'static str;
-    fn get_params(&self, builder: &mut CertificateParams, cn:&str, other_names:Option<impl Into<Vec<String>>>) -> Result<()>;
+    fn get_params(
+        &self,
+        builder: &mut CertificateParams,
+        cn: &str,
+        other_names: Option<impl Into<Vec<String>>>,
+    ) -> Result<()>;
 }

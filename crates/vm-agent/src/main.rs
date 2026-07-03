@@ -17,27 +17,27 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
+use std::env;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::env;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use actix_web::{App, HttpServer, web};
 use anyhow::Result;
 
-use padsi::trace::{LevelFilter, TraceConfig, info, error, tracing_setup_json};
+use padsi::trace::{LevelFilter, TraceConfig, error, info, tracing_setup_json};
 
 mod agent;
 mod api;
 mod config;
-mod task;
-#[cfg(target_os = "windows")]
-mod windows;
-#[cfg(target_os = "windows")]
-mod win_service;
 #[cfg(target_os = "linux")]
 mod linux;
+mod task;
+#[cfg(target_os = "windows")]
+mod win_service;
+#[cfg(target_os = "windows")]
+mod windows;
 
 use crate::agent::OsAgent;
 use crate::config::VMUsage;
@@ -81,20 +81,23 @@ async fn main() -> std::io::Result<()> {
     run_app(stop_signal).await
 }
 
-async fn run_app(token: CancellationToken) -> std::io::Result<()>{
+async fn run_app(token: CancellationToken) -> std::io::Result<()> {
     // init logging
-    let log_dir=match env::var("LOG_DIR") {
+    let log_dir = match env::var("LOG_DIR") {
         Ok(v) => String::from(v),
-        Err(_) => log_dir()
+        Err(_) => log_dir(),
     };
 
     println!("Logging to directory '{}'", log_dir);
-    let trace_conf= TraceConfig::new(&log_dir, "padsi-vm-agent")
+    let trace_conf = TraceConfig::new(&log_dir, "padsi-vm-agent")
         .with_stdout_output(true)
         .with_file_level(LevelFilter::INFO)
         .with_syslog_level(LevelFilter::WARN);
-    trace_conf.check_dir().expect(&format!("Could not create directory {}", trace_conf.directory()));
-    let _t=tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
+    trace_conf.check_dir().expect(&format!(
+        "Could not create directory {}",
+        trace_conf.directory()
+    ));
+    let _t = tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
 
     info!("System setup");
     let agent: PlatformAgent = match system_setup() {
@@ -104,7 +107,7 @@ async fn run_app(token: CancellationToken) -> std::io::Result<()>{
             panic!("Failed to setup system")
         }
     };
-    let shared_agent: Arc<Mutex<PlatformAgent>>=Arc::new(Mutex::new(agent));
+    let shared_agent: Arc<Mutex<PlatformAgent>> = Arc::new(Mutex::new(agent));
 
     info!("Listening on port {}", ADMIN_PORT);
     tokio::spawn(reap_tasks(shared_agent.clone()));
@@ -121,13 +124,14 @@ async fn run_app(token: CancellationToken) -> std::io::Result<()>{
     })
     .shutdown_signal(token.cancelled_owned())
     .bind(("0.0.0.0", ADMIN_PORT))?
-    .run().await
+    .run()
+    .await
 }
 
 async fn reap_tasks(pf_agent: Arc<Mutex<PlatformAgent>>) {
     loop {
         sleep(Duration::from_secs(2)).await;
-        let agent_guard=pf_agent.lock().unwrap();
+        let agent_guard = pf_agent.lock().unwrap();
         agent_guard.reap_tasks();
     }
 }

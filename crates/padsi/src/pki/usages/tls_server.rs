@@ -17,26 +17,24 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
+use super::CertificateUsage;
+use anyhow::Result;
+use rcgen::{DnType, ExtendedKeyUsagePurpose, IsCa, KeyUsagePurpose, SanType, string::Ia5String};
 use std::net::IpAddr;
 use std::str::FromStr;
-use anyhow::Result;
-use time::{OffsetDateTime, Duration};
-use rcgen::{string::Ia5String, DnType, ExtendedKeyUsagePurpose, IsCa, KeyUsagePurpose, SanType };
-use super::CertificateUsage;
+use time::{Duration, OffsetDateTime};
 
 ///
 /// Usage of certificates for TLS server
 ///
 pub struct TlsServer {
     /// Validity period of the certificate
-    duration: Duration
+    duration: Duration,
 }
 
 impl TlsServer {
     pub fn new(duration: Duration) -> Self {
-        Self {
-            duration
-        }
+        Self { duration }
     }
 }
 
@@ -45,34 +43,41 @@ impl CertificateUsage for TlsServer {
         "TlsServer"
     }
 
-    fn get_params(&self, builder: &mut rcgen::CertificateParams, cn:&str,
-        other_names:Option<impl Into<Vec<String>>>) -> Result<()> {
-        builder.not_before=OffsetDateTime::now_utc();
-        builder.not_after=builder.not_before+self.duration;
-        builder.is_ca=IsCa::NoCa;
-        builder.key_usages=vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyEncipherment];
-        builder.extended_key_usages=vec![ExtendedKeyUsagePurpose::ServerAuth];
+    fn get_params(
+        &self,
+        builder: &mut rcgen::CertificateParams,
+        cn: &str,
+        other_names: Option<impl Into<Vec<String>>>,
+    ) -> Result<()> {
+        builder.not_before = OffsetDateTime::now_utc();
+        builder.not_after = builder.not_before + self.duration;
+        builder.is_ca = IsCa::NoCa;
+        builder.key_usages = vec![
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::KeyEncipherment,
+        ];
+        builder.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
         builder.distinguished_name.push(DnType::CommonName, cn);
 
         // add CN as 1st item of SAN
-        let item=match IpAddr::from_str(cn) {
+        let item = match IpAddr::from_str(cn) {
             Ok(ip) => SanType::IpAddress(ip),
             Err(_) => SanType::DnsName(Ia5String::from_str(cn)?),
         };
-        let mut san:Vec<SanType>=vec![item];
+        let mut san: Vec<SanType> = vec![item];
 
         // add other names as SAN items
-        if let Some(other_names)=other_names {
+        if let Some(other_names) = other_names {
             for name in other_names.into() {
-                let item=match IpAddr::from_str(&name) {
+                let item = match IpAddr::from_str(&name) {
                     Ok(ip) => SanType::IpAddress(ip),
-                    Err(_) => SanType::DnsName(Ia5String::from_str(&name)?)
+                    Err(_) => SanType::DnsName(Ia5String::from_str(&name)?),
                 };
                 san.push(item);
             }
         }
 
-        builder.subject_alt_names=san;
+        builder.subject_alt_names = san;
         Ok(())
     }
 }

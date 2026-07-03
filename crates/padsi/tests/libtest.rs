@@ -19,7 +19,7 @@
 
 #[cfg(test)]
 mod tests {
-    use padsi::pki::{usages::TlsServer, CA, PKCS12};
+    use padsi::pki::{CA, PKCS12, usages::TlsServer};
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
     use time::Duration;
@@ -27,31 +27,33 @@ mod tests {
     #[test]
     fn ca() {
         // create a CA
-        let ca=CA::create("Test CA", Duration::days(3650)).unwrap();
-        let p12=ca.to_pkcs12();
-        let tmp=NamedTempFile::new().unwrap();
-        let password=p12.to_file(tmp.path()).unwrap();
+        let ca = CA::create("Test CA", Duration::days(3650)).unwrap();
+        let p12 = ca.to_pkcs12();
+        let tmp = NamedTempFile::new().unwrap();
+        let password = p12.to_file(tmp.path()).unwrap();
 
         // load CA from file
-        let lp12=PKCS12::from_file(tmp.path(), &password).unwrap();
+        let lp12 = PKCS12::from_file(tmp.path(), &password).unwrap();
         assert_eq!(p12, lp12);
-        let lca=CA::from_pkcs12(lp12).unwrap();
+        let lca = CA::from_pkcs12(lp12).unwrap();
         assert_eq!(ca, lca);
 
         // CA's attributes
-        let attrs=ca.cert().attributes();
+        let attrs = ca.cert().attributes();
         assert_eq!(attrs.cn, "Test CA");
     }
 
     #[test]
     fn certs() {
         // create a CA
-        let ca=CA::create("Test CA", Duration::days(1)).unwrap();
+        let ca = CA::create("Test CA", Duration::days(1)).unwrap();
         println!("CA: {}", ca.cert_pem());
 
-        let tmpl=TlsServer::new(Duration::hours(1));
-        let cn=format!("myserver.local");
-        let p12=ca.generate_key_and_certificate(&tmpl, &cn, None::<Vec<String>>).unwrap();
+        let tmpl = TlsServer::new(Duration::hours(1));
+        let cn = format!("myserver.local");
+        let p12 = ca
+            .generate_key_and_certificate(&tmpl, &cn, None::<Vec<String>>)
+            .unwrap();
         println!("leaf: {}", p12.cert_pem());
         assert_eq!(p12.cert().attributes().cn, "myserver.local");
     }
@@ -62,14 +64,16 @@ mod tests {
         path.push("tests");
         path.push("ca.p12");
 
-        let p12=PKCS12::from_file(path, "i86k2GFMLyomCRQh").unwrap();
-        let ca=CA::from_pkcs12(p12).unwrap();
+        let p12 = PKCS12::from_file(path, "i86k2GFMLyomCRQh").unwrap();
+        let ca = CA::from_pkcs12(p12).unwrap();
 
         println!("CA: {}", ca.cert_pem());
 
-        let tmpl=TlsServer::new(Duration::hours(1));
-        let cn=format!("myserver.local");
-        let p12=ca.generate_key_and_certificate(&tmpl, &cn, None::<Vec<String>>).unwrap();
+        let tmpl = TlsServer::new(Duration::hours(1));
+        let cn = format!("myserver.local");
+        let p12 = ca
+            .generate_key_and_certificate(&tmpl, &cn, None::<Vec<String>>)
+            .unwrap();
         println!("leaf: {}", p12.cert_pem());
         assert_eq!(p12.cert().attributes().cn, "myserver.local");
     }

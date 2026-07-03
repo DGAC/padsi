@@ -17,18 +17,20 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
+use actix_files::NamedFile;
+use actix_multipart::form::{MultipartForm, json::Json as MpJson, tempfile::TempFile};
+use actix_web::{
+    Error as WebError, HttpRequest, Responder, Result as WebResult, error, get, post, web,
+};
+use base64::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
-use actix_web::{Responder, HttpRequest, Result as WebResult, Error as WebError, error, get, post, web};
-use actix_files::NamedFile;
-use actix_multipart::form::{json::Json as MpJson, tempfile::TempFile, MultipartForm};
-use serde::{Deserialize, Serialize};
-use base64::prelude::*;
-use tokio::fs as fs;
+use tokio::fs;
 use urlencoding::decode;
 
-use padsi::trace::{info, error};
+use padsi::trace::{error, info};
 
 use crate::agent::OsAgent;
 use crate::config::AgentConfig;
@@ -40,11 +42,10 @@ use crate::windows::PlatformAgent;
 
 #[post("/shutdown")]
 async fn post_shutdown(data: web::Data<Arc<Mutex<PlatformAgent>>>) -> WebResult<impl Responder> {
-    let agent_guard=data.get_ref().lock().unwrap();
+    let agent_guard = data.get_ref().lock().unwrap();
     if let Err(err) = agent_guard.shutdown() {
         Err(error::ErrorInternalServerError(err))
-    }
-    else {
+    } else {
         Ok(web::Bytes::new())
     }
 }
@@ -52,19 +53,19 @@ async fn post_shutdown(data: web::Data<Arc<Mutex<PlatformAgent>>>) -> WebResult<
 #[derive(Deserialize)]
 struct TaskArgs {
     args: Vec<String>,
-    with_status: bool
+    with_status: bool,
 }
 
 #[derive(Deserialize)]
 struct FormatOptions {
-    as_text: Option<bool>
+    as_text: Option<bool>,
 }
 
 #[derive(Serialize)]
 struct TaskResult {
     code: Option<i32>,
     stdout: Option<String>,
-    stderr: Option<String>
+    stderr: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -72,20 +73,34 @@ struct TaskResult {
 #[post("/task")]
 async fn post_task(
     data: web::Data<Arc<Mutex<PlatformAgent>>>,
-    query: web::Json<TaskArgs>
+    query: web::Json<TaskArgs>,
 ) -> WebResult<impl Responder> {
-    info!(args=format!("{:?}", &query.args), with_status=query.with_status, "New task");
+    info!(
+        args = format!("{:?}", &query.args),
+        with_status = query.with_status,
+        "New task"
+    );
     error!("Feature disabled");
     return Err(error::ErrorBadRequest("Feature disabled"));
 
-    let agent_guard=data.get_ref().lock().unwrap();
+    let agent_guard = data.get_ref().lock().unwrap();
     match agent_guard.new_task(&query.args, query.with_status) {
         Ok(tid) => {
-            info!(tid=tid, args=format!("{:?}", &query.args), with_status=query.with_status, "Task running");
+            info!(
+                tid = tid,
+                args = format!("{:?}", &query.args),
+                with_status = query.with_status,
+                "Task running"
+            );
             Ok(web::Json(tid))
-        },
+        }
         Err(err) => {
-            error!(error=err.to_string(), args=format!("{:?}", &query.args), with_status=query.with_status, "Task failed");
+            error!(
+                error = err.to_string(),
+                args = format!("{:?}", &query.args),
+                with_status = query.with_status,
+                "Task failed"
+            );
             Err(error::ErrorInternalServerError(err))
         }
     }
@@ -95,63 +110,67 @@ async fn post_task(
 async fn get_task(
     data: web::Data<Arc<Mutex<PlatformAgent>>>,
     query: web::Query<FormatOptions>,
-    path: web::Path<u64>
+    path: web::Path<u64>,
 ) -> WebResult<impl Responder> {
-    let id=path.into_inner();
-    info!(tid=id, "Get task status");
-    let mut agent_guard=data.get_ref().lock().unwrap();
-    let res=match agent_guard.task_output(id) {
+    let id = path.into_inner();
+    info!(tid = id, "Get task status");
+    let mut agent_guard = data.get_ref().lock().unwrap();
+    let res = match agent_guard.task_output(id) {
         Ok(Some(output)) => {
-            let as_text=query.as_text.unwrap_or(true);
+            let as_text = query.as_text.unwrap_or(true);
             if as_text {
-                TaskResult{
+                TaskResult {
                     code: Some(output.status.code().unwrap_or_else(|| 0)),
                     stdout: Some(String::from_utf8_lossy(&output.stdout[..]).into_owned()),
-                    stderr: Some(String::from_utf8_lossy(&output.stderr[..]).into_owned())
+                    stderr: Some(String::from_utf8_lossy(&output.stderr[..]).into_owned()),
                 }
-            }
-            else {
-                TaskResult{
+            } else {
+                TaskResult {
                     code: Some(output.status.code().unwrap_or_else(|| 0)),
                     stdout: Some(BASE64_STANDARD.encode(output.stdout)),
-                    stderr: Some(BASE64_STANDARD.encode(output.stderr))
+                    stderr: Some(BASE64_STANDARD.encode(output.stderr)),
                 }
             }
+        }
+        Ok(None) => TaskResult {
+            code: None,
+            stdout: None,
+            stderr: None,
         },
-        Ok(None) => {
-            TaskResult { code: None, stdout: None, stderr: None }
-        },
-        Err(err) => return Err(error::ErrorBadRequest(err))
+        Err(err) => return Err(error::ErrorBadRequest(err)),
     };
     Ok(web::Json(res))
 }
 
 #[get("/tasks")]
 async fn get_tasks(data: web::Data<Arc<Mutex<PlatformAgent>>>) -> impl Responder {
-    let agent_guard=data.get_ref().lock().unwrap();
-    let tids=agent_guard.tasks();
-    info!(tids=format!("{:?}", tids), "Get tasks list");
+    let agent_guard = data.get_ref().lock().unwrap();
+    let tids = agent_guard.tasks();
+    info!(tids = format!("{:?}", tids), "Get tasks list");
     web::Json(tids)
 }
 
 #[derive(Serialize)]
 enum StatusResp {
     UserSessionOpened(bool),
-    Config(AgentConfig)
+    Config(AgentConfig),
 }
 
 #[get("/status/{context}")]
 async fn get_status(
     data: web::Data<Arc<Mutex<PlatformAgent>>>,
-    path: web::Path<String>
+    path: web::Path<String>,
 ) -> WebResult<impl Responder> {
-    let context=path.into_inner();
+    let context = path.into_inner();
     let agent_guard = data.get_ref().lock().unwrap();
     let resp = match context.as_str() {
         "config" => StatusResp::Config(agent_guard.config().clone()),
         "user-session-opened" => StatusResp::UserSessionOpened(agent_guard.user_session_opened()),
         _ => {
-            return Err(error::ErrorBadRequest(format!("invalid '{}' context", context)));
+            return Err(error::ErrorBadRequest(format!(
+                "invalid '{}' context",
+                context
+            )));
         }
     };
     Ok(web::Json(resp))
@@ -160,46 +179,45 @@ async fn get_status(
 #[get("/file/{filename:.*}")]
 async fn get_file(
     data: web::Data<Arc<Mutex<PlatformAgent>>>,
-    req: HttpRequest
+    req: HttpRequest,
 ) -> Result<NamedFile, WebError> {
-    let res=match decode(req.match_info().query("filename")) {
-        Ok(d)=>d,
+    let res = match decode(req.match_info().query("filename")) {
+        Ok(d) => d,
         Err(_) => {
             error!("Get file error: could not decode file path");
-            return Err(error::ErrorBadRequest("Could not decode file path"))
+            return Err(error::ErrorBadRequest("Could not decode file path"));
         }
     };
-    let mut path: std::path::PathBuf = match res.parse(){
+    let mut path: std::path::PathBuf = match res.parse() {
         Ok(p) => p,
         Err(_) => {
             error!("Get file error: could not parse file path");
-            return Err(error::ErrorBadRequest("Could not parse file path"))
+            return Err(error::ErrorBadRequest("Could not parse file path"));
         }
     };
 
     let agent_guard = data.get_ref().lock().unwrap();
 
     if path.is_absolute() {
-        if ! path.starts_with(agent_guard.user_home_dir()) {
-            let msg=format!("access to '{}' is not allowed", path.display());
+        if !path.starts_with(agent_guard.user_home_dir()) {
+            let msg = format!("access to '{}' is not allowed", path.display());
             error!("Get file error: {}", msg);
-            return Err(error::ErrorForbidden(msg))
+            return Err(error::ErrorForbidden(msg));
         }
-    }
-    else {
-        let mut npath=PathBuf::from(agent_guard.user_home_dir());
+    } else {
+        let mut npath = PathBuf::from(agent_guard.user_home_dir());
         npath.push(&path);
-        path=npath;
+        path = npath;
     }
     let file = match NamedFile::open(&path) {
         Ok(f) => f,
         Err(err) => {
-            let msg=format!("access error to '{}': {}", path.display(), err.to_string());
+            let msg = format!("access error to '{}': {}", path.display(), err.to_string());
             error!("Get file error: {}", msg);
-            return Err(error::ErrorForbidden(msg))
+            return Err(error::ErrorForbidden(msg));
         }
     };
-    info!(path=format!("{}", path.display()), "Get file");
+    info!(path = format!("{}", path.display()), "Get file");
     Ok(file.use_last_modified(true))
 }
 
@@ -218,57 +236,68 @@ struct UploadForm {
 #[post("/file")]
 pub async fn post_file(
     data: web::Data<Arc<Mutex<PlatformAgent>>>,
-    form: MultipartForm<UploadForm>
+    form: MultipartForm<UploadForm>,
 ) -> WebResult<impl Responder> {
     // Uploaded to file: form.file.file_name, size form.file.size
     // Requested file name: form.meta.name
     let agent_guard = data.get_ref().lock().unwrap();
 
-    let file_path= match &form.meta.name {
+    let file_path = match &form.meta.name {
         Some(x) => {
-            let mut p=PathBuf::from(x);
+            let mut p = PathBuf::from(x);
             if p.is_absolute() {
-                if ! p.starts_with(agent_guard.user_home_dir()) {
-                    let msg=format!("access to '{}' is not allowed", p.display());
+                if !p.starts_with(agent_guard.user_home_dir()) {
+                    let msg = format!("access to '{}' is not allowed", p.display());
                     error!("File upload error: {}", msg);
-                    return Err(error::ErrorForbidden(msg))
+                    return Err(error::ErrorForbidden(msg));
                 }
-            }
-            else {
-                let mut npath=PathBuf::from(agent_guard.user_home_dir());
+            } else {
+                let mut npath = PathBuf::from(agent_guard.user_home_dir());
                 npath.push(&x);
-                p=npath
+                p = npath
             }
             match p.parent() {
                 Some(parent) => {
-                    if let Err(err)=std::fs::create_dir_all(parent) {
-                        let msg=format!("could not create directories up to '{}': {}", parent.display(), err.to_string());
+                    if let Err(err) = std::fs::create_dir_all(parent) {
+                        let msg = format!(
+                            "could not create directories up to '{}': {}",
+                            parent.display(),
+                            err.to_string()
+                        );
                         error!("File upload error: {}", msg);
-                        return Err(error::ErrorForbidden(msg))
+                        return Err(error::ErrorForbidden(msg));
                     }
-                },
+                }
                 None => {
-                    let msg=format!("'{}' does not have any parent", p.display());
+                    let msg = format!("'{}' does not have any parent", p.display());
                     error!("File upload error: {}", msg);
-                    return Err(error::ErrorBadRequest(msg))
+                    return Err(error::ErrorBadRequest(msg));
                 }
             }
 
             p
-        },
-        None => PathBuf::from(agent_guard.user_home_dir())
+        }
+        None => PathBuf::from(agent_guard.user_home_dir()),
     };
-    info!(path=format!("{}", file_path.display()), "File upload");
+    info!(path = format!("{}", file_path.display()), "File upload");
 
     if let Err(err) = fs::copy(form.file.file.path(), &file_path).await {
         error!("File upload error: {}", err.to_string());
-        return Err(error::ErrorInternalServerError(err.to_string()))
+        return Err(error::ErrorInternalServerError(err.to_string()));
     }
     #[cfg(target_os = "linux")]
-    match std::os::unix::fs::chown(&file_path, Some(agent_guard.config().user_id), Some(agent_guard.config().group_id)) {
+    match std::os::unix::fs::chown(
+        &file_path,
+        Some(agent_guard.config().user_id),
+        Some(agent_guard.config().group_id),
+    ) {
         Ok(_) => Ok(format!("Ok")),
         Err(err) => {
-            error!(path=format!("{}", file_path.display()), "File upload error: {}", err.to_string());
+            error!(
+                path = format!("{}", file_path.display()),
+                "File upload error: {}",
+                err.to_string()
+            );
             Err(error::ErrorInternalServerError(err.to_string()))
         }
     }

@@ -21,21 +21,21 @@
 
 use core::fmt::{Display, Formatter, Result};
 
-pub const KEY_INIT_NETNS: u8= 1;
-pub const KEY_PADSI_PID: u8= 2;
-pub const BUF_PATH_LEN: usize= 320;
+pub const KEY_INIT_NETNS: u8 = 1;
+pub const KEY_PADSI_PID: u8 = 2;
+pub const BUF_PATH_LEN: usize = 320;
 
 #[derive(Clone, Copy)]
 pub enum BlockedCall {
     FileOpen,
-    PathUnlink
+    PathUnlink,
 }
 
 impl Display for BlockedCall {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
             BlockedCall::FileOpen => write!(f, "file_open"),
-            BlockedCall::PathUnlink => write!(f, "file_unlink")
+            BlockedCall::PathUnlink => write!(f, "file_unlink"),
         }
     }
 }
@@ -49,5 +49,5 @@ pub struct Event {
     pub uid: u32,
     pub comm: [u8; 16], // process name
     pub timestamp: u64,
-    pub file: [u8; BUF_PATH_LEN]
+    pub file: [u8; BUF_PATH_LEN],
 }

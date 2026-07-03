@@ -20,16 +20,16 @@
 //!
 //! Certification authority
 //!
-use anyhow::{anyhow, Result};
-use time::{OffsetDateTime, Duration};
+use anyhow::{Result, anyhow};
 use rcgen::{CertificateParams, DnType, Issuer, KeyPair, KeyUsagePurpose};
-use x509_parser::prelude::{X509Certificate, oid_registry, FromDer};
+use time::{Duration, OffsetDateTime};
+use x509_parser::prelude::{FromDer, X509Certificate, oid_registry};
 
 use super::certificate::Certificate;
 use super::pkcs12::PKCS12;
 use super::privkey::PrivKey;
 use super::usages::CertificateUsage;
-use crate::trace::{debug};
+use crate::trace::debug;
 
 ///
 /// Certification Authority object
@@ -45,12 +45,12 @@ pub struct CA {
 
 impl CA {
     /// Initialize a new CA
-    pub fn create(cn: &str, duration:Duration) -> Result<Self> {
+    pub fn create(cn: &str, duration: Duration) -> Result<Self> {
         let priv_key = PrivKey::generate()?;
         let mut ca_params = CertificateParams::default();
         ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        ca_params.not_before=OffsetDateTime::now_utc();
-        ca_params.not_after=ca_params.not_before+duration;
+        ca_params.not_before = OffsetDateTime::now_utc();
+        ca_params.not_after = ca_params.not_before + duration;
         ca_params.distinguished_name.push(DnType::CommonName, cn);
         let ca_cert = ca_params.self_signed(&priv_key.keypair)?;
         Ok(Self {
@@ -74,29 +74,31 @@ impl CA {
         self.cert.pem()
     }
 
-    fn complement_certificate_params(&self, cert_params: &mut CertificateParams) -> Result<()>{
+    fn complement_certificate_params(&self, cert_params: &mut CertificateParams) -> Result<()> {
         let (_, parsed) = X509Certificate::from_der(&self.cert.cert_der).unwrap();
         for rdn in parsed.tbs_certificate.subject.iter() {
             println!("... {:?}", rdn);
             for attr in rdn.iter() {
                 let (oid, value) = (attr.attr_type(), attr.attr_value());
                 println!("+==> {:?} = {:?}", oid, value.as_str().unwrap());
-                let dntype= if *oid==oid_registry::OID_X509_COUNTRY_NAME {
+                let dntype = if *oid == oid_registry::OID_X509_COUNTRY_NAME {
                     DnType::CountryName
-                } else if *oid==oid_registry::OID_X509_LOCALITY_NAME {
+                } else if *oid == oid_registry::OID_X509_LOCALITY_NAME {
                     DnType::CountryName
-                } else if *oid==oid_registry::OID_X509_STATE_OR_PROVINCE_NAME {
+                } else if *oid == oid_registry::OID_X509_STATE_OR_PROVINCE_NAME {
                     DnType::StateOrProvinceName
-                } else if *oid==oid_registry::OID_X509_ORGANIZATION_NAME {
+                } else if *oid == oid_registry::OID_X509_ORGANIZATION_NAME {
                     DnType::OrganizationName
-                } else if *oid==oid_registry::OID_X509_ORGANIZATIONAL_UNIT {
+                } else if *oid == oid_registry::OID_X509_ORGANIZATIONAL_UNIT {
                     DnType::OrganizationalUnitName
-                } else if *oid==oid_registry::OID_X509_COMMON_NAME {
+                } else if *oid == oid_registry::OID_X509_COMMON_NAME {
                     DnType::CommonName
                 } else {
-                    return Err(anyhow!("Unhandled OID {} in DN", oid))
+                    return Err(anyhow!("Unhandled OID {} in DN", oid));
                 };
-                cert_params.distinguished_name.push(dntype, value.as_str().unwrap());
+                cert_params
+                    .distinguished_name
+                    .push(dntype, value.as_str().unwrap());
             }
         }
         Ok(())
@@ -104,28 +106,35 @@ impl CA {
 
     /// Generate a private key and a public key and a certificate for an entity
     /// and returns a PKCS#12 object
-    pub fn generate_key_and_certificate<T: CertificateUsage>(&self, usage: &T, cn: &str, other_names: Option<impl Into<Vec<String>>>) -> Result<PKCS12> {
+    pub fn generate_key_and_certificate<T: CertificateUsage>(
+        &self,
+        usage: &T,
+        cn: &str,
+        other_names: Option<impl Into<Vec<String>>>,
+    ) -> Result<PKCS12> {
         // entity's associated date
         let ent_key = KeyPair::generate()?;
         //let ent_key = KeyPair::generate()?;
         let mut ent_params = CertificateParams::default();
         usage.get_params(&mut ent_params, cn, other_names)?;
-        ent_params.is_ca=rcgen::IsCa::ExplicitNoCa;
+        ent_params.is_ca = rcgen::IsCa::ExplicitNoCa;
 
         // prepare CA side
         let mut ca_params = CertificateParams::default();
         ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         self.complement_certificate_params(&mut ca_params)?;
-        ca_params.key_usages = vec![
-            KeyUsagePurpose::KeyCertSign,
-            KeyUsagePurpose::CrlSign,
-        ];
+        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
         let signing_key = Issuer::new(ca_params, &self.priv_key.keypair);
 
         // generate certificate
         let ent_cert = ent_params.signed_by(&ent_key, &signing_key)?;
 
-        debug!("CA '{}' generated a '{}' certificate for '{}'", self.cert.attributes().cn, usage.name(), cn);
+        debug!(
+            "CA '{}' generated a '{}' certificate for '{}'",
+            self.cert.attributes().cn,
+            usage.name(),
+            cn
+        );
         Ok(PKCS12 {
             priv_key: PrivKey::new(ent_key),
             cert: Certificate::new(ent_cert.der().clone()),

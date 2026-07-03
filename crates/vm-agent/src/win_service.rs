@@ -20,15 +20,15 @@
 const SERVICE_NAME: &str = "padsi-agent";
 
 use std::ffi::OsString;
-use std::time::Duration;
 use std::sync::Mutex;
+use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use windows_service::{
     define_windows_service,
     service::{
-        ServiceControl, ServiceControlAccept, ServiceExitCode,
-        ServiceState, ServiceStatus, ServiceType,
+        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
+        ServiceType,
     },
     service_control_handler::{self, ServiceControlHandlerResult},
     service_dispatcher,
@@ -86,33 +86,34 @@ fn run_service() -> Result<(), windows_service::Error> {
     // before we can set a status (start pending, etc.)
     // SERVICE_NAME is required here again, as multiple services could
     // potentially share the same binary (not in our case, but part of API).
-    let status_handle = service_control_handler::register(
-        SERVICE_NAME,
-        move |control_event| match control_event {
-            ServiceControl::Interrogate => {
-                // Mandatory so SCM can check if the service is still alive
-                // and responding
-                ServiceControlHandlerResult::NoError
-            }
-            ServiceControl::Stop => {
-                // SCM (or a user through SCM) has requested a stop of the
-                // service. Use oneshot transmitter to signal a shutdown to
-                // our app (in case it hasn't exited yet, i.e. receiver is
-                // still there).
-                // We use the channel here and not the cancellation token
-                // directly as we don't have the status handle yet and make
-                // it a little easier.
-                if let Some(tx) = shutdown_tx.lock().unwrap().take() {
-                    let _ = tx.send(());
+    let status_handle =
+        service_control_handler::register(
+            SERVICE_NAME,
+            move |control_event| match control_event {
+                ServiceControl::Interrogate => {
+                    // Mandatory so SCM can check if the service is still alive
+                    // and responding
+                    ServiceControlHandlerResult::NoError
                 }
-                ServiceControlHandlerResult::NoError
-            }
+                ServiceControl::Stop => {
+                    // SCM (or a user through SCM) has requested a stop of the
+                    // service. Use oneshot transmitter to signal a shutdown to
+                    // our app (in case it hasn't exited yet, i.e. receiver is
+                    // still there).
+                    // We use the channel here and not the cancellation token
+                    // directly as we don't have the status handle yet and make
+                    // it a little easier.
+                    if let Some(tx) = shutdown_tx.lock().unwrap().take() {
+                        let _ = tx.send(());
+                    }
+                    ServiceControlHandlerResult::NoError
+                }
 
-            // For any other control event we just tell SCM that we can't
-            // handle it.
-            _ => ServiceControlHandlerResult::NotImplemented,
-        },
-    )?;
+                // For any other control event we just tell SCM that we can't
+                // handle it.
+                _ => ServiceControlHandlerResult::NotImplemented,
+            },
+        )?;
 
     // Tell SCM that we've received the start request
     // This is technically not necessary since we don't have an
@@ -230,7 +231,7 @@ fn run_service() -> Result<(), windows_service::Error> {
         current_state: ServiceState::Stopped,
         controls_accepted: ServiceControlAccept::empty(),
         exit_code: ServiceExitCode::Win32(0), // You may want to make return an error code
-                                                // depending on run_app success
+        // depending on run_app success
         checkpoint: 0,
         wait_hint: Duration::default(),
         process_id: None,

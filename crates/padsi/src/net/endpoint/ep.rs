@@ -21,9 +21,9 @@ use anyhow::{Error, Result, bail};
 use ipnetwork::Ipv4Network;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::net::IpAddr;
 
 use super::dname::Name;
 use super::interface::NetworkInterface;
@@ -122,8 +122,8 @@ impl EndPoint {
 
     /// Create a new TCP EndPoint from a Web request where the host does not always have a final point
     pub fn new_from_req(s: &str, port: u16) -> Result<Self> {
-        if let Ok(_)=IpAddr::from_str(s) {
-            return Self::new(&format!("{}^tcp^{}", s, port))
+        if let Ok(_) = IpAddr::from_str(s) {
+            return Self::new(&format!("{}^tcp^{}", s, port));
         }
         if let Some(c) = s.chars().nth_back(0)
             && c != '.'

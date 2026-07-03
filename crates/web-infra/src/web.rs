@@ -21,28 +21,31 @@
 //! Web redirector which display a "blocked page" notification and WPAD server
 //!
 
-use std::sync::Arc;
-use std::net::SocketAddr;
-use anyhow::{anyhow, Context, Result};
-use std::net::Ipv4Addr;
-use tokio::task::JoinSet;
-use tokio::net::{TcpListener};
+use anyhow::{Context, Result, anyhow};
 use hyper_util::rt::TokioIo;
+use std::net::Ipv4Addr;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::net::TcpListener;
+use tokio::task::JoinSet;
 type ServerBuilder = hyper::server::conn::http1::Builder;
+use http_body_util::combinators::BoxBody;
+use hyper::body::Bytes;
 use hyper::service::service_fn;
-use hyper::{body, Method, Request, Response, StatusCode};
-use hyper::body::{Bytes};
-use tokio_rustls::LazyConfigAcceptor;
-use rustls::pki_types::{CertificateDer};
-use rustls::server::{Acceptor, ServerConfig};
-use http_body_util::{combinators::BoxBody};
+use hyper::{Method, Request, Response, StatusCode, body};
 use padsi::pki::{PKCS12, usages::TlsServer};
-use padsi::trace::{Instrument, Level, error, info, warn, trace, span};
+use padsi::trace::{Instrument, Level, error, info, span, trace, warn};
+use rustls::pki_types::CertificateDer;
+use rustls::server::{Acceptor, ServerConfig};
+use tokio_rustls::LazyConfigAcceptor;
 
 use crate::config::GlobalConfig;
-use crate::misc::{empty, full, static_file_response, parse_ipv4, ensure_ip_address_present, response_for_web_redir_resource};
+use crate::misc::{
+    empty, ensure_ip_address_present, full, parse_ipv4, response_for_web_redir_resource,
+    static_file_response,
+};
 
-const WPAD_PORT:u16=80;
+const WPAD_PORT: u16 = 80;
 
 pub async fn setup(conf: &Arc<GlobalConfig>, set: &mut JoinSet<()>) -> Result<()> {
     http_setup(conf, set).await?;
@@ -50,26 +53,26 @@ pub async fn setup(conf: &Arc<GlobalConfig>, set: &mut JoinSet<()>) -> Result<()
 }
 
 async fn http_setup(conf: &Arc<GlobalConfig>, set: &mut JoinSet<()>) -> Result<()> {
-    let mut ports:Vec<u16>=vec![];
-    let mut ip:Ipv4Addr=Ipv4Addr::from([0, 0, 0, 0]);
+    let mut ports: Vec<u16> = vec![];
+    let mut ip: Ipv4Addr = Ipv4Addr::from([0, 0, 0, 0]);
     if conf.web_proxy.is_some() {
         ports.push(WPAD_PORT);
-        ip=match parse_ipv4(conf.web_proxy.as_ref().unwrap().listening_ip()) {
+        ip = match parse_ipv4(conf.web_proxy.as_ref().unwrap().listening_ip()) {
             Ok(r) => r,
-            Err(err) => return Err(anyhow!(err))
+            Err(err) => return Err(anyhow!(err)),
         };
     }
 
     if conf.web_redirector.is_some() {
         for port in &conf.web_redirector.as_ref().unwrap().http_ports {
-            if ! ports.contains(port) {
+            if !ports.contains(port) {
                 ports.push(*port);
             }
         }
 
-        ip=match parse_ipv4(conf.web_redirector.as_ref().unwrap().listening_ip()) {
+        ip = match parse_ipv4(conf.web_redirector.as_ref().unwrap().listening_ip()) {
             Ok(r) => r,
-            Err(err) => return Err(anyhow!(err))
+            Err(err) => return Err(anyhow!(err)),
         };
     }
 
@@ -77,10 +80,12 @@ async fn http_setup(conf: &Arc<GlobalConfig>, set: &mut JoinSet<()>) -> Result<(
     for port in ports {
         let web_addr = SocketAddr::from((ip, port));
         let web_listener = TcpListener::bind(web_addr).await?;
-        if port==WPAD_PORT {
-            info!("HTTP Web redirector and WPAD listening on http://{}", web_addr);
-        }
-        else {
+        if port == WPAD_PORT {
+            info!(
+                "HTTP Web redirector and WPAD listening on http://{}",
+                web_addr
+            );
+        } else {
             info!("HTTP Web redirector listening on http://{}", web_addr);
         }
         let conf = Arc::clone(conf);
@@ -89,29 +94,38 @@ async fn http_setup(conf: &Arc<GlobalConfig>, set: &mut JoinSet<()>) -> Result<(
             loop {
                 match web_listener.accept().await {
                     Ok((stream, addr)) => {
-                        let span=span!(Level::INFO, "connection", client_ip=addr.ip().to_string(), client_port=addr.port());
+                        let span = span!(
+                            Level::INFO,
+                            "connection",
+                            client_ip = addr.ip().to_string(),
+                            client_port = addr.port()
+                        );
                         let io = TokioIo::new(stream);
                         let config = Arc::clone(&conf); // clone Arc for each connection
                         tokio::task::spawn(async move {
                             if let Err(err) = ServerBuilder::new()
-                                .serve_connection(io, service_fn(|req: Request<body::Incoming>| {
-                                    let config = Arc::clone(&config);
-                                    handle_request(req, port, config).instrument(span.clone())
-                                }))
+                                .serve_connection(
+                                    io,
+                                    service_fn(|req: Request<body::Incoming>| {
+                                        let config = Arc::clone(&config);
+                                        handle_request(req, port, config).instrument(span.clone())
+                                    }),
+                                )
                                 .with_upgrades()
                                 .instrument(span.clone())
-                                .await {
-                                    span.in_scope(|| {
-                                        error!("Failed to serve connection: {:?}", err);
-                                    })
+                                .await
+                            {
+                                span.in_scope(|| {
+                                    error!("Failed to serve connection: {:?}", err);
+                                })
                             }
                         });
-                    },
+                    }
                     Err(err) => {
                         error!("Failed to handle incoming connection: {}", err.to_string())
                     }
                 }
-            };
+            }
         });
     }
     Ok(())
@@ -122,12 +136,25 @@ async fn craft_p12(conf: &GlobalConfig, sni: Option<&str>) -> Result<PKCS12> {
         warn!("No SNI specified in request");
         return Err(anyhow!("No SNI specified in request"));
     }
-    let sni=sni.unwrap();
-    let redir_conf=conf.web_redirector.as_ref().unwrap();
-    let mut cache=redir_conf.cache.as_ref().context("CODEBUG: cache is None")?.as_ref().write().unwrap();
+    let sni = sni.unwrap();
+    let redir_conf = conf.web_redirector.as_ref().unwrap();
+    let mut cache = redir_conf
+        .cache
+        .as_ref()
+        .context("CODEBUG: cache is None")?
+        .as_ref()
+        .write()
+        .unwrap();
     if cache.get(sni).is_none() {
-        let p12= match redir_conf.ca.as_ref().context("CODEBUG: ca is None")?.generate_key_and_certificate(
-            &TlsServer::new(time::Duration::days(1)), sni, None::<Vec<String>>) {
+        let p12 = match redir_conf
+            .ca
+            .as_ref()
+            .context("CODEBUG: ca is None")?
+            .generate_key_and_certificate(
+                &TlsServer::new(time::Duration::days(1)),
+                sni,
+                None::<Vec<String>>,
+            ) {
             Ok(p12) => p12,
             Err(err) => {
                 return Err(err);
@@ -135,23 +162,23 @@ async fn craft_p12(conf: &GlobalConfig, sni: Option<&str>) -> Result<PKCS12> {
         };
         cache.add(p12);
     }
-    let p12=cache.get(sni).unwrap();
-    trace!(cn=p12.cert().attributes().cn, "Generated certificate");
+    let p12 = cache.get(sni).unwrap();
+    trace!(cn = p12.cert().attributes().cn, "Generated certificate");
     Ok(p12.clone())
 }
 
 async fn https_setup(conf: &Arc<GlobalConfig>, set: &mut JoinSet<()>) -> Result<()> {
-    let mut ports:Vec<u16>=vec![];
-    let mut ip:Ipv4Addr=Ipv4Addr::from([0, 0, 0, 0]);
+    let mut ports: Vec<u16> = vec![];
+    let mut ip: Ipv4Addr = Ipv4Addr::from([0, 0, 0, 0]);
     if conf.web_redirector.is_some() {
         for port in &conf.web_redirector.as_ref().unwrap().https_ports {
-            if ! ports.contains(port) {
+            if !ports.contains(port) {
                 ports.push(*port);
             }
         }
-        ip=match parse_ipv4(conf.web_redirector.as_ref().unwrap().listening_ip()) {
+        ip = match parse_ipv4(conf.web_redirector.as_ref().unwrap().listening_ip()) {
             Ok(r) => r,
-            Err(err) => return Err(anyhow!(err))
+            Err(err) => return Err(anyhow!(err)),
         };
     }
 
@@ -228,41 +255,46 @@ async fn https_setup(conf: &Arc<GlobalConfig>, set: &mut JoinSet<()>) -> Result<
     Ok(())
 }
 
-
 async fn handle_request(
     req: Request<hyper::body::Incoming>,
     port: u16,
-    conf: Arc<GlobalConfig>
+    conf: Arc<GlobalConfig>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-    let span=span!(Level::INFO, "handle_request", http_method=?req.method(), uri=?req.uri(), http_version=?req.version());
-    let conf=conf.as_ref();
+    let span = span!(Level::INFO, "handle_request", http_method=?req.method(), uri=?req.uri(), http_version=?req.version());
+    let conf = conf.as_ref();
 
     // WPAD requested?
-    if conf.web_proxy.is_some() && port==WPAD_PORT &&
-        (req.method(), req.uri().path()) == (&Method::GET, "/wpad.dat") {
-        span.in_scope(|| {
-            trace!("WPAD requested")
-        });
+    if conf.web_proxy.is_some()
+        && port == WPAD_PORT
+        && (req.method(), req.uri().path()) == (&Method::GET, "/wpad.dat")
+    {
+        span.in_scope(|| trace!("WPAD requested"));
         match conf.web_proxy.as_ref().unwrap().wpad_file.as_ref() {
-            Some(wpad_file) => return static_file_response(wpad_file.path(),
-                None, Some("application/x-ns-proxy-autoconfig")).await,
+            Some(wpad_file) => {
+                return static_file_response(
+                    wpad_file.path(),
+                    None,
+                    Some("application/x-ns-proxy-autoconfig"),
+                )
+                .await;
+            }
             None => {
                 let mut resp = Response::new(full("wpad.dat file not yet computed"));
                 *resp.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-                return Ok(resp)
+                return Ok(resp);
             }
         }
     }
-
     // any other GET
     else if conf.web_redirector.is_some() && req.method() == &Method::GET {
-        let redir_conf=conf.web_redirector.as_ref().unwrap();
-        let found=redir_conf.http_ports.contains(&port) || redir_conf.https_ports.contains(&port);
+        let redir_conf = conf.web_redirector.as_ref().unwrap();
+        let found = redir_conf.http_ports.contains(&port) || redir_conf.https_ports.contains(&port);
         if found {
             if let Some(r) = response_for_web_redir_resource(&req, port, conf)
                 .instrument(span.clone())
-                .await {
-                return r
+                .await
+            {
+                return r;
             }
         }
     }

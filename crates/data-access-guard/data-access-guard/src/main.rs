@@ -17,15 +17,19 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
-use aya::{Btf, maps::{HashMap, RingBuf}, programs::Lsm};
+use aya::{
+    Btf,
+    maps::{HashMap, RingBuf},
+    programs::Lsm,
+};
 #[rustfmt::skip]
 use tokio::signal;
-use std::{env, ffi::OsString};
-use std::convert::TryFrom;
+use data_access_guard_common::{Event, KEY_INIT_NETNS, KEY_PADSI_PID};
+use padsi::trace::{TraceConfig, debug, info, tracing_setup_json, warn};
 use procfs::process::Process;
+use std::convert::TryFrom;
+use std::{env, ffi::OsString};
 use tracing_log::LogTracer;
-use padsi::trace::{TraceConfig, tracing_setup_json, debug, warn, info};
-use data_access_guard_common::{KEY_INIT_NETNS, KEY_PADSI_PID, Event};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -48,14 +52,13 @@ async fn main() -> anyhow::Result<()> {
 
     // set up logging
     println!("Setting up logging");
-    let mut log_dir=String::from("/var/log");
-    if let Ok(v)=env::var("LOG_DIR") {
-        log_dir=String::from(v)
+    let mut log_dir = String::from("/var/log");
+    if let Ok(v) = env::var("LOG_DIR") {
+        log_dir = String::from(v)
     }
     println!("Logging to directory '{}'", log_dir);
-    let trace_conf= TraceConfig::new(&log_dir, "data-access-guard")
-        .with_stdout_output(false);
-    let _t=tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
+    let trace_conf = TraceConfig::new(&log_dir, "data-access-guard").with_stdout_output(false);
+    let _t = tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
     LogTracer::init()?; // Bridge log crate to tracing
 
     match aya_log::EbpfLogger::init(&mut ebpf) {
@@ -64,7 +67,8 @@ async fn main() -> anyhow::Result<()> {
             warn!("failed to initialize eBPF logger: {e}");
         }
         Ok(logger) => {
-            let mut logger = tokio::io::unix::AsyncFd::with_interest(logger, tokio::io::Interest::READABLE)?;
+            let mut logger =
+                tokio::io::unix::AsyncFd::with_interest(logger, tokio::io::Interest::READABLE)?;
             tokio::task::spawn(async move {
                 loop {
                     let mut guard = logger.readable_mut().await.unwrap();
@@ -85,26 +89,35 @@ async fn main() -> anyhow::Result<()> {
     program.attach()?;
 
     // get the CONFIG map
-    let mut net_ns_map: HashMap<_, u8, u64> = HashMap::try_from(ebpf.map_mut("CONFIG").expect("WTF? no CONFIG map!"))?;
+    let mut net_ns_map: HashMap<_, u8, u64> =
+        HashMap::try_from(ebpf.map_mut("CONFIG").expect("WTF? no CONFIG map!"))?;
 
     // add PADSI's system service PID to the map
-    let self_proc=Process::myself().expect("Failed to get information about current process");
-    let ppid=self_proc.stat().expect("Failed to get PPID of the current process").ppid;
-    let svce_proc=Process::new(ppid).expect("Failed to get information about parent process");
+    let self_proc = Process::myself().expect("Failed to get information about current process");
+    let ppid = self_proc
+        .stat()
+        .expect("Failed to get PPID of the current process")
+        .ppid;
+    let svce_proc = Process::new(ppid).expect("Failed to get information about parent process");
 
-    let ppid:i32=match env::var("PADSI_PID") {
+    let ppid: i32 = match env::var("PADSI_PID") {
         Ok(value) => value.parse()?,
-        Err(_err) => svce_proc.pid
+        Err(_err) => svce_proc.pid,
     };
-    if ppid<=0 {
+    if ppid <= 0 {
         panic!("Code bug: PID is negative!")
     }
     println!("Padsi's system service's PID is {}", ppid);
     net_ns_map.insert(&KEY_PADSI_PID, ppid as u64, 0)?; // PID can never however be negative
 
     // add PADSI's system service network namespace to the mapp
-    let ns_h=svce_proc.namespaces().expect("Failed to get the namespaces of the parent process");
-    let net_ns=ns_h.0.get(&OsString::from("net")).expect("Failed to the the net namespace");
+    let ns_h = svce_proc
+        .namespaces()
+        .expect("Failed to get the namespaces of the parent process");
+    let net_ns = ns_h
+        .0
+        .get(&OsString::from("net"))
+        .expect("Failed to the the net namespace");
     println!("Init net NS is {}", net_ns.identifier);
     net_ns_map.insert(&KEY_INIT_NETNS, &net_ns.identifier, 0)?;
 
@@ -141,12 +154,20 @@ fn process_event(data: &[u8]) -> Result<(), anyhow::Error> {
     let comm = str::from_utf8(&event.comm)
         .unwrap_or("<invalid>")
         .trim_end_matches('\0');
-    let fname=match str::from_utf8(&event.file) {
+    let fname = match str::from_utf8(&event.file) {
         Ok(s) => Some(s.trim_end_matches('\0')),
-        Err(_) => None
+        Err(_) => None,
     };
-    let ct=format!("{}", event.call_type);
-    info!(pid=event.pid, uid=event.uid, call=ct, command=comm, ts=event.timestamp, file=fname, "blocked");
+    let ct = format!("{}", event.call_type);
+    info!(
+        pid = event.pid,
+        uid = event.uid,
+        call = ct,
+        command = comm,
+        ts = event.timestamp,
+        file = fname,
+        "blocked"
+    );
     println!(
         "Event: call_type={}, pid={}, uid={}, comm={}, timestamp={}, file={:?}",
         event.call_type, event.pid, event.uid, comm, event.timestamp, fname

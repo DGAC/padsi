@@ -18,10 +18,10 @@
 //
 
 use anyhow::{Result, anyhow};
+use padsi::trace::info;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use padsi::trace::info;
 
 use crate::config::AgentConfig;
 
@@ -42,10 +42,11 @@ pub trait OsAgent {
     fn platform_extensions(&self) -> &Vec<&str>;
 
     /// Create a Command to be executed
-    fn build_command<S, A, I>(&self, program:S, args:Option<I>) -> Command
-        where S:AsRef<OsStr>,
-            A:AsRef<OsStr>,
-            I: IntoIterator<Item = A>;
+    fn build_command<S, A, I>(&self, program: S, args: Option<I>) -> Command
+    where
+        S: AsRef<OsStr>,
+        A: AsRef<OsStr>,
+        I: IntoIterator<Item = A>;
 
     /// Tell if the user session is opened
     fn user_session_opened(&self) -> bool;
@@ -59,7 +60,7 @@ pub trait OsAgent {
     /// Run a process as a new task
     /// if `with_status` is true, then the caller must get the status of the
     /// task using task_output()
-    fn new_task(&self, args:&Vec<String>, with_status:bool) -> Result<u64>;
+    fn new_task(&self, args: &Vec<String>, with_status: bool) -> Result<u64>;
 
     /// Get a tack's status
     /// The task is destroyed after this function returned a non None value
@@ -80,8 +81,8 @@ pub trait OsAgent {
             script.push("bin");
             script.push(format!("on-boot.{}", *ext));
             if script.try_exists().is_ok_and(|x| x) {
-                info!(script=script.display().to_string(), "running boot script");
-                let mut cmd=self.build_command(&script, None::<Vec<&String>>);
+                info!(script = script.display().to_string(), "running boot script");
+                let mut cmd = self.build_command(&script, None::<Vec<&String>>);
                 self.add_environment_variables(&mut cmd);
                 match cmd.output() {
                     Ok(output) => {

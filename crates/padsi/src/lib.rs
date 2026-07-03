@@ -21,7 +21,7 @@
 //! PADSI utils crate
 //!
 pub mod net;
-pub mod pki;
 pub mod notifications;
+pub mod pki;
 pub mod time;
 pub mod trace;

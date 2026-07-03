@@ -21,10 +21,10 @@
 //! Certificates cache
 //!
 
+use padsi::pki::PKCS12;
+use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
-use std::borrow::Borrow;
-use padsi::pki::PKCS12;
 
 #[derive(Debug)]
 pub struct SizedCache<K, V> {
@@ -34,22 +34,22 @@ pub struct SizedCache<K, V> {
 }
 
 impl<K: Eq + Hash + Clone, V> SizedCache<K, V> {
-    pub fn new(max_size:usize) -> Self {
+    pub fn new(max_size: usize) -> Self {
         SizedCache {
             cache: HashMap::new(),
             queue: VecDeque::new(),
-            max_size
+            max_size,
         }
     }
 
-    pub fn add(&mut self, key:K, value:V) {
+    pub fn add(&mut self, key: K, value: V) {
         // if key already exists, just the hash
         if self.cache.contains_key(&key) {
             self.cache.insert(key, value);
             return;
         }
         // get rid of the last inserted item if full
-        if self.cache.len()==self.max_size {
+        if self.cache.len() == self.max_size {
             if let Some(old_key) = self.queue.pop_front() {
                 self.cache.remove(&old_key);
             }
@@ -66,33 +66,32 @@ impl<K: Eq + Hash + Clone, V> SizedCache<K, V> {
         K: Borrow<Q>,
         Q: Hash + Eq,
         // Bounds from impl:
-        K: Eq + Hash
+        K: Eq + Hash,
     {
         self.cache.get(key)
     }
 }
 
-
 ///
 /// Certificate cache based on the CN in the certificate
 ///
 #[derive(Debug)]
-pub struct CertificatesCache (SizedCache<String, PKCS12>);
+pub struct CertificatesCache(SizedCache<String, PKCS12>);
 
 impl CertificatesCache {
     /// Create a new cache
     pub fn new(max_size: usize) -> Self {
-        Self (SizedCache::new(max_size))
+        Self(SizedCache::new(max_size))
     }
 
     /// Add a certificate to the cache
-    pub fn add(&mut self, p12:PKCS12) {
-        let attrs=p12.cert().attributes();
+    pub fn add(&mut self, p12: PKCS12) {
+        let attrs = p12.cert().attributes();
         self.0.add(attrs.cn, p12);
     }
 
     /// Get a reference to a cached certificate
-    pub fn get(&self, cn:&str) -> Option<&PKCS12> {
+    pub fn get(&self, cn: &str) -> Option<&PKCS12> {
         self.0.get(cn)
     }
 }

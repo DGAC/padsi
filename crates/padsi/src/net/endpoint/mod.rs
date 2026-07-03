@@ -259,6 +259,5 @@ mod tests {
         assert!(!ep2.contains(&ep1));
         let ep2 = EndPoint::from_str("1.2.3.4^TCP^445").unwrap();
         assert!(!ep1.contains(&ep2));
-
     }
 }

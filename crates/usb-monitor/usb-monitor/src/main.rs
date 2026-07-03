@@ -17,13 +17,13 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
-use std::env;
-use std::io::{stdout, Write};
 use aya::{maps::RingBuf, programs::TracePoint};
+use std::env;
+use std::io::{Write, stdout};
 #[rustfmt::skip]
 use tokio::signal;
+use padsi::trace::{TraceConfig, debug, error, info, tracing_setup_json, warn};
 use tracing_log::LogTracer;
-use padsi::trace::{TraceConfig, tracing_setup_json, info, debug, warn, error};
 use usb_monitor_common::Event;
 
 // Monitors open() and close() of files under /dev/bus/usb/* and print notifications on stdout
@@ -50,14 +50,13 @@ async fn main() -> anyhow::Result<()> {
 
     // set up logging
     println!("Setting up logging");
-    let mut log_dir=String::from("/var/log");
-    if let Ok(v)=env::var("LOG_DIR") {
-        log_dir=String::from(v)
+    let mut log_dir = String::from("/var/log");
+    if let Ok(v) = env::var("LOG_DIR") {
+        log_dir = String::from(v)
     }
     println!("Logging to directory '{}'", log_dir);
-    let trace_conf= TraceConfig::new(&log_dir, "usb-monitor")
-        .with_stdout_output(false);
-    let _t=tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
+    let trace_conf = TraceConfig::new(&log_dir, "usb-monitor").with_stdout_output(false);
+    let _t = tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
     LogTracer::init()?; // Bridge log crate to tracing
 
     match aya_log::EbpfLogger::init(&mut ebpf) {
@@ -138,22 +137,22 @@ fn process_event(data: &[u8]) -> Result<(), anyhow::Error> {
     // Safety: We've verified the size and Event implements Pod
     let event = unsafe { &*(data.as_ptr() as *const Event) };
 
-    let comm=match str::from_utf8(&event.comm) {
+    let comm = match str::from_utf8(&event.comm) {
         Ok(c) => c.trim_end_matches('\0'),
-        Err(_err) => "N/A"
+        Err(_err) => "N/A",
     };
     match str::from_utf8(&event.file) {
         Ok(fname) => {
-            let fname=fname.trim_end_matches('\0');
+            let fname = fname.trim_end_matches('\0');
             info!(fd=event.fd, uid=event.uid, pid=event.pid, file=fname, %comm,
                 "{}", event.ev_type.to_string());
 
-            let data=format!("{};{};{};{}", event.ev_type, event.uid, event.pid, fname);
+            let data = format!("{};{};{};{}", event.ev_type, event.uid, event.pid, fname);
             println!("{}", data);
-            if let Err(err)=stdout().flush() {
+            if let Err(err) = stdout().flush() {
                 error!("Could not flush stdout: {}", err.to_string())
             }
-        },
+        }
         Err(_) => {
             error!("invalid UTF-8 file name in event")
         }

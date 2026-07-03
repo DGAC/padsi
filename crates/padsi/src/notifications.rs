@@ -20,7 +20,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
-pub struct WebRedirNotification{
+pub struct WebRedirNotification {
     pub browser: String,
-    pub url: String
+    pub url: String,
 }

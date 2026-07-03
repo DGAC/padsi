@@ -17,10 +17,9 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
-use std::{time::{SystemTime, UNIX_EPOCH}};
+use std::time::{SystemTime, UNIX_EPOCH};
 //use chrono::{DateTime, Utc};
 //use anyhow::{anyhow, Result};
-
 
 ///
 /// Get the current unix timestamp
@@ -45,7 +44,7 @@ pub fn now(ts: Option<u64>) -> u64 {
 /// and now is returned.
 ///
 pub fn now_string(ts: Option<u64>) -> String {
-    let now=now(ts);
+    let now = now(ts);
     format!("{now}")
 }
 

@@ -20,9 +20,9 @@
 use nix::sys::signal;
 use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::Pid;
-use std::{thread, time::Duration};
 use std::process;
 use std::sync::Arc;
+use std::{thread, time::Duration};
 use tokio::signal::unix::{SignalKind, signal};
 
 use padsi::trace::{debug, error, info, warn};

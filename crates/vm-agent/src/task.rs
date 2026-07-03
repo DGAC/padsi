@@ -17,8 +17,8 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
-use std::{process::{Child, Output, Stdio}};
 use anyhow::{Result, anyhow};
+use std::process::{Child, Output, Stdio};
 
 use crate::agent::OsAgent;
 #[cfg(target_os = "linux")]
@@ -29,43 +29,48 @@ use crate::windows::PlatformAgent;
 pub struct Task {
     pub keep_status: bool,
     child: Option<Child>,
-    output: Option<Output>
+    output: Option<Output>,
 }
 
 impl Task {
-    pub fn new(agent: &PlatformAgent, args: &Vec<String>, keep_status:bool) -> Result<Self> {
-        if args.len()==0 {
-            return Err(anyhow!("invalid empty command arguments"))
+    pub fn new(agent: &PlatformAgent, args: &Vec<String>, keep_status: bool) -> Result<Self> {
+        if args.len() == 0 {
+            return Err(anyhow!("invalid empty command arguments"));
         }
-        let mut cmd= if args.len()>1 {
+        let mut cmd = if args.len() > 1 {
             agent.build_command(&args[0], Some(&args[1..]))
-        }
-        else {
+        } else {
             agent.build_command(&args[0], None::<Vec<&String>>)
         };
 
         cmd.stdout(Stdio::piped());
 
         match cmd.spawn() {
-            Ok(child) => Ok(Task{keep_status, child: Some(child), output: None}),
-            Err(err) => {
-                Err(anyhow!("failed to run {}: {}", args.join(" "), err.to_string()))
-            }
+            Ok(child) => Ok(Task {
+                keep_status,
+                child: Some(child),
+                output: None,
+            }),
+            Err(err) => Err(anyhow!(
+                "failed to run {}: {}",
+                args.join(" "),
+                err.to_string()
+            )),
         }
     }
 
     /// Get the result of the task's execution, if it has finished (returns None otherwise)
     pub fn result(&mut self) -> Option<&Output> {
-        if let Some(child)=& mut self.child {
+        if let Some(child) = &mut self.child {
             match child.try_wait() {
                 Ok(Some(_x)) => {
                     // process has terminated
-                    let child=self.child.take().unwrap();
-                    let output=child.wait_with_output();
-                    self.output=Some(output.unwrap());
-                },
-                Ok(None) => return None, // process has not yet terminated
-                Err(_err) => return None // some other kind of error
+                    let child = self.child.take().unwrap();
+                    let output = child.wait_with_output();
+                    self.output = Some(output.unwrap());
+                }
+                Ok(None) => return None,  // process has not yet terminated
+                Err(_err) => return None, // some other kind of error
             }
         }
 

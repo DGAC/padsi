@@ -17,9 +17,8 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use caps::{CapSet, Capability};
-
 
 // ---------------------------------------------------------------------------
 // Capability helpers
@@ -36,7 +35,7 @@ pub fn parse_capability(name: &str) -> Result<Capability> {
     };
     match upper.parse::<Capability>() {
         Ok(c) => Ok(c),
-        Err(_) => Err(anyhow!("unknown capability: '{name}'"))
+        Err(_) => Err(anyhow!("unknown capability: '{name}'")),
     }
 }
 

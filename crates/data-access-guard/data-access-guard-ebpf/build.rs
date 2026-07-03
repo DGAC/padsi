@@ -31,6 +31,7 @@ use which::which;
 ///
 /// [bindeps]: https://doc.rust-lang.org/nightly/cargo/reference/unstable.html?highlight=feature#artifact-dependencies
 fn main() {
-    let bpf_linker = which("bpf-linker").expect("bpf-linker is missing (run cargo install bpf-linker)");
+    let bpf_linker =
+        which("bpf-linker").expect("bpf-linker is missing (run cargo install bpf-linker)");
     println!("cargo:rerun-if-changed={}", bpf_linker.to_str().unwrap());
 }

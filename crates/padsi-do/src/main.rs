@@ -17,28 +17,28 @@
 // along with this software.  If not, see <http://www.gnu.org/licenses/>.
 //
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use nix::NixPath;
 use nix::mount::{MsFlags, mount};
 use nix::sched::{CloneFlags, unshare};
-use nix::unistd::{self, execv, getuid, Gid, Uid, User};
+use nix::unistd::{self, Gid, Uid, User, execv, getuid};
+use padsi::trace::{LevelFilter, TraceConfig, error, info, tracing_setup_json, warn};
+use std::env::{self, current_dir};
 use std::ffi::{CString, OsStr, OsString};
+use std::fs;
 use std::fs::File;
+use std::io::Write;
 use std::os::fd::AsFd;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command};
+use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
-use tempfile::{NamedTempFile};
-use std::io::Write;
-use std::env::{self, current_dir};
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
-use padsi::trace::{LevelFilter, TraceConfig, error, info, tracing_setup_json, warn};
+use tempfile::NamedTempFile;
 
-const NAMESERVER:&str="192.168.128.1";
-const PROG_PATH:&str="/usr/bin/padsi-do"; // avoid using current_exe()
+const NAMESERVER: &str = "192.168.128.1";
+const PROG_PATH: &str = "/usr/bin/padsi-do"; // avoid using current_exe()
 
 /// Command line arguments
 #[derive(Debug)]
@@ -63,57 +63,47 @@ struct DoArgs {
 impl DoArgs {
     /// Parse the command line arguments
     fn parse() -> Result<Self> {
-        let mut help=false;
-        let mut list=false;
-        let mut adminns:Option<String>=None;
-        let mut delay:u32=0;
-        let mut command:Vec<String>=vec![];
-        let mut args=env::args();
-        if let None=args.next() {
-            return Err(anyhow!("Malformed arguments"))
+        let mut help = false;
+        let mut list = false;
+        let mut adminns: Option<String> = None;
+        let mut delay: u32 = 0;
+        let mut command: Vec<String> = vec![];
+        let mut args = env::args();
+        if let None = args.next() {
+            return Err(anyhow!("Malformed arguments"));
         }
 
         loop {
             match args.next() {
-                Some(a1) => {
-                    match &*a1 {
-                        "-a"|"--adminns" => {
-                            adminns=match args.next() {
-                                Some(s)=>Some(s),
-                                None=> return Err(anyhow!("Admin namespace not specified"))
-                            };
-                        },
-                        "-d"|"--delay" => {
-                            delay=match args.next() {
-                                Some(s)=>{
-                                    match s.parse::<u32>() {
-                                        Ok(d) => {
-                                            if d>u32::MAX/10 {
-                                                return Err(anyhow!("Delay is too long"))
-                                            }
-                                            d*10
-                                        }
-                                        Err(_err) => {
-                                            return Err(anyhow!("Invalid specified delay"))
-                                        }
+                Some(a1) => match &*a1 {
+                    "-a" | "--adminns" => {
+                        adminns = match args.next() {
+                            Some(s) => Some(s),
+                            None => return Err(anyhow!("Admin namespace not specified")),
+                        };
+                    }
+                    "-d" | "--delay" => {
+                        delay = match args.next() {
+                            Some(s) => match s.parse::<u32>() {
+                                Ok(d) => {
+                                    if d > u32::MAX / 10 {
+                                        return Err(anyhow!("Delay is too long"));
                                     }
-                                },
-                                None=> return Err(anyhow!("Delay not specified"))
-                            };
-                        },
-                        "-l"|"--list" => {
-                            list=true
-                        },
-                        "-h"|"--help" => {
-                            help=true
-                        },
-                        _ => {
-                            command.push(a1);
-                            break
-                        }
+                                    d * 10
+                                }
+                                Err(_err) => return Err(anyhow!("Invalid specified delay")),
+                            },
+                            None => return Err(anyhow!("Delay not specified")),
+                        };
+                    }
+                    "-l" | "--list" => list = true,
+                    "-h" | "--help" => help = true,
+                    _ => {
+                        command.push(a1);
+                        break;
                     }
                 },
-                None => break
+                None => break,
             }
         }
         // copy the rest
@@ -121,17 +111,24 @@ impl DoArgs {
             command.push(item)
         }
 
-        Ok(DoArgs {help, list, adminns, delay, command})
+        Ok(DoArgs {
+            help,
+            list,
+            adminns,
+            delay,
+            command,
+        })
     }
 
     /// Tell if a command was actually specified
     fn is_empty(&self) -> bool {
-        self.command.len()==0
+        self.command.len() == 0
     }
 
     /// Print usage
     fn usage() {
-        println!("Command line arguments
+        println!(
+            "Command line arguments
 
 Usage: padsi-do [OPTIONS] <COMMAND>...
 
@@ -143,7 +140,8 @@ Arguments:
         -a, --adminns <ADMINNS>  name of the admin. NS to use
         -d, --delay <DELAY>      delay in seconds to wait for the admin. NS to be present
                                  before failing
-        -h, --help               print this help")
+        -h, --help               print this help"
+        )
     }
 }
 
@@ -152,27 +150,27 @@ Arguments:
 ///
 struct AdminNS {
     path: PathBuf,
-    proxy: bool
+    proxy: bool,
 }
 
 impl AdminNS {
     /// Try to find the adminns to use based on the files present in /run/netns and
     /// possibily a specified named adminns
-    fn find(name:Option<&str>, delay:u32) -> Result<Self> {
+    fn find(name: Option<&str>, delay: u32) -> Result<Self> {
         match delay {
             0 => Self::find_no_delay(name),
             _ => {
-                let mut remain=delay;
+                let mut remain = delay;
                 loop {
                     match Self::find_no_delay(name) {
                         Ok(s) => return Ok(s),
                         Err(_) => {
-                            const D:u32=5;
-                            remain-=D; // in 10th of a second
-                            if remain==0 {
-                                return Err(anyhow!("delay elapsed"))
+                            const D: u32 = 5;
+                            remain -= D; // in 10th of a second
+                            if remain == 0 {
+                                return Err(anyhow!("delay elapsed"));
                             }
-                            sleep(Duration::from_millis(100*D as u64));
+                            sleep(Duration::from_millis(100 * D as u64));
                         }
                     }
                 }
@@ -180,31 +178,36 @@ impl AdminNS {
         }
     }
 
-    fn find_no_delay(name:Option<&str>) -> Result<Self> {
+    fn find_no_delay(name: Option<&str>) -> Result<Self> {
         match name {
             Some(adminns) => {
-                let mut path=PathBuf::from(format!("/run/netns/admns-{}-p", adminns));
-                if ! path.exists() {
-                    path=PathBuf::from(format!("/run/netns/admns-{}-P", adminns));
-                    if ! path.exists() {
+                let mut path = PathBuf::from(format!("/run/netns/admns-{}-p", adminns));
+                if !path.exists() {
+                    path = PathBuf::from(format!("/run/netns/admns-{}-P", adminns));
+                    if !path.exists() {
                         match path.as_os_str().to_str() {
                             Some(p) => return Err(anyhow!("admin NS '{}' does not exist", p)),
-                            None => return Err(anyhow!("admin NS does not exist (name uses non UTF-8 characters)")),
+                            None => {
+                                return Err(anyhow!(
+                                    "admin NS does not exist (name uses non UTF-8 characters)"
+                                ));
+                            }
                         }
                     }
                 }
-                let proxy=Self::parse_netns_path(&path);
+                let proxy = Self::parse_netns_path(&path);
                 match proxy {
-                    Some(p) => Ok(Self {path: PathBuf::from(path), proxy:p}),
-                    None => Err(anyhow!("invalid admin NS '{}'", adminns))
+                    Some(p) => Ok(Self {
+                        path: PathBuf::from(path),
+                        proxy: p,
+                    }),
+                    None => Err(anyhow!("invalid admin NS '{}'", adminns)),
                 }
             }
-            None => {
-                match Self::get_single_adminns() {
-                    Ok(a) => Ok(a),
-                    Err(_) => return Err(anyhow!("failed to locate admin NS"))
-                }
-            }
+            None => match Self::get_single_adminns() {
+                Ok(a) => Ok(a),
+                Err(_) => return Err(anyhow!("failed to locate admin NS")),
+            },
         }
     }
 
@@ -212,8 +215,8 @@ impl AdminNS {
     /// Get the name of the admin NS (as identified by the user)
     ///
     fn name(&self) -> String {
-        let raw=self.path.to_string_lossy();
-        String::from(&raw[17..raw.len()-2])
+        let raw = self.path.to_string_lossy();
+        String::from(&raw[17..raw.len() - 2])
     }
 
     ///
@@ -221,33 +224,31 @@ impl AdminNS {
     /// admin. NS names are like "/run/netns/admns-<name>-[pP]"
     ///
     fn parse_netns_path(path: &impl AsRef<Path>) -> Option<bool> {
-        let path=match path.as_ref().as_os_str().to_str() {
+        let path = match path.as_ref().as_os_str().to_str() {
             Some(p) => p,
-            None => {
-                return None
-            }
+            None => return None,
         };
         if !path.starts_with("/run/netns/admns-") {
-            return None
+            return None;
         }
-        let parts:Vec<&str>=path.split("-").collect();
+        let parts: Vec<&str> = path.split("-").collect();
         match parts.len() {
             3 => {
-                let proxy=match parts[2] {
-                    "P" => true, // uppercase P
+                let proxy = match parts[2] {
+                    "P" => true,  // uppercase P
                     "p" => false, // lowercase p
                     _ => {
                         eprintln!("Warning: malformed net NS {}", path);
                         warn!("malformed net NS {}", path);
-                        return None
+                        return None;
                     }
                 };
                 Some(proxy)
-            },
+            }
             _ => {
                 eprintln!("Warning: malformed net NS {}", path);
                 warn!("malformed net NS {}", path);
-                return None
+                return None;
             }
         }
     }
@@ -257,12 +258,12 @@ impl AdminNS {
     ///
     fn get_all_adminns() -> Vec<Self> {
         let paths = fs::read_dir("/run/netns").unwrap();
-        let mut res: Vec<Self>=vec![];
+        let mut res: Vec<Self> = vec![];
         for path in paths {
-            let de=path.unwrap();
-            let path=de.path();
+            let de = path.unwrap();
+            let path = de.path();
             match Self::parse_netns_path(&path) {
-                Some(proxy) => res.push(Self{path, proxy}),
+                Some(proxy) => res.push(Self { path, proxy }),
                 None => {}
             }
         }
@@ -274,25 +275,21 @@ impl AdminNS {
     ///
     fn get_single_adminns() -> Result<Self> {
         let paths = fs::read_dir("/run/netns").unwrap();
-        let mut res:Option<Self>=None;
+        let mut res: Option<Self> = None;
         for path in paths {
-            let de=path.unwrap();
-            let path=de.path();
+            let de = path.unwrap();
+            let path = de.path();
             match Self::parse_netns_path(&path) {
-                Some(proxy) => {
-                    match res {
-                        Some(_) => return Err(anyhow!("more than one admin NS found")),
-                        None => {
-                            res=Some(Self{path, proxy})
-                        }
-                    }
+                Some(proxy) => match res {
+                    Some(_) => return Err(anyhow!("more than one admin NS found")),
+                    None => res = Some(Self { path, proxy }),
                 },
                 None => {}
             }
         }
         match res {
             Some(p) => Ok(p),
-            None => Err(anyhow!("no admin NS found"))
+            None => Err(anyhow!("no admin NS found")),
         }
     }
 }
@@ -301,50 +298,50 @@ impl AdminNS {
 /// Get the full path of a file, may iterate through all the PATH elements to find it
 ///
 fn get_full_path<P>(prog_name: P) -> Option<PathBuf>
-    where P: AsRef<Path>,
+where
+    P: AsRef<Path>,
 {
-    if prog_name.as_ref().len()==0 {
-        return None
+    if prog_name.as_ref().len() == 0 {
+        return None;
     }
 
     // if starts with '/', then return AS-IS, or if it's '.', then prepend the CWD
-    let first_item=prog_name.as_ref().iter().nth(0).unwrap();
+    let first_item = prog_name.as_ref().iter().nth(0).unwrap();
     match first_item.to_str() {
         Some(s1) => {
             match s1.chars().nth(0).unwrap() {
                 '/' => return Some(prog_name.as_ref().into()), // we already have a full path
-                '.' => {
-                    match prog_name.as_ref().iter().nth(1) {
-                        Some(s2) => {
-                            if let Ok(cwd)=current_dir() {
-                                let mut p=PathBuf::new();
-                                p.push(cwd);
-                                p.push(s2);
-                                return Some(p)
-                            }
-                        },
-                        None => return None
+                '.' => match prog_name.as_ref().iter().nth(1) {
+                    Some(s2) => {
+                        if let Ok(cwd) = current_dir() {
+                            let mut p = PathBuf::new();
+                            p.push(cwd);
+                            p.push(s2);
+                            return Some(p);
+                        }
                     }
+                    None => return None,
                 },
                 _ => {}
             }
-        },
+        }
         None => {}
     }
 
     // iterate over PATH
     env::var_os("PATH").and_then(|paths| {
-        env::split_paths(&paths).filter_map(|dir| {
-            let full_path = dir.join(&prog_name);
-            if full_path.is_file() {
-                Some(full_path)
-            } else {
-                None
-            }
-        }).next()
+        env::split_paths(&paths)
+            .filter_map(|dir| {
+                let full_path = dir.join(&prog_name);
+                if full_path.is_file() {
+                    Some(full_path)
+                } else {
+                    None
+                }
+            })
+            .next()
     })
 }
-
 
 fn err_exit_expl<T: std::fmt::Debug>(msg: &str, e: T) -> ! {
     eprintln!("Error: {} ({:?})", msg, e);
@@ -357,26 +354,27 @@ fn err_exit_expl<T: std::fmt::Debug>(msg: &str, e: T) -> ! {
 /// using sudo's env. variables
 fn get_calling_user() -> Result<(String, Uid, Gid)> {
     // Check all SUDO's env. variables are present or none is
-    let sudo_user= env::var("SUDO_USER");
-    let sudo_uid= env::var("SUDO_UID");
-    let sudo_gid= env::var("SUDO_GID");
+    let sudo_user = env::var("SUDO_USER");
+    let sudo_uid = env::var("SUDO_UID");
+    let sudo_gid = env::var("SUDO_GID");
 
-    if ! (sudo_user.is_ok() && sudo_uid.is_ok() && sudo_gid.is_ok() ||
-        sudo_user.is_err() && sudo_uid.is_err() && sudo_gid.is_err()) {
-        return Err(anyhow!("Could not determine if sudo was used"))
+    if !(sudo_user.is_ok() && sudo_uid.is_ok() && sudo_gid.is_ok()
+        || sudo_user.is_err() && sudo_uid.is_err() && sudo_gid.is_err())
+    {
+        return Err(anyhow!("Could not determine if sudo was used"));
     }
 
-    let username=match sudo_user {
+    let username = match sudo_user {
         Ok(u) => u,
-        Err(_err) => "root".into()
+        Err(_err) => "root".into(),
     };
-    let uid=match sudo_uid {
+    let uid = match sudo_uid {
         Ok(uid_s) => uid_s.parse::<u32>()?,
-        Err(_err) => 0
+        Err(_err) => 0,
     };
-    let gid=match sudo_gid {
+    let gid = match sudo_gid {
         Ok(gid_s) => gid_s.parse::<u32>()?,
-        Err(_err) => 0
+        Err(_err) => 0,
     };
     Ok((username, Uid::from_raw(uid), Gid::from_raw(gid)))
 }
@@ -385,16 +383,13 @@ fn get_calling_user() -> Result<(String, Uid, Gid)> {
 /// Get the user name from its UID
 ///
 fn username_from_uid(uid: Uid) -> Option<String> {
-    User::from_uid(uid)
-        .ok()
-        .flatten()
-        .map(|u| u.name)
+    User::from_uid(uid).ok().flatten().map(|u| u.name)
 }
 
 #[allow(dead_code)]
-fn drop_privileges(username:&String, uid:Uid, gid:Gid) -> Result<()> {
+fn drop_privileges(username: &String, uid: Uid, gid: Gid) -> Result<()> {
     // Set the supplementary groups to the user's groups (initgroups)
-    let cusername=CString::new(username.clone())?;
+    let cusername = CString::new(username.clone())?;
     unistd::initgroups(&cusername, gid)?;
 
     // Clear all GIDs (real, effective, saved)
@@ -415,7 +410,7 @@ fn drop_privileges(username:&String, uid:Uid, gid:Gid) -> Result<()> {
 /// Create a TMP file containing resolv. information
 ///
 fn prepare_etc_resolv() -> Result<NamedTempFile> {
-    let mut tmp= NamedTempFile::new()?;
+    let mut tmp = NamedTempFile::new()?;
     writeln!(tmp, "nameserver {}", NAMESERVER)?;
     let path = tmp.path();
     fs::set_permissions(path, fs::Permissions::from_mode(0o644))?;
@@ -425,30 +420,40 @@ fn prepare_etc_resolv() -> Result<NamedTempFile> {
 ///
 /// Check the user can execute the program via sudo
 ///
-fn check_user_privileges(args: &Vec<impl AsRef<OsStr>>, uid:Uid) {
-    let cmde:Vec<String>=args.iter().map(|a| String::from(a.as_ref().to_str().unwrap_or("???"))).collect();
-    let cmdestr=cmde.join(" ");
+fn check_user_privileges(args: &Vec<impl AsRef<OsStr>>, uid: Uid) {
+    let cmde: Vec<String> = args
+        .iter()
+        .map(|a| String::from(a.as_ref().to_str().unwrap_or("???")))
+        .collect();
+    let cmdestr = cmde.join(" ");
     match Command::new("/usr/bin/sudo")
         .arg("-U")
         .arg(&username_from_uid(uid).expect("User is not declared???"))
         .arg("-l")
         .args(args)
-        .output() {
+        .output()
+    {
         Ok(res) => {
             if !res.status.success() {
                 eprintln!("Not allowed to run via sudo: {}", cmdestr);
-                error!(cmde=cmdestr, "Not allowed to run via sudo");
+                error!(cmde = cmdestr, "Not allowed to run via sudo");
                 std::process::exit(2);
             }
-        },
+        }
         Err(err) => {
-            eprintln!("Could not run sudo to check user's privileges: {}", err.to_string());
-            error!(cmde=cmdestr, error=err.to_string(), "Not allowed to run via sudo");
+            eprintln!(
+                "Could not run sudo to check user's privileges: {}",
+                err.to_string()
+            );
+            error!(
+                cmde = cmdestr,
+                error = err.to_string(),
+                "Not allowed to run via sudo"
+            );
             std::process::exit(3);
         }
     }
 }
-
 
 fn main() {
     let args = match DoArgs::parse() {
@@ -463,8 +468,8 @@ fn main() {
         std::process::exit(0)
     }
     if args.list {
-        let alist=AdminNS::get_all_adminns();
-        if alist.len()==0 {
+        let alist = AdminNS::get_all_adminns();
+        if alist.len() == 0 {
             println!("No admin. NS found")
         }
         for ans in alist {
@@ -481,18 +486,21 @@ fn main() {
     // if not running as root, then execv using sudo
     if getuid().as_raw() != 0 {
         // spawn this program via sudo
-        let iter=args.command.into_iter();
+        let iter = args.command.into_iter();
         let mut cstrs: Vec<CString> = iter
             .map(|s| CString::new(s.as_str()).expect("CString::new failed"))
             .collect();
 
-        if let Some(adminns)=args.adminns {
+        if let Some(adminns) = args.adminns {
             cstrs.insert(0, CString::new(adminns.as_bytes().to_vec()).unwrap());
             cstrs.insert(0, CString::new("-a".as_bytes().to_vec()).unwrap());
         }
 
         cstrs.insert(0, CString::new(PROG_PATH.as_bytes().to_vec()).unwrap());
-        cstrs.insert(0, CString::new("/usr/bin/sudo".as_bytes().to_vec()).unwrap());
+        cstrs.insert(
+            0,
+            CString::new("/usr/bin/sudo".as_bytes().to_vec()).unwrap(),
+        );
 
         let Err(e) = execv(&cstrs[0], &cstrs);
         eprintln!("Sudo exec failed: {:?}", e);
@@ -501,13 +509,13 @@ fn main() {
     }
 
     // init logging
-    let trace_conf= TraceConfig::new("/var/padsi/log", "padsi-do")
+    let trace_conf = TraceConfig::new("/var/padsi/log", "padsi-do")
         .with_stdout_output(false)
         .with_file_level(LevelFilter::INFO);
-    let _t=tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
+    let _t = tracing_setup_json(&trace_conf).expect("Failed to initialize logging");
 
     // get the actual user running this program
-    let (_username, uid, _gid)=match get_calling_user() {
+    let (_username, uid, _gid) = match get_calling_user() {
         Ok((username, uid, gid)) => (username, uid, gid),
         Err(_err) => {
             eprintln!("Could not get actual caller's UID and GID");
@@ -515,10 +523,10 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let is_root=uid.is_root();
+    let is_root = uid.is_root();
 
     // get the full path of the program to run
-    let mut full_path= match get_full_path(&args.command[0]) {
+    let mut full_path = match get_full_path(&args.command[0]) {
         Some(p) => p,
         None => {
             eprintln!("Could not find {} in path", &args.command[0]);
@@ -527,8 +535,8 @@ fn main() {
     };
 
     // if not actually running as root, check the user can execute the command via sudo
-    if ! is_root {
-        let mut targs:Vec<OsString>=vec![full_path.clone().into_os_string()];
+    if !is_root {
+        let mut targs: Vec<OsString> = vec![full_path.clone().into_os_string()];
         for arg in &args.command[1..] {
             targs.push(arg.into());
         }
@@ -536,7 +544,7 @@ fn main() {
     }
 
     // enter the specified network namespace
-    let adminns=match AdminNS::find(args.adminns.as_deref(), args.delay) {
+    let adminns = match AdminNS::find(args.adminns.as_deref(), args.delay) {
         Ok(a) => a,
         Err(err) => {
             match args.adminns.as_deref() {
@@ -572,7 +580,8 @@ fn main() {
     }
 
     // make mounts private so mounts we create don't propagate back
-    let res = mount::<str, str, str, str>(None, "/", None, MsFlags::MS_REC | MsFlags::MS_PRIVATE, None);
+    let res =
+        mount::<str, str, str, str>(None, "/", None, MsFlags::MS_REC | MsFlags::MS_PRIVATE, None);
     if let Err(e) = res {
         err_exit_expl("making mounts private failed", e);
     }
@@ -587,7 +596,7 @@ fn main() {
     }
 
     // prepare the contents of /etc/resolv.conf as a TMP file
-    let resolv_conf=match prepare_etc_resolv() {
+    let resolv_conf = match prepare_etc_resolv() {
         Ok(f) => f,
         Err(err) => {
             eprintln!("Could not prepare tmp resolv.conf file: {}", err);
@@ -597,7 +606,13 @@ fn main() {
     };
 
     // bind mount the TMP resolv.conf file
-    if let Err(e) = mount(Some(resolv_conf.path()), target, None::<&str>, MsFlags::MS_BIND | MsFlags::MS_REC, None::<&str>) {
+    if let Err(e) = mount(
+        Some(resolv_conf.path()),
+        target,
+        None::<&str>,
+        MsFlags::MS_BIND | MsFlags::MS_REC,
+        None::<&str>,
+    ) {
         err_exit_expl("bind-mounting resolv.conf failed", e);
     }
 
@@ -616,16 +631,19 @@ fn main() {
     }
 
     // actually run the command
-    let cstrs: Vec<CString> = args.command
+    let cstrs: Vec<CString> = args
+        .command
         .iter()
         .map(|s| CString::new(s.as_str()).expect("CString::new failed"))
         .collect();
 
-    let prog=CString::new(full_path.as_mut_os_str().as_bytes().to_vec()).unwrap();
-    info!(uid=uid.to_string(),
-        program=full_path.to_str(),
-        command=args.command.join(" "),
-        "Running");
+    let prog = CString::new(full_path.as_mut_os_str().as_bytes().to_vec()).unwrap();
+    info!(
+        uid = uid.to_string(),
+        program = full_path.to_str(),
+        command = args.command.join(" "),
+        "Running"
+    );
     let Err(e) = execv(&prog, &cstrs);
     eprintln!("exec failed: {:?}", e);
     error!("exec failed: {:?}", e);

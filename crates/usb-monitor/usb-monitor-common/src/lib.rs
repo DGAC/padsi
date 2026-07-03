@@ -20,12 +20,12 @@
 #![no_std]
 
 use core::fmt::{self, Display};
-pub const BUF_PATH_LEN: usize= 32; // should be more than enough for /dev/bus/usb/*/*
+pub const BUF_PATH_LEN: usize = 32; // should be more than enough for /dev/bus/usb/*/*
 
 #[derive(Clone, Copy)]
 pub enum EventType {
     OPEN,
-    CLOSE
+    CLOSE,
 }
 
 impl Display for EventType {
@@ -46,5 +46,5 @@ pub struct Event {
     pub ev_type: EventType,
     pub file: [u8; BUF_PATH_LEN],
     pub comm: [u8; 16],
-    pub fd: u64
+    pub fd: u64,
 }
