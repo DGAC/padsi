@@ -37,8 +37,9 @@ For now, packages building is only supported on the Debian 13 distribution.
 - the 'nightly-x86_64-unknown-linux-gnu' toolchain:
   - `rustup toolchain install nightly-x86_64-unknown-linux-gnu`
   - `rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu`
-- the x86_64-pc-windows-gnu rust target (to cross compile the Windows VM agent) `rustup target add x86_64-pc-windows-gnu`
-
+- for the x86_64-pc-windows-gnu rust target (to cross compile the Windows VM agent):
+  - `sudo apt install mingw-w64`
+  - `rustup target add x86_64-pc-windows-gnu`
 
 ### Compilation
 
