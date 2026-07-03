@@ -20,23 +20,21 @@
 use anyhow::{Result, anyhow};
 use caps::{CapSet, Capability};
 
-// ---------------------------------------------------------------------------
-// Capability helpers
-// ---------------------------------------------------------------------------
-
 /// Parse a capability name like "net_admin" or "CAP_NET_ADMIN" into a
 /// `caps::Capability`.  Returns an error string on failure.
 pub fn parse_capability(name: &str) -> Result<Capability> {
     // caps expects the canonical uppercase form: "CAP_NET_ADMIN"
-    let upper = if name.to_uppercase().starts_with("CAP_") {
-        name.to_uppercase()
-    } else {
-        format!("CAP_{}", name.to_uppercase())
+    let upper = {
+        let upper_name = name.to_uppercase();
+        if upper_name.starts_with("CAP_") {
+            upper_name
+        } else {
+            format!("CAP_{}", upper_name)
+        }
     };
-    match upper.parse::<Capability>() {
-        Ok(c) => Ok(c),
-        Err(_) => Err(anyhow!("unknown capability: '{name}'")),
-    }
+    upper
+        .parse::<Capability>()
+        .map_err(|_| anyhow!("unknown capability: '{name}'"))
 }
 
 /// Called inside the child process (after fork, before exec).
