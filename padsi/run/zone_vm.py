@@ -219,7 +219,7 @@ class ZoneVM(ZoneFoundations):
         self._dhcp_c=comp
 
         # static FW
-        if self._z_infra is not None:
+        if self._z_infra is not None: # zone has some networking capabilities
             fw_rules=[] if self._z_infra.fw_rules is None else self._z_infra.fw_rules
             fw_rules.append(padsi.config.FWRule(
                 "allow",
@@ -227,6 +227,13 @@ class ZoneVM(ZoneFoundations):
                 firewall.Endpoint.from_repr(f"{str(self._z_infra.bridge_ip.ip)} ^ tcp ^ 3128"),
                 padsi.config.FWRuleChain.OUTPUT,
             ))
+            if self.zone_conf.get_option(padsi.config.ZoneOptionType.INTER_VM_NET).enabled:
+                fw_rules.append(padsi.config.FWRule(
+                    "allow",
+                    "Inter VM communications",
+                    firewall.Endpoint.from_repr(f"{str(self._z_infra.bridge_ip.network)}"),
+                    padsi.config.FWRuleChain.FORWARD,
+                ))
             if _debug:
                 syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created static FW component for VM, {fw_rules=}")
             comp = stfw.StaticFirewall(

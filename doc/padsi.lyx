@@ -10959,6 +10959,16 @@ $HOME/.gnupg
 \begin_layout Itemize
 
 \family typewriter
+"INTER-VM-NET"
+\family default
+:
+ if true,
+ programs running in a virtual machine in a zone can communicate with other virtual machines in the same zone (defaults to false).
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
 "MEDIAS"
 \family default
 :

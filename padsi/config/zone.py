@@ -314,7 +314,8 @@ class Zone:
             ZoneOptionType.FIDO2: FIDO2Option(ZoneOptionType.FIDO2, False),
             ZoneOptionType.DNS_BLOCKLIST: BlockListOption(ZoneOptionType.DNS_BLOCKLIST, False, None),
             ZoneOptionType.MOUNT_POINTS: StrStrDictOption(ZoneOptionType.MOUNT_POINTS, False, {}),
-            ZoneOptionType.VM_ONLY: VMOnlyOption(ZoneOptionType.VM_ONLY, False, None)
+            ZoneOptionType.VM_ONLY: VMOnlyOption(ZoneOptionType.VM_ONLY, False, None),
+            ZoneOptionType.INTER_VM_NET: BoolOption(ZoneOptionType.INTER_VM_NET, False),
         }
         if option not in _default:
             raise Exception(f"CODEBUG: option '{option}' does not have any default value")

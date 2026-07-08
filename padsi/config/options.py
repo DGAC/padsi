@@ -40,6 +40,7 @@ class ZoneOptionType(str, enum.Enum):
     DNS_BLOCKLIST = "DNS-BLOCKLIST" # block list for DNS resolutions, refer to https://github.com/StevenBlack/hosts
     MOUNT_POINTS = "MOUNT-POINTS" # specify extra mount points
     VM_ONLY = "VM-ONLY" # force the use of VMs (if enabled, users can't execute applications, only VMs)
+    INTER_VM_NET = "INTER-VM-NET" # let virtual machines of the same zone communicate
 
 
 @dataclass
@@ -61,6 +62,7 @@ class ZoneOption:
                     | ZoneOptionType.FIDO2
                     | ZoneOptionType.GPG_CARD
                     | ZoneOptionType.FUSE
+                    | ZoneOptionType.INTER_VM_NET
                 ):
                     if not isinstance(data, bool):
                         raise Exception("expected a boolean")
