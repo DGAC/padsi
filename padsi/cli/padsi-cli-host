@@ -425,19 +425,19 @@ class EventsGroup:
     def print_list(lgroups:list[EventsGroup], as_timeline:bool):
         if not as_timeline:
             for gr in lgroups:
-                times="" if gr.nb_events==1 else f"{gr.nb_events} times"
+                times="" if gr.nb_events==1 else f" {gr.nb_events} times"
                 duration="" if gr.span<2 else f" over {gr.span} s"
                 vm="" if gr.vm is None else f" [VM {gr.vm}]"
-                print(f"{gr.start_ts_str} {gr}: {gr.context} {times}{duration}{vm}")
+                print(f"{gr.start_ts_str} {gr}: {gr.context}{times}{duration}{vm}")
         else:
             data=EventsGroup._compute_timeline(lgroups)
             for req_name in data:
                 print(f"{req_name}:")
                 for gr in data[req_name]:
-                    times="" if gr.nb_events==1 else f"{gr.nb_events} times"
+                    times="" if gr.nb_events==1 else f" {gr.nb_events} times"
                     duration="" if gr.span<2 else f" over {gr.span} s"
                     vm="" if gr.vm is None else f" [VM {gr.vm}]"
-                    print(f"{_indent}{gr.start_ts_str}: {gr.context} {times}{duration}{vm}")
+                    print(f"{_indent}{gr.start_ts_str}: {gr.context}{times}{duration}{vm}")
 
 class DNSEventsGroup(EventsGroup):
     def __init__(self, ev_type:EventType, context:str, vm:str|None, ts:datetime.datetime, domain_name:str):
@@ -498,9 +498,9 @@ def _get_logs_dirs(object:padsi.config.Zone|padsi.config.AdminNS|None, vms:list[
                 fpath=os.path.join(logs_dir, fname)
                 for vm_name in os.listdir(fpath):
                     if vms is None or (vm_name in vms or f"{vm_id}:" in vms or f"{vm_id}:{vm_name}" in vms):
-                        fpath=os.path.join(fpath, vm_name)
-                        if os.path.isdir(fpath):
-                            res[f"{vm_id}:{vm_name}"]=fpath
+                        vmpath=os.path.join(fpath, vm_name)
+                        if os.path.isdir(vmpath):
+                            res[f"{vm_id}:{vm_name}"]=vmpath
     return res
 
 def _parse_dns_log(logs_file:str, vm: str|None, show_allowed: bool, show_blocked:bool, since_ts:datetime.datetime, until_ts:datetime.datetime) -> list[EventsGroup]:
@@ -706,7 +706,7 @@ def _parse_proxy_log(logs_dir:str, vm: str|None, show_allowed: bool, show_failed
                                 if ts>=since_ts and ts<=until_ts:
                                     # don't report if corresponds to a VM
                                     (cl_ip, cl_port)=_get_client_ip_port(data.get("spans"))
-                                    if vm is None and cl_ip!="192.168.0.2":
+                                    if vm is None and cl_ip not in ("192.168.0.2", "192.168.128.2"):
                                         continue
 
                                     # determine if actually blocked outside of PADSI
