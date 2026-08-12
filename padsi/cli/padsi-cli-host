@@ -96,6 +96,10 @@ subparser.set_defaults(cmde="net-rules")
 subparser.add_argument("endpoint", type=str, help="Target endpoint (ex. '1.2.3.4', 'www.example.com.^tcp^443', '*.example.com.')")
 subparser.add_argument("--text", action="store_true", help="Search using substring")
 
+subparser=subparsers.add_parser("net-check", help="Test availability of a network interface")
+subparser.set_defaults(cmde="net-check")
+subparser.add_argument("--tsp", type=str, help="Check information about a traffic shaper")
+
 subparser=subparsers.add_parser("run", help="Run a program in a specific zone")
 subparser.set_defaults(cmde="run")
 subparser.add_argument("zone-name", type=str, help="Zone in which to run the program")
@@ -1068,6 +1072,25 @@ try:
         case "net-rules":
             conf=load_config()
             print_net_access(conf, args.get("endpoint", ""), bool(args.get("text")), use_json)
+
+        case "net-check":
+            tsp=args.get("tsp")
+            if tsp is not None:
+                conf=load_config()
+                tsp=conf.get_traffic_shaper(tsp)
+                if tsp is None:
+                    raise Exception(f"Unknown traffic shaper '{tsp}'")
+                state=tsp.functionnal
+                match state:
+                    case True:
+                        print("Ok")
+                        sys.exit(0)
+                    case False:
+                        print("Not functionnal")
+                    case None:
+                        print("Could not determine state (insufficient privileges?)", file=sys.stderr)
+                sys.exit(1)
+            raise Exception("No network interface to check")
 
         #
         # VM management
