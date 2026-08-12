@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from client_admin import ClientAdmin
 
+
 @dataclass
 class ZoneStatus:
     """Represents the status of a zone"""

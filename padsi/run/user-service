@@ -1115,9 +1115,9 @@ class PadsiUserService:
                         for zone in zdata.apps:
                             info = self._get_zone_infos(zone, is_privileged)
                             options: dict = {}
-                            options["screen-sharing"] = True if zone_conf.get_option(padsi.config.ZoneOptionType.SCREEN_SHARE).enabled else False
-                            options["desktop-notifications"] = True if zone_conf.get_option(padsi.config.ZoneOptionType.DESKTOP_NOTIFICATIONS).enabled else False
-                            options["X11"] = True if zone_conf.get_option(padsi.config.ZoneOptionType.X11).enabled else False
+                            options["screen-sharing"] = zone_conf.get_option(padsi.config.ZoneOptionType.SCREEN_SHARE).enabled
+                            options["desktop-notifications"] = zone_conf.get_option(padsi.config.ZoneOptionType.DESKTOP_NOTIFICATIONS).enabled
+                            options["X11"] = zone_conf.get_option(padsi.config.ZoneOptionType.X11).enabled
                             info["options"] = options
                             if isinstance(zone, padsi.run.ZoneVM):
                                 info["vm-conf"] = None if zone.vm_conf is None else zone.vm_conf.id

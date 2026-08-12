@@ -25,10 +25,11 @@
 
 from __future__ import annotations
 
-from client import BaseClient, VMStatus
-
 import padsi.config
 import padsi.run
+
+from client import BaseClient, VMStatus
+
 
 class ClientAdmin(BaseClient):
     """Object to interact with a PADSI admin service"""
@@ -104,12 +105,9 @@ class ClientAdmin(BaseClient):
 
         depend_at_vmv=None
         if depend_at is not None:
-            try:
-                (_userid, vtype, vnum, staged, _nickname)=padsi.run.parse_vm_version(depend_at)
-                if vtype==padsi.run.VMVersionType.BASE and vnum is not None:
-                    depend_at_vmv=vmf.get_base_version(vnum)
-            except Exception:
-                pass
+            (_userid, vtype, vnum, staged, _nickname)=padsi.run.parse_vm_version(depend_at)
+            if vtype==padsi.run.VMVersionType.BASE and vnum is not None:
+                depend_at_vmv=vmf.get_base_version(vnum)
         padsi.run.VMArchive.create(vm_conf, vm_version, ar_file, depend_at_vmv)
 
     def vm_load(self, conf:padsi.config.Configuration, ar_file:str, vm_id:str|None, message:str|None):

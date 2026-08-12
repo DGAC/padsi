@@ -29,10 +29,9 @@ import os
 from dataclasses import dataclass
 from urllib import parse
 
+import padsi.run
 import requests.exceptions
 import requests_unixsocket
-
-import padsi.run
 
 
 @dataclass
@@ -163,6 +162,9 @@ class VMStatus:
             raise Exception(f"Unknown VM version '{vmversion}'")
         return infos.history
 
+class NoServiceException(Exception):
+    pass
+
 class BaseClient:
     """Object to interact with a PADSI service using a Unix socket"""
     timeout=30
@@ -170,7 +172,7 @@ class BaseClient:
     def __init__(self, socket_path:str):
         self._socket=socket_path
         if not os.path.exists(self._socket):
-            raise Exception("The PADSI user service does not appear to be running (or the -U flag must be used)")
+            raise NoServiceException("The PADSI user service does not appear to be running (or the -U flag must be used)")
         self._q_socket=parse.quote_plus(self._socket)
         self._session=requests_unixsocket.Session()
 

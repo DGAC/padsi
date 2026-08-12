@@ -24,7 +24,7 @@
 # This is the PADSI CLI tool, intended to be used from the host ("init") namespace
 #
 
-from __future__ import annotations, print_function
+from __future__ import annotations
 
 import argparse
 import datetime
@@ -47,11 +47,12 @@ except ModuleNotFoundError:
 
 import padsi.misc
 from firewall import Endpoint, NetFlow
-from padsi.cli.client import print_vm_status
-from padsi.cli.client_host import Client, GlobalStatus
-from padsi.cli.client_admin import ClientAdmin
 from padsi.config import ResolvRule, TrafficShaper
 from padsi.config.network import FWRule
+
+from client import print_vm_status
+from client_admin import ClientAdmin
+from client_host import Client, GlobalStatus
 
 # Adapt console coloring to the output type
 if os.isatty(sys.stdout.fileno()):
@@ -308,11 +309,11 @@ def print_vms(conf:padsi.config.Configuration, verbose:bool, use_json:bool):
             all_vms[vm.id].add(vm)
 
     data={}
-    for vmid in all_vms:
+    for (vmid, vms) in all_vms.items():
         vmdata={
             "actions": []
         }
-        for vm in all_vms[vmid]:
+        for vm in vms:
             if vm.is_user_allowed(get_user_id()):
                 vmdata["actions"].append(vm.usage.value)
                 if vm.usage==padsi.config.VMUsage.RUN:
@@ -514,10 +515,10 @@ def _parse_dns_log(logs_file:str, vm: str|None, show_allowed: bool, show_blocked
     bl_context=f"{Fore.RED}domain blocked{Fore.RESET}"
     try:
         with open(logs_file, "rt") as fd:
-            for line in fd.readlines():
+            for line in fd:
                 # format: 20251120-17:29:19 INFO {"action": "req-block", "name": "firefox.settings.services.mozilla.com.", "type": "AAAA", "from": "192.168.0.2"}
                 try:
-                    (ts, level, jdata)=line.split(maxsplit=2)
+                    (ts, _level, jdata)=line.split(maxsplit=2)
                     data=json.loads(jdata)
                     name=data.get("name")
 
@@ -601,7 +602,7 @@ def _parse_firewall_log(logs_dir:str, vm: str|None, show_allowed: bool, show_blo
                 logs_file=os.path.join(logs_dir, fname)
                 try:
                     with open(logs_file, "tr") as fd:
-                        for line in fd.readlines():
+                        for line in fd:
                             try:
                                 data=json.loads(line)
                                 (ts, *_)=data["timestamp"].split(".")
@@ -663,7 +664,7 @@ class ProxyEventsGroup(EventsGroup):
     def compact_groups(groups:list[EventsGroup]) -> list[EventsGroup]:
         def _downcast(obj:EventsGroup) -> ProxyEventsGroup:
             if not isinstance(obj, ProxyEventsGroup):
-                raise Exception("CODEBUG: obj is not a ProxyEventsGroup")
+                raise TypeError("CODEBUG: obj is not a ProxyEventsGroup")
             return obj
 
         dgroups:dict[str,EventsGroup]={}
@@ -987,10 +988,10 @@ def get_service_client(can_be_admin:bool=False)->Client|ClientAdmin:
     uid=get_user_id()
     try:
         return Client(uid)
-    except Exception as e:
+    except:
         if can_be_admin:
             return ClientAdmin()
-        raise e
+        raise
 
 def prepare_extra_isos(resources:list[str]|None) -> tuple[list[str],str|None]:
     """For each file name in the specified list:
@@ -1048,7 +1049,7 @@ try:
         case "status":
             client=get_service_client()
             if not isinstance(client, Client):
-                raise Exception("CODEBUG: get_service_client() returned an AdminClient, expected a Client")
+                raise TypeError("CODEBUG: get_service_client() returned an AdminClient, expected a Client")
             zone=args.get("zone")
             tsp=args.get("tsp")
             status=client.get_status(zone, tsp)
@@ -1260,7 +1261,7 @@ try:
                     show_failed="failed" in parts
                     show_allowed="allowed" in parts
 
-            events_list="dns,firewall,proxy".split(",")
+            events_list=["dns", "firewall", "proxy"]
             events=args.get("events")
             if events is not None:
                 events_list=events.split(",")
@@ -1341,7 +1342,7 @@ except KeyboardInterrupt:
 except Exception as e:
     if False:
         print("========== DEBUG ==========")
-        raise e
+        raise
 
     if not os.isatty(sys.stdout.fileno()):
         try:
