@@ -354,8 +354,8 @@ class EventsGroup:
         self._type=ev_type
         self._context=context
         self._vm=vm
-        self._start_ts=ts
-        self._last_ts=ts
+        self._start_ts=ts # UTC
+        self._last_ts=ts # UTC
         self.span=0
         self.nb_events=1
 
@@ -382,7 +382,7 @@ class EventsGroup:
 
     @property
     def start_ts_str(self) -> str:
-        return self._start_ts.strftime("%Y%m%d-%H:%M:%S")
+        return self._start_ts.strftime("%Y%m%d-%H:%M:%SZ")
 
     def add_event(self, ts:datetime.datetime) -> bool:
         if (ts-self._last_ts).seconds > EventsGroup.span_s:
@@ -453,24 +453,24 @@ class DNSEventsGroup(EventsGroup):
 
 def _parse_time_spec(spec:str) -> datetime.datetime:
     try:
-        return datetime.datetime.strptime(spec, "%Y%m%d-%H:%M:%S")
+        return datetime.datetime.strptime(spec, "%Y%m%d-%H:%M:%S").astimezone()
     except Exception:
         try:
-            return datetime.datetime.strptime(spec, "%Y%m%d")
+            return datetime.datetime.strptime(spec, "%Y%m%d").replace(tzinfo=datetime.timezone.utc)
         except Exception:
             try:
-                return datetime.datetime.now()-datetime.timedelta(int(spec))
+                return datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(int(spec))
             except Exception:
                 raise Exception(f"Invalid time specification '{spec}'")
 
 def _compute_since_timestamp(since:str|None):
     if since is None:
-        return datetime.datetime.now()-datetime.timedelta(1)
+        return datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(1)
     return _parse_time_spec(since)
 
 def _compute_until_timestamp(until:str|None):
     if until is None:
-        return datetime.datetime.now()
+        return datetime.datetime.now(datetime.timezone.utc)
     return _parse_time_spec(until)
 
 def _get_logs_dirs(object:padsi.config.Zone|padsi.config.AdminNS|None, vms:list[str]|None) -> dict[str|None,str]:
@@ -522,16 +522,14 @@ def _parse_dns_log(logs_file:str, vm: str|None, show_allowed: bool, show_blocked
                     name=data.get("name")
 
                     if data.get("type") in ("A", "AAAA"):
-                        ts=datetime.datetime.strptime(ts, "%Y%m%d-%H:%M:%S")
-                        if show_allowed and data.get("action")=="req-allow":
-                            if ts>=since_ts and ts<=until_ts:
+                        ts=datetime.datetime.strptime(ts, "%Y%m%d-%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+                        if show_allowed and data.get("action")=="req-allow" and ts>=since_ts and ts<=until_ts:
                                 egr=dgroups.get(name)
                                 if egr is None or not egr.add_event(ts):
                                     gr=DNSEventsGroup(EventType.ALLOWED, al_context, vm, ts, name)
                                     lgroups.append(gr)
                                     dgroups[name]=gr
-                        if show_blocked and data.get("action") in ("req-block", "req-would-block"):
-                            if ts>=since_ts and ts<=until_ts:
+                        if show_blocked and data.get("action") in ("req-block", "req-would-block") and ts>=since_ts and ts<=until_ts:
                                 egr=dgroups.get(name)
                                 if egr is None or not egr.add_event(ts):
                                     gr=DNSEventsGroup(EventType.BLOCKED, bl_context, vm, ts, name)
@@ -542,7 +540,7 @@ def _parse_dns_log(logs_file:str, vm: str|None, show_allowed: bool, show_blocked
                     print(f"Invalid log line '{line}': {str(e)}", file=sys.stderr)
         return lgroups
     except FileNotFoundError:
-        raise Exception(f"Log file '{logs_file}' does not exist (may have been removed)")
+        return lgroups
     except PermissionError:
         raise Exception(f"Failed to read zone's resolution logs file {logs_file}: permission denied")
     except Exception as e:
@@ -598,7 +596,7 @@ def _parse_firewall_log(logs_dir:str, vm: str|None, show_allowed: bool, show_blo
 
     for fname in os.listdir(logs_dir):
         if fname.startswith("firewall.") and fname.endswith(".json"):
-            start_ts=datetime.datetime.strptime(fname[9:-5], "%Y-%m-%d")
+            start_ts=datetime.datetime.strptime(fname[9:-5], "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
             if start_ts>=since_ts-datetime.timedelta(days=1) and start_ts<=until_ts:
                 logs_file=os.path.join(logs_dir, fname)
                 try:
@@ -607,7 +605,7 @@ def _parse_firewall_log(logs_dir:str, vm: str|None, show_allowed: bool, show_blo
                             try:
                                 data=json.loads(line)
                                 (ts, *_)=data["timestamp"].split(".")
-                                ts=datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+                                ts=datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
                                 if ts>=since_ts and ts<=until_ts:
                                     in_iface=data.get("in_iface")
                                     out_iface=data.get("out_iface")
@@ -695,18 +693,18 @@ def _parse_proxy_log(logs_dir:str, vm: str|None, show_allowed: bool, show_failed
     for fname in os.listdir(logs_dir):
         if fname.startswith("web-infra.") and fname.endswith(".json"):
             try:
-                start_ts=datetime.datetime.strptime(fname[10:-5], "%Y-%m-%d")
+                start_ts=datetime.datetime.strptime(fname[10:-5], "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
             except Exception:
                 raise Exception(f"Could not convert '{fname[10:-5]} ({fname})' to a timestamp")
             if start_ts>=since_ts-datetime.timedelta(days=1) and start_ts<=until_ts:
                 logs_file=os.path.join(logs_dir, fname)
                 try:
                     with open(logs_file, "tr") as fd:
-                        for line in fd.readlines():
+                        for line in fd:
                             try:
                                 data=json.loads(line)
                                 (ts, *_)=data["timestamp"].split(".")
-                                ts=datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+                                ts=datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
                                 if ts>=since_ts and ts<=until_ts:
                                     # don't report if corresponds to a VM
                                     (cl_ip, cl_port)=_get_client_ip_port(data.get("spans"))
