@@ -259,7 +259,8 @@ class Features:
     groups:list[str]|None=None              # list of groups users in the bubble, as /etc/group lines
     capabilities:list[str]|None=None        # list of capabilities to add to the init process running in the bubble
     seccomp_filter_file:str|None=None       # file containing a SECCOMP filter, to be passed AS-IS to bwrap
-    with_multimedia:bool=False              # enable multimedia via PipeWire
+    with_multimedia:bool=False              # enable sound/video via PipeWire / pulse audio
+    with_pulseaudio:bool=False              # enable sound via legacy pulse audio
     extra_env:dict[str,str]|None=None       # some extra environment variables
 
     with_slirp_tap:bool=False               # True if the slirp4netns tool is started on the host to create a tap device in the bubble and
@@ -766,21 +767,25 @@ class Bubble:
                 ]
 
         # access to multimedia
-        if self._features.with_multimedia:
+        if self._features.with_multimedia or self._features.with_pulseaudio:
             (_, pw_socket, pulse_sock)=_get_pipewire_env()
-            if pw_socket is None:
-                syslog.syslog(syslog.LOG_ERR, "Could not identify Pipewire socket, apps in bubble won't have access to Pipewire server")
-            else:
-                sockname=os.path.basename(pw_socket)
-                args+=[
-                    "--bind", pw_socket, os.path.join("/bubble/run", sockname),
-                    "--bind", f"{pw_socket}.lock", os.path.join("/bubble/run", f"{sockname}.lock")
-                ]
-            if pulse_sock is not None:
-                args+=[
-                    "--bind", pulse_sock, os.path.join("/bubble/run", "pulse", os.path.basename(pulse_sock)),
-                    "--ro-bind", "/etc/pulse", "/etc/pulse"
-                ]
+            if self._features.with_multimedia:
+                if pw_socket is None:
+                    syslog.syslog(syslog.LOG_ERR, "Could not identify Pipewire socket, apps in bubble won't have access to Pipewire server")
+                else:
+                    sockname=os.path.basename(pw_socket)
+                    args+=[
+                        "--bind", pw_socket, os.path.join("/bubble/run", sockname),
+                        "--bind", f"{pw_socket}.lock", os.path.join("/bubble/run", f"{sockname}.lock")
+                    ]
+            if self._features.with_pulseaudio:
+                if pulse_sock is None:
+                    syslog.syslog(syslog.LOG_ERR, "Could not identify Pulseaudio socket, apps in bubble won't have access to Pulse audio")
+                else:
+                    args+=[
+                        "--bind", pulse_sock, os.path.join("/bubble/run", "pulse", os.path.basename(pulse_sock)),
+                        "--ro-bind", "/etc/pulse", "/etc/pulse"
+                    ]
 
         # SECCOMP
         fdr=None

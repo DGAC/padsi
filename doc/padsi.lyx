@@ -10969,7 +10969,7 @@ $HOME/.gnupg
 \begin_layout Itemize
 
 \family typewriter
-"MEDIAS"
+"MASS-STORAGE"
 \family default
 :
  if true,
@@ -11074,11 +11074,50 @@ Note
 \begin_layout Itemize
 
 \family typewriter
+"MULTIMEDIA"
+\family default
+:
+ if true,
+ allow access to 
+\begin_inset CommandInset href
+LatexCommand href
+name "PipeWire"
+target "https://pipewire.org/"
+literal "false"
+
+\end_inset
+
+ for sound and video features;
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
 "PKI"
 \family default
 :
  allows to declare certification authorities' certificates as trust anchors.
  Must be specified as a dictionary where keys are the user friendly name for a CA and associated values are paths to the associated PEM encoded certificate;
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+"PULSE-AUDIO"
+\family default
+:
+ if true,
+ allow access to 
+\begin_inset CommandInset href
+LatexCommand href
+name "PulseAudio"
+target "https://www.freedesktop.org/wiki/Software/PulseAudio/"
+literal "false"
+
+\end_inset
+
+ features (gradually replaced by PipeWire,
+ should only be granted if some non compatible applications need it);
 \end_layout
 
 \begin_layout Itemize

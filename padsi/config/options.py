@@ -27,9 +27,11 @@ from dataclasses import dataclass
 class ZoneOptionType(str, enum.Enum):
     DESKTOP_NOTIFICATIONS = "DESKTOP-NOTIFICATIONS"  # allow to show notifications
     DRM = "DRM"  # allow access to DRM (/dev/dri)
+    MULTIMEDIA = "MULTIMEDIA"  # allow access to pipewire
+    PULSE_AUDIO = "PULSE-AUDIO" # allow access to pulse audio (legacy)
     FIDO2 = "FIDO2"  # allow the usage of FIDO2 authenticators
     FUSE = "FUSE"  # allow access to FUSE based filesystem mounting
-    MEDIAS = "MEDIAS"  # allow access to /media/<username>/XXX where mass storage medias are mounted
+    MASS_STORAGE = "MASS-STORAGE"  # allow access to /media/<username>/XXX where mass storage medias are mounted
     NET_LOG_ONLY = "NET-LOG-ONLY"  # deny network accesses are only logged, not actually denied
     PKCS11 = "PKCS11"  # allow the usage of smartcards
     GPG_CARD = "GPG-CARD" # allow the usage of GPG cards
@@ -57,7 +59,9 @@ class ZoneOption:
                     | ZoneOptionType.NET_LOG_ONLY
                     | ZoneOptionType.SCREEN_SHARE
                     | ZoneOptionType.DESKTOP_NOTIFICATIONS
-                    | ZoneOptionType.MEDIAS
+                    | ZoneOptionType.MASS_STORAGE
+                    | ZoneOptionType.MULTIMEDIA
+                    | ZoneOptionType.PULSE_AUDIO
                     | ZoneOptionType.DRM
                     | ZoneOptionType.FIDO2
                     | ZoneOptionType.GPG_CARD
@@ -65,21 +69,21 @@ class ZoneOption:
                     | ZoneOptionType.INTER_VM_NET
                 ):
                     if not isinstance(data, bool):
-                        raise Exception("expected a boolean")
+                        raise TypeError("expected a boolean")
                     return BoolOption(option_type, data)
 
                 case ZoneOptionType.WEB_REDIRECTION:
                     zones = data["zones"]
                     if not isinstance(zones, list):
-                        raise Exception()
+                        raise TypeError()
                     for item in zones:
                         if not isinstance(item, str):
-                            raise Exception()
+                            raise TypeError()
                     return WebRedirectionOption(option_type, True, allowed_zones=data["zones"])
 
                 case ZoneOptionType.PKI:
                     if not isinstance(data, dict):
-                        raise Exception("expected a dictionary")
+                        raise TypeError("expected a dictionary")
                     certs = {}
                     for name, fpath in data.items():
                         name = name.strip()
@@ -101,10 +105,10 @@ class ZoneOption:
 
                 case ZoneOptionType.PKCS11:
                     if not isinstance(data, dict):
-                        raise Exception("expected a dictionary")
+                        raise TypeError("expected a dictionary")
                     name = data["driver-name"]
                     if not isinstance(name, str):
-                        raise Exception()
+                        raise TypeError()
                     driver = data["driver-file"]
                     if not os.path.isfile(driver):
                         raise Exception(f"PKCS#11 driver file '{driver}' does not exist")
@@ -112,7 +116,7 @@ class ZoneOption:
 
                 case ZoneOptionType.DNS_BLOCKLIST:
                     if not isinstance(data, str):
-                        raise Exception("Expected a file path")
+                        raise TypeError("Expected a file path")
                     if not os.path.isabs(data) and config_dir is not None:
                         data=os.path.join(config_dir, data)
                     if not os.path.isfile(data):
@@ -121,7 +125,7 @@ class ZoneOption:
 
                 case ZoneOptionType.MOUNT_POINTS:
                     if not isinstance(data, dict):
-                        raise Exception("expected a dictionary")
+                        raise TypeError("expected a dictionary")
                     mpoints:dict[str,str]={}
                     for (mp_zone, mp_host) in data.items():
                         mp_zone=os.path.normpath(mp_zone)
@@ -148,7 +152,7 @@ class ZoneOption:
 
                 case ZoneOptionType.VM_ONLY:
                     if not isinstance(data, str):
-                        raise Exception("Expected a file path")
+                        raise TypeError("Expected a file path")
                     return VMOnlyOption(option_type, True, data)
 
                 case _:

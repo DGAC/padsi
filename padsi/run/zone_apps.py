@@ -411,14 +411,15 @@ class ZoneApps(ZoneFoundations):
 
     @property
     def features(self) -> nsbubble.Features:
-        bind_medias=self.zone_conf.get_option(padsi.config.ZoneOptionType.MEDIAS).enabled
+        bind_medias=self.zone_conf.get_option(padsi.config.ZoneOptionType.MASS_STORAGE).enabled
         with_drm=self.zone_conf.get_option(padsi.config.ZoneOptionType.DRM).enabled
         with_fuse=self.zone_conf.get_option(padsi.config.ZoneOptionType.FUSE).enabled
-        bind_medias=self.zone_conf.get_option(padsi.config.ZoneOptionType.MEDIAS).enabled
+        with_mmedia=self.zone_conf.get_option(padsi.config.ZoneOptionType.MULTIMEDIA).enabled
+        with_pulse=self.zone_conf.get_option(padsi.config.ZoneOptionType.PULSE_AUDIO).enabled
         with_pcscd=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11).enabled or \
             self.zone_conf.get_option(padsi.config.ZoneOptionType.GPG_CARD).enabled
         with_fido2=self.zone_conf.get_option(padsi.config.ZoneOptionType.FIDO2).enabled
-        return nsbubble.Features(bind_x11=self.with_x11, with_multimedia=True, with_syslog=True, with_host_resolv=False,
+        return nsbubble.Features(bind_x11=self.with_x11, with_multimedia=with_mmedia, with_pulseaudio=with_pulse, with_syslog=True, with_host_resolv=False,
                                    extra_env=self._extra_env, bind_medias=bind_medias,
                                    with_drm=with_drm, with_fuse=with_fuse, with_pcscd=with_pcscd,
                                    bind_dev=with_fido2,
