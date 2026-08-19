@@ -151,41 +151,48 @@ impl ProcessSpec {
 
         // honor stdin spec
         let mut stdin_data: Option<&String> = None;
-        if let Some(fname) = &self.stdin_file {
-            match File::open(&fname).await {
+        match &self.stdin_file {
+            Some(fname)=> match File::open(&fname).await {
                 Ok(f) => cmd.stdin(f.into_std().await),
                 Err(_) => {
                     stdin_data = Some(fname);
                     cmd.stdin(Stdio::piped())
                 }
-            };
-        }
+            },
+            None => cmd.stdin(Stdio::null())
+        };
 
         // honor stdout spec
-        if let Some(fname) = &self.stdout_file {
-            let f = match File::create(&fname).await {
-                Ok(f) => f.into_std().await,
-                Err(err) => {
-                    let msg = format!("failed to create '{}': {}", &fname, err.to_string());
-                    error!(program = self.program(), msg);
-                    return Err(anyhow!(msg));
-                }
-            };
-            cmd.stdout(f);
-        }
+        match &self.stdout_file {
+            Some(fname) => {
+                let f = match File::create(&fname).await {
+                    Ok(f) => f.into_std().await,
+                    Err(err) => {
+                        let msg = format!("failed to create '{}': {}", &fname, err.to_string());
+                        error!(program = self.program(), msg);
+                        return Err(anyhow!(msg));
+                    }
+                };
+                cmd.stdout(f)
+            },
+            None => cmd.stdout(Stdio::null())
+        };
 
         // honor stderr spec
-        if let Some(fname) = &self.stderr_file {
-            let f = match File::create(&fname).await {
-                Ok(f) => f.into_std().await,
-                Err(e) => {
-                    let msg = format!("failed to create '{}': {}", &fname, e.to_string());
-                    error!(program = self.program(), msg);
-                    return Err(anyhow!(msg));
-                }
-            };
-            cmd.stderr(f);
-        }
+        match &self.stderr_file {
+            Some(fname) => {
+                let f = match File::create(&fname).await {
+                    Ok(f) => f.into_std().await,
+                    Err(e) => {
+                        let msg = format!("failed to create '{}': {}", &fname, e.to_string());
+                        error!(program = self.program(), msg);
+                        return Err(anyhow!(msg));
+                    }
+                };
+                cmd.stderr(f)
+            }
+            None => cmd.stderr(Stdio::null())
+        };
 
         // pre_exec runs after fork() in the child, before exec()
         let caps = self.capabilities.clone();
