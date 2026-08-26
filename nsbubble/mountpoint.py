@@ -23,10 +23,12 @@ import os
 import shutil
 import subprocess
 import syslog
-
 from dataclasses import dataclass
 
 _debug=False
+
+class MountPointException(Exception):
+    pass
 
 def makedirs_keep_owner(path: str):
     """Create directories if they don't already exist keeping the same owner as the last directory
@@ -43,7 +45,7 @@ def makedirs_keep_owner(path: str):
             uid=st.st_uid
             gid=st.st_gid
             if not os.path.isdir(cpath):
-                raise Exception(f"Path '{cpath}' is supposed to be a directory by is not")
+                raise MountPointException(f"Path '{cpath}' is supposed to be a directory by is not")
         else:
             os.mkdir(cpath)
             if uid is not None and gid is not None:
@@ -56,7 +58,7 @@ def _prefixed_mount_path(mpoint:MountPoint, prefix:str|None) -> str:
 
 def _existing_source_path(mpoint:MountPoint, tmp_dir:str) -> str:
     if not os.path.isabs(mpoint._source_path):
-        raise Exception(f"source path {mpoint._source_path} is not absoltue")
+        raise MountPointException(f"source path {mpoint._source_path} is not absoltue")
     if os.path.exists(mpoint.source_path):
         return mpoint.source_path
     if mpoint._is_dir:
@@ -79,7 +81,7 @@ class MountPoint:
     """
     def __init__(self, source_path:str, mount_path:str, readonly:bool=True, monitored:bool=False, require_abs_mount_path:bool=True) -> None:
         if not source_path:
-            raise Exception(f"invalid mount point's source path '{source_path}'")
+            raise MountPointException(f"invalid mount point's source path '{source_path}'")
         self._is_dir:bool|None=None
         if os.path.isabs(source_path):
             self._source_path=os.path.realpath(source_path) # what is mounted, may not yet exist
@@ -88,12 +90,12 @@ class MountPoint:
             self._source_path=source_path
 
         if not mount_path or (require_abs_mount_path and not os.path.isabs(mount_path)):
-            raise Exception(f"invalid mount point's mount path '{mount_path}'")
+            raise MountPointException(f"invalid mount point's mount path '{mount_path}'")
 
         self._mount_path=mount_path # where it is mounted
         if self._mount_path[-1]=="/":
             if os.path.exists(self.source_path) and not self._is_dir:
-                raise Exception("MountPoint's mount path indicates a directory but source path is not a directory")
+                raise MountPointException("MountPoint's mount path indicates a directory but source path is not a directory")
             self._is_dir=True
             self._mount_path=self._mount_path[:-1]
 
@@ -126,6 +128,10 @@ class MountPoint:
         return self._readonly
 
     @property
+    def is_dir(self) -> bool|None:
+        return self._is_dir
+
+    @property
     def monitored(self) -> bool:
         return self._monitored
 
@@ -133,11 +139,11 @@ class MountPoint:
         """Tell if the mount point is mounted and, if mounted, verifies that the correct source path is mounted
         Note: does not check the read-only status
         """
-        proc=subprocess.run(["findmnt", "-n", "-o", "SOURCE", self.mount_path], capture_output=True, text=True)
+        proc=subprocess.run(["findmnt", "-n", "-o", "SOURCE", self.mount_path], capture_output=True, text=True, check=False)
         if proc.returncode!=0:
             if not proc.stderr:
                 return False
-            raise Exception(f"Could not run findmnt: {proc.stderr}")
+            raise MountPointException(f"Could not run findmnt: {proc.stderr}")
         return True
 
     def mount(self) -> bool:
@@ -151,14 +157,14 @@ class MountPoint:
             syslog.syslog(syslog.LOG_DEBUG, f"Mounting {self.source_path} on {self.mount_path}")
 
         if not os.path.isabs(self._source_path):
-            raise Exception(f"source path {self._source_path} is not absoltue")
+            raise MountPointException(f"source path {self._source_path} is not absoltue")
         if not os.path.exists(self.mount_path):
             makedirs_keep_owner(self.mount_path)
 
         opt="bind,ro" if self.read_only else "bind"
-        proc=subprocess.run(["mount", "-o", opt, self.source_path, self.mount_path], capture_output=True, text=True)
+        proc=subprocess.run(["mount", "-o", opt, self.source_path, self.mount_path], capture_output=True, text=True, check=False)
         if proc.returncode!=0:
-            raise Exception(f"Could not mount '{self.source_path}' on '{self.mount_path}': {proc.stderr}")
+            raise MountPointException(f"Could not mount '{self.source_path}' on '{self.mount_path}': {proc.stderr}")
         return True
 
     def umount(self) -> bool:
@@ -169,23 +175,23 @@ class MountPoint:
             return False
         if _debug:
             syslog.syslog(syslog.LOG_DEBUG, f"Unmounting {self.mount_path} from {self.source_path}")
-        proc=subprocess.run(["umount", self.mount_path], capture_output=True, text=True)
+        proc=subprocess.run(["umount", self.mount_path], capture_output=True, text=True, check=False)
         if proc.returncode!=0:
-            raise Exception(f"Could not umount '{self.mount_path}' from '{self.source_path}': {proc.stderr}")
+            raise MountPointException(f"Could not umount '{self.mount_path}' from '{self.source_path}': {proc.stderr}")
         return True
 
 
     @classmethod
     def from_data(cls, source_path:str, info:dict)->MountPoint:
         if not isinstance(info, dict):
-            raise Exception(f"Invalid mountpoint info {info}")
+            raise MountPointException(f"Invalid mountpoint info {info}")
         mp=info.get("mount-point")
         ro=info.get("read-only", True)
         monit=info.get("monitored", False)
         if (not isinstance(mp, str) or mp=="") or \
             not isinstance(ro, bool) or \
             monit is not None and not isinstance(monit, bool):
-            raise Exception(f"Invalid mountpoint info {info}: expected a dict")
+            raise MountPointException(f"Invalid mountpoint info {info}: expected a dict")
         return cls(source_path, mp, ro, False if monit is None else monit)
 
 
@@ -200,7 +206,7 @@ class MountPointGroup:
 
     def __post_init__(self):
         if len(self.mount_points)==0:
-            raise Exception("CODEBUG: MountPointGroup has no MountPoint")
+            raise MountPointException("CODEBUG: MountPointGroup has no MountPoint")
 
     def add(self, mpoint:MountPoint):
         if self.mount_path.startswith(mpoint.mount_path):
@@ -226,7 +232,7 @@ class MountPointGroup:
             elif os.access(esp, os.W_OK):
                 # directly bind file if we have write permission
                 args+=["--bind", esp, mpoint.mount_path]
-            elif mpoint._is_dir:
+            elif mpoint.is_dir:
                 # add an overlay to allow write to directory
                 ovl_dir=_prefixed_mount_path(mpoint, run_dir)
                 if _debug:
@@ -238,7 +244,7 @@ class MountPointGroup:
                     "--tmp-overlay", mpoint.mount_path
                 ]
             else:
-                raise Exception(f"Can't allow RW acces to file '{mpoint.source_path} (as {esp})' which is read-only (use a directory instead)")
+                raise MountPointException(f"Can't allow RW acces to file '{mpoint.source_path} (as {esp})' which is read-only (use a directory instead)")
         else:
             # use the 1st mpoint as the base of the overlay
             f_mpoint=self.mount_points[0]
@@ -253,7 +259,7 @@ class MountPointGroup:
             # copy the contents of all the other mount points (using bind mount would be better but would require root privs.)
             for mpoint in self.mount_points[1:]:
                 if not mpoint.mount_path.startswith(self.mount_path):
-                    raise Exception(f"CODEBUG: mount point {mpoint.mount_path} not a sub dir. of group's {self.mount_path}")
+                    raise MountPointException(f"CODEBUG: mount point {mpoint.mount_path} not a sub dir. of group's {self.mount_path}")
                 esp=_existing_source_path(mpoint, run_dir)
 
                 delta_path=mpoint.mount_path[len(self.mount_path):]
@@ -378,7 +384,7 @@ class MountPointSet:
             # group mount points in overlays
             for mpoint in mpoints:
                 if _debug:
-                    syslog.syslog(syslog.LOG_DEBUG, f"handling mountpoint={str(mpoint)}" )
+                    syslog.syslog(syslog.LOG_DEBUG, f"handling mountpoint={mpoint}" )
                 found=False
                 for path in list(groups.keys()).copy():
                     mpgrp=groups[path]
@@ -431,12 +437,12 @@ class MountPointSet:
                         except KeyError:
                             tdir=os.path.dirname(tdir)
                     if egrp is None:
-                        raise Exception(f"CODEBUG: none of directory '{path}' parents are present in the ngroups")
+                        raise MountPointException(f"CODEBUG: none of directory '{path}' parents are present in the ngroups")
                     egrp.mount_points+=mpgrp.mount_points
             groups=ngroups
 
             if _debug:
                 for mpgrp in groups.values():
-                    syslog.syslog(syslog.LOG_DEBUG, f"MountpointGroup={str(mpgrp)}")
+                    syslog.syslog(syslog.LOG_DEBUG, f"MountpointGroup={mpgrp}")
 
         return cls(list(groups.values()), run_dir)

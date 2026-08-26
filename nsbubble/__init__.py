@@ -17,16 +17,46 @@
 # along with this software.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-from .nsbubble import (Bubble, BubbleAPI, BubbleState, DisplayEnvironment,
-                       Features, ProcessNotYetTerminatedException, VDESwitch,
-                       get_display_env, named_netns_create, named_netns_remove)
-from .vm import (BubbleVM, NotEnoughMemory, QEMUImageFile, Viewer,
-                 VirtioSharedDirectory, VMSpecs)
+from .mountpoint import MountPoint, MountPointGroup, MountPointSet
+from .nsbubble import (
+    Bubble,
+    BubbleAPI,
+    BubbleState,
+    DisplayEnvironment,
+    Features,
+    ProcessNotYetTerminatedException,
+    VDESwitch,
+    get_display_env,
+    named_netns_create,
+    named_netns_remove,
+)
+from .vm import (
+    BubbleVM,
+    NotEnoughMemory,
+    QEMUImageFile,
+    Viewer,
+    VirtioSharedDirectory,
+    VMSpecs,
+)
 
-from .mountpoint import (MountPoint, MountPointGroup, MountPointSet)
-
-__all__=["BubbleState", "Features", "DisplayEnvironment", "Bubble", "BubbleAPI", "VDESwitch", "ProcessNotYetTerminatedException",
-    "get_display_env", "named_netns_create", "named_netns_remove",
-    "QEMUImageFile", "VirtioSharedDirectory", "NotEnoughMemory", "VMSpecs", "BubbleVM", "Viewer",
-    "MountPoint", "MountPointGroup", "MountPointSet"
+__all__ = [
+    "Bubble",
+    "BubbleAPI",
+    "BubbleState",
+    "BubbleVM",
+    "DisplayEnvironment",
+    "Features",
+    "get_display_env",
+    "MountPoint",
+    "MountPointGroup",
+    "MountPointSet",
+    "named_netns_create",
+    "named_netns_remove",
+    "NotEnoughMemory",
+    "ProcessNotYetTerminatedException",
+    "VDESwitch",
+    "Viewer",
+    "VirtioSharedDirectory",
+    "VMSpecs",
+    "QEMUImageFile"
 ]

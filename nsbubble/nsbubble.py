@@ -49,7 +49,10 @@ import requests_unixsocket
 from .mountpoint import MountPointSet
 
 system_ns_mountdir="/run/netns" # at least for Debian
-_debug=False
+_debug=True
+
+class BubbleException(Exception):
+    pass
 
 class BubbleState(str, enum.Enum):
     INITIALIZED = "INITIALIZED"
@@ -75,14 +78,13 @@ def _overwite_file_content(src:str, dest:str):
     contents of the src file"""
     if os.path.realpath(src)==os.path.relpath(dest):
         return
-    with open(src, "rb") as sfd:
-        with open(dest, "wb") as dfd:
-            while True:
-                data=sfd.read(1024)
-                if len(data)>0:
-                    dfd.write(data)
-                if len(data)<1024:
-                    break
+    with open(src, "rb") as sfd, open(dest, "wb") as dfd:
+        while True:
+            data=sfd.read(1024)
+            if len(data)>0:
+                dfd.write(data)
+            if len(data)<1024:
+                break
 
 class ShadowedFile:
     """Object to map a file to its shadow, which can be
@@ -90,9 +92,9 @@ class ShadowedFile:
     of the file"""
     def __init__(self, file_path:str):
         if not os.path.exists(file_path):
-            raise Exception(f"File path '{file_path}' does not exist")
+            raise BubbleException(f"File path '{file_path}' does not exist")
         self._file_path=os.path.realpath(file_path)
-        self._shadow=tempfile.NamedTemporaryFile()
+        self._shadow=tempfile.NamedTemporaryFile() # noqa: SIM115
         os.chmod(self._shadow.name, os.stat(self._file_path).st_mode)
         if _debug:
             syslog.syslog(syslog.LOG_DEBUG, f"ShadowedFile {self._file_path} --> {self._shadow.name}")
@@ -125,7 +127,7 @@ class FilesMonitor:
         """Start a thread to actually monitor all the registered files
         """
         if len(self._monitored)>0 and self._thread is None:
-            self._killswitch=tempfile.NamedTemporaryFile()
+            self._killswitch=tempfile.NamedTemporaryFile() # noqa: SIM115
             self._thread=threading.Thread(target=self._inotify_main)
             self._thread.start()
 
@@ -183,7 +185,7 @@ class FilesMonitor:
 
     def register_file(self, sfile:ShadowedFile):
         if self._thread is not None:
-            raise Exception(f"FilesMonitor is already running, can't add file '{sfile.file_path}'")
+            raise BubbleException(f"FilesMonitor is already running, can't add file '{sfile.file_path}'")
         if _debug:
             syslog.syslog(syslog.LOG_DEBUG, f"FilesMonitor {self} += {sfile.file_path}")
         self._monitored.append(sfile)
@@ -200,7 +202,7 @@ class ShadowedResolvFile(ShadowedFile):
             self._nm=bus.get_object("org.freedesktop.NetworkManager", "/org/freedesktop/NetworkManager/DnsManager")
             #self._nm.connect_to_signal("PropertiesChanged", self._nm_prop_changed, dbus_interface="org.freedesktop.DBus.Properties")
             syslog.syslog(syslog.LOG_INFO, "Using DBUS /org/freedesktop/NetworkManager/DnsManager as DNS resolv. source")
-        except Exception:
+        except Exception: # noqa: BLE001
             syslog.syslog(syslog.LOG_INFO, "Using /etc/resolv.conf as DNS resolv. source")
             self._nm=None
         super().__init__("/etc/resolv.conf")
@@ -216,7 +218,7 @@ class ShadowedResolvFile(ShadowedFile):
                             (_, ns)=line.split()
                             ip=ipaddress.IPv4Address(ns)
                             ns_list.append(str(ip))
-                        except Exception:
+                        except Exception: # noqa: BLE001,S110
                             pass # malformed line or IPv6
         else:
             interface=dbus.Interface(self._nm, "org.freedesktop.DBus.Properties")
@@ -226,7 +228,7 @@ class ShadowedResolvFile(ShadowedFile):
                     try:
                         ip=ipaddress.IPv4Address(str(ns))
                         ns_list.append(str(ip))
-                    except Exception:
+                    except Exception: # noqa: BLE001,S110
                         pass # malformed line or IPv6
 
         # write the new name servers
@@ -278,12 +280,12 @@ class Features:
         """Raise an exception if some features are incompatible with others
         """
         if self.bind_dev and not self.with_syslog:
-            raise Exception("The 'bind_dev' feature is enabled but not the 'with_syslog' one")
+            raise BubbleException("The 'bind_dev' feature is enabled but not the 'with_syslog' one")
 
         if self.vde_switch_path and self.vde_ip_addr is None:
-            raise Exception("If a VDE path is specified, then a VDE address must also be provided")
+            raise BubbleException("If a VDE path is specified, then a VDE address must also be provided")
         if not self.vde_switch_path and self.vde_ip_addr is not None:
-            raise Exception("If a VDE address is specified, then a VDE switch path must also be provided")
+            raise BubbleException("If a VDE address is specified, then a VDE switch path must also be provided")
 
         if self.mounts is None:
             self.mounts={}
@@ -323,7 +325,7 @@ def get_display_env() -> DisplayEnvironment:
                         wayland_socket_file=path
                         wayland_display=fname
                     else:
-                        raise Exception(f"More than one Wayland socket found: '{wayland_socket_file}' and '{path}'")
+                        raise BubbleException(f"More than one Wayland socket found: '{wayland_socket_file}' and '{path}'")
 
         # X11
         if os.path.exists(x11_unix_dir) and os.path.isdir(x11_unix_dir):
@@ -346,7 +348,7 @@ def get_display_env() -> DisplayEnvironment:
                                     x11_xauth=os.path.join(rundir, fxauthname)
                                     break
 
-                except Exception:
+                except Exception: # noqa: BLE001,S110
                     # can fail if no process is actually listening to a Unix socket
                     pass
 
@@ -386,7 +388,7 @@ def _get_pipewire_env() -> tuple[str|None, str|None, str|None]: # XDG_RUNTIME_DI
                 if pw_socket_file is None:
                     pw_socket_file=path
                 else:
-                    raise Exception(f"More than one Pipewire socket found: '{pw_socket_file}' and '{path}'")
+                    raise BubbleException(f"More than one Pipewire socket found: '{pw_socket_file}' and '{path}'")
 
     pulse_sock=os.path.join(rundir, "pulse", "native") # pyright: ignore
     pulse_sock=pulse_sock if os.path.exists(pulse_sock) else None
@@ -403,15 +405,16 @@ def named_netns_create(name:str, init_pid:int) -> str:
 
     try:
         os.makedirs(system_ns_mountdir, exist_ok=True)
-        open(mountpoint, "w") # force the creation of the file
+        with open(mountpoint, "w"): # force the creation of the file
+            pass
         subprocess.check_call(["mount", "--bind", f"/proc/{init_pid}/ns/net", mountpoint])
         return name
-    except Exception as e:
+    except Exception:
         try:
             os.remove(mountpoint)
-        except Exception:
+        except Exception: # noqa: BLE001,S110
             pass
-        raise e
+        raise
 
 def named_netns_remove(name:str):
     """Does the opposite of named_netns_create()
@@ -428,7 +431,7 @@ def named_netns_remove(name:str):
         finally:
             try:
                 os.remove(mountpoint)
-            except Exception:
+            except Exception: # noqa: BLE001,S110
                 pass
 
 class Bubble:
@@ -447,7 +450,7 @@ class Bubble:
             self._tmpdir=tempfile.TemporaryDirectory()
             self._run_dir=self._tmpdir.name
         elif not os.path.isdir(run_dir):
-            raise Exception(f"Path '{run_dir}' does not exist or is not a directory")
+            raise BubbleException(f"Path '{run_dir}' does not exist or is not a directory")
         else:
             self._run_dir=run_dir
         self._init_prog=os.path.dirname(os.path.realpath(__file__))+"/init"
@@ -481,7 +484,7 @@ class Bubble:
                 self._overlay_tmpdir.cleanup()
                 self._overlay_tmpdir=None
             self.destroy()
-        except Exception:
+        except Exception: # noqa: BLE001,S110
             pass
 
     @property
@@ -542,25 +545,25 @@ class Bubble:
         if len(children)==0:
             return None
         if len(children)!=1:
-            raise Exception(f"WTF: bwrap seems to have more than one child: {children}")
+            raise BubbleException(f"WTF: bwrap seems to have more than one child: {children}")
         return children[0].pid
 
     @property
     def mnt_namespace(self) -> str:
         """Get the mount namespace of the bubble"""
         if self._state!=BubbleState.RUNNING:
-            raise Exception(f"Bubble is {self._state.value}")
+            raise BubbleException(f"Bubble is {self._state.value}")
         if self.init_pid is None:
-            raise Exception("Bubble's init process is not running")
+            raise BubbleException("Bubble's init process is not running")
         return os.readlink(f"/proc/{self.init_pid}/ns/mnt")
 
     @property
     def net_namespace(self) -> str:
         """Get the net namespace of the bubble"""
         if self._state!=BubbleState.RUNNING:
-            raise Exception(f"Bubble is {self._state.value}")
+            raise BubbleException(f"Bubble is {self._state.value}")
         if self.init_pid is None:
-            raise Exception("Bubble's init process is not running")
+            raise BubbleException("Bubble's init process is not running")
         return os.readlink(f"/proc/{self.init_pid}/ns/net")
 
     @property
@@ -569,7 +572,7 @@ class Bubble:
         Taken from readlink /proc/XXX/ns/net: "net:[4026531840]" --> "4026531840"
         """
         if self._state!=BubbleState.RUNNING:
-            raise Exception(f"Bubble is {self._state.value}")
+            raise BubbleException(f"Bubble is {self._state.value}")
         return self.net_namespace[5:-1]
 
     @property
@@ -582,7 +585,7 @@ class Bubble:
         as /bubble/run
         """
         if self._bubble_pid is not None or self._wl_proxy_pid is not None:
-            raise Exception("Code bug: bubble PID or Wayland proxy is already set up")
+            raise BubbleException("Code bug: bubble PID or Wayland proxy is already set up")
 
         # set up fake passwd and group files
         misc_dir=f"{self._run_dir}/misc"
@@ -593,16 +596,14 @@ class Bubble:
             user_def=pwd.getpwuid(os.geteuid())
             fd.write(f"{user_def.pw_name}:x:{user_def.pw_uid}:{user_def.pw_gid}:{user_def.pw_gecos}:/home/{user_def.pw_name}:{user_def.pw_shell}\n")
             if self._features.users is not None:
-                for line in self._features.users:
-                    fd.write(line+"\n")
+                fd.writelines([l+"\n" for l in self._features.users])
             bhome_dir=f"/home/{user_def.pw_name}"
 
         with open(group_file, "w") as fd:
             group=grp.getgrgid(os.getegid())
             fd.write(f"{group.gr_name}:x:{group.gr_gid}:{','.join(group.gr_mem)}\n")
             if self._features.users is not None:
-                for line in self._features.users:
-                    fd.write(line+"\n")
+                fd.writelines([l+"\n" for l in self._features.users])
 
         # start the sandbox
         # NB: the --dev bwrap option creates an intermediary namespace and the final namespace
@@ -633,7 +634,7 @@ class Bubble:
         # which there might be conflicts with features's mount points if directly --ro-bind
         bound_dirs=["/etc/fonts", "/etc/xdg", "/etc/alternatives", "/etc/ssl", "/usr"]
         if self._overlay_tmpdir is None:
-            raise Exception("CODEBUG: _start_bubble() called after destroy()")
+            raise BubbleException("CODEBUG: _start_bubble() called after destroy()")
         self._mp_set=MountPointSet.from_specifications(self._features.mounts, bound_dirs, self._run_dir)
 
         bargs:list[str]=[]
@@ -704,7 +705,7 @@ class Bubble:
         if self._features.extra_env is not None:
             for k,v in self._features.extra_env.items():
                 if not isinstance(k, str) or not isinstance(v, str):
-                    raise Exception("Extra environment variables names and values must be strings")
+                    raise BubbleException("Extra environment variables names and values must be strings")
                 args+=["--setenv", k, v]
 
         args+=[
@@ -718,13 +719,13 @@ class Bubble:
             args+=["--bind", self._features.vde_switch_path, VDESwitch.bubble_switch_path]
 
         # capabilities
-        capabilities=set([capname.lower() for capname in (self._features.capabilities if self._features.capabilities is not None else [])])
+        capabilities={capname.lower() for capname in (self._features.capabilities if self._features.capabilities is not None else [])}
         if cap_net_admin and "net_admin" not in capabilities:
             capabilities.add("net_admin")
 
         for capname in capabilities:
             if capname not in ("net_raw", "net_admin", "net_bind_service", "sys_admin", "sys_chroot", "sys_rawio"):
-                raise Exception(f"CODEBUG: hnhandled capability '{capname}'")
+                raise BubbleException(f"CODEBUG: hnhandled capability '{capname}'")
             args+=["--cap-add", f"CAP_{capname.upper()}"]
 
         # map /etc/resolv.conf file from the host?
@@ -805,8 +806,8 @@ class Bubble:
         # bwrap does not like the idea of being started with an effective UID!=0 and a real UID=0: it fails
         # with the "Unexpected setuid user XXX, should be 0" error
         #syslog.syslog(syslog.LOG_DEBUG, f"BUBBLE args: {json.dumps(args, indent=4)}")
-        argsstr=" ".join(args)
         if _debug:
+            argsstr=" ".join(args)
             syslog.syslog(syslog.LOG_DEBUG, f"Running bwrap: {argsstr}")
         (pipe_read, pipe_write)=os.pipe()
         pid=os.fork()
@@ -831,16 +832,17 @@ class Bubble:
                 os.setpgid(0, 0) # to avoid sharing the same process group as the calling process (so that children don't get the CTRL-C for example)
                 os.execv(args[0], args)
             except FileNotFoundError:
-                raise Exception(f"File '{args[0]}' is not present")
+                raise BubbleException(f"File '{args[0]}' is not present")
         elif pid==-1:
-            raise Exception("Could not fork() to start bubblewrap")
+            raise BubbleException("Could not fork() to start bubblewrap")
         else:
             # in the original process
             if fdr is not None:
                 os.close(fdr)
             if self._features.seccomp_filter_file is not None and fdw is not None:
-                nb=os.write(fdw, open(self._features.seccomp_filter_file, "rb").read())
-                syslog.syslog(syslog.LOG_INFO, f"Written seccomp filter to fd ({nb} bytes)")
+                with open(self._features.seccomp_filter_file, "rb") as fd:
+                    nb=os.write(fdw, fd.read())
+                    syslog.syslog(syslog.LOG_INFO, f"Written seccomp filter to fd ({nb} bytes)")
 
             # wait for bubblewrap to have spawned its child or died prematurely
             p=psutil.Process(pid)
@@ -849,7 +851,7 @@ class Bubble:
                     p.wait(0.1)
                     os.close(pipe_write)
                     err=os.read(pipe_read, 1000)
-                    raise Exception(f"Failed to start 'bwrap': {err}")
+                    raise BubbleException(f"Failed to start 'bwrap': {err}")
                 except psutil.TimeoutExpired:
                     pass
                 if len(p.children())>0:
@@ -862,7 +864,7 @@ class Bubble:
     def setup(self):
         """Actually set up the bubble"""
         if self._state!=BubbleState.INITIALIZED:
-            raise Exception("Bubble state does not allow to perform another setup")
+            raise BubbleException("Bubble state does not allow to perform another setup")
 
         try:
             self._start_bubble()
@@ -871,9 +873,9 @@ class Bubble:
                 self.activate_tap_network()
             self._state=BubbleState.RUNNING
             self._started_ts=datetime.datetime.now(datetime.timezone.utc)
-        except Exception as e:
+        except Exception:
             self.destroy()
-            raise e
+            raise
 
     def wait_for_init_started(self, max_delay=None):
         """Wait for the bubble's init process to be started
@@ -890,7 +892,7 @@ class Bubble:
             time.sleep(delay/2000)
             total+=delay
             if max_delay is not None and delay>max_delay:
-                raise Exception("Bubble failed to be set up or could not connect to bubble")
+                raise BubbleException("Bubble failed to be set up or could not connect to bubble")
             pid=self.init_pid
             if pid is not None:
                 return
@@ -907,7 +909,7 @@ class Bubble:
             # avoid zombies
             try:
                 os.kill(self._bubble_pid, signal.SIGKILL)
-            except Exception:
+            except Exception: # noqa: BLE001,S110
                 pass
             os.waitpid(self._bubble_pid, 0)
             self._bubble_pid=None
@@ -915,7 +917,7 @@ class Bubble:
             # avoid zombies
             try:
                 os.kill(self._wl_proxy_pid, signal.SIGKILL)
-            except Exception:
+            except Exception: # noqa: BLE001,S110
                 pass
             os.waitpid(self._wl_proxy_pid, 0)
             self._wl_proxy_pid=None
@@ -926,7 +928,7 @@ class Bubble:
     def deactivate_tap_network(self):
         """If the TAP feature was specified, then stops networking"""
         if not self._features.with_slirp_tap and not self._features.vde_switch_path:
-            raise Exception("Networking in the bubble has not been activated")
+            raise BubbleException("Networking in the bubble has not been activated")
 
         # slirp TAP
         if self._features.with_slirp_tap and self._slirp4netns_sock is not None:
@@ -945,7 +947,7 @@ class Bubble:
     def activate_tap_network(self):
         """If the TAP feature was specified, then starts networking"""
         if not self._features.with_slirp_tap and not self._features.vde_switch_path:
-            raise Exception("Networking in the bubble has not been activated")
+            raise BubbleException("Networking in the bubble has not been activated")
 
         # slirp TAP
         if self._features.with_slirp_tap and self._slirp4netns_sock is None:
@@ -962,13 +964,13 @@ class Bubble:
                 self._send_command_to_slirp4netns_socket({
                     "execute": "list_hostfwd"
                 })
-            except Exception as e:
+            except Exception:
                 if self._popen_slirp is not None:
                     self._popen_slirp.kill()
                     self._popen_slirp.wait()
                     self._popen_slirp=None
                 self._slirp4netns_sock=None
-                raise e
+                raise
 
         # VDE network interface
         if self._features.vde_switch_path:
@@ -979,10 +981,10 @@ class Bubble:
     def port_map(self, host_port:int, bubble_port:int, proto:str="tcp"):
         """Map a port of the spawned process to the host's loopback interface"""
         if not self._features.with_slirp_tap:
-            raise Exception("Networking in the bubble with a slirp tap has not been activated")
+            raise BubbleException("Networking in the bubble with a slirp tap has not been activated")
 
         if self._slirp4netns_sock is None:
-            raise Exception("Slirp4netns process has not been spawned")
+            raise BubbleException("Slirp4netns process has not been spawned")
 
         command={
             "execute": "add_hostfwd",
@@ -1000,12 +1002,12 @@ class Bubble:
             self._raise_exception_from_slirp4netns_socket_command_error(response, f"Could not map host port {host_port} to spawned process's port {bubble_port}")
         id=retdata.get("id")
         if id is None:
-            raise Exception(f"Code bug: could not ID of mapping from host port {host_port} to spawned process's port {bubble_port} (returned {retdata})")
+            raise BubbleException(f"Code bug: could not ID of mapping from host port {host_port} to spawned process's port {bubble_port} (returned {retdata})")
         self._mapped_ports[id]=[host_port, bubble_port, proto]
 
     def _send_command_to_slirp4netns_socket(self, command:dict):
         if self._slirp4netns_sock is None:
-            raise Exception("Slirp4netns process has not been spawned")
+            raise BubbleException("Slirp4netns process has not been spawned")
         client=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 
         # we might have to wait a bit for the slirp4netns program to be operational
@@ -1014,10 +1016,10 @@ class Bubble:
             try:
                 client.connect(self._slirp4netns_sock)
                 break
-            except (ConnectionRefusedError, FileNotFoundError) as e:
+            except (ConnectionRefusedError, FileNotFoundError):
                 counter+=1
                 if counter>10:
-                    raise e
+                    raise
                 time.sleep(0.1)
 
         msg=json.dumps(command)
@@ -1032,8 +1034,8 @@ class Bubble:
         if erdata is not None:
             descr=erdata.get("desc")
             if descr is not None:
-                raise Exception(f"{context}: {descr}")
-        raise Exception("CODEBUG: unhandled case in _raise_exception_from_slirp4netns_socket_command_error")
+                raise BubbleException(f"{context}: {descr}")
+        raise BubbleException("CODEBUG: unhandled case in _raise_exception_from_slirp4netns_socket_command_error")
 
     def port_unmap(self, host_port:int|None=None, bubble_port:int|None=None, proto:str="tcp"):
         """Unmap a mapped port.
@@ -1041,11 +1043,11 @@ class Bubble:
         NB: If multiple host ports are mapped to the same @bubble_port, and the host port is not specified, then only the 1st one will be unmapped
         """
         if not self._features.with_slirp_tap:
-            raise Exception("Networking in the bubble with a slirp tap has not been activated")
+            raise BubbleException("Networking in the bubble with a slirp tap has not been activated")
         slirpid=None
         if host_port is None:
             if bubble_port is None:
-                raise Exception("host port or spawned port not specified")
+                raise BubbleException("host port or spawned port not specified")
             for id, value in self._mapped_ports.items():
                 if value[1]==bubble_port and value[2]==proto:
                     slirpid=id
@@ -1062,7 +1064,7 @@ class Bubble:
                         slirpid=id
                         break
         if slirpid is None:
-            raise Exception("No port mapping found")
+            raise BubbleException("No port mapping found")
         command={
             "execute": "remove_hostfwd",
             "arguments": {"id": slirpid}
@@ -1074,14 +1076,14 @@ class Bubble:
         if retdata=={}:
             del self._mapped_ports[slirpid]
         else:
-            raise Exception(f"Code bug: could not ID of mapping from host port {host_port} to spawned process's port {bubble_port} (returned {retdata})")
+            raise BubbleException(f"Code bug: could not ID of mapping from host port {host_port} to spawned process's port {bubble_port} (returned {retdata})")
 
     def get_mapped_ports(self) -> dict[int, int]:
         """Get the mapped ports as a dictionary indexed by the host port, and with values being the spawned process's mapped port"""
         if not self._features.with_slirp_tap:
-            raise Exception("Networking in the bubble has not been activated")
+            raise BubbleException("Networking in the bubble has not been activated")
         res={}
-        for id, (host_port, bubble_port, proto) in self._mapped_ports.items():
+        for (host_port, bubble_port, _proto) in self._mapped_ports.values():
             res[host_port]=bubble_port
         return res
 
@@ -1091,7 +1093,7 @@ class Bubble:
         """
         pid=self.init_pid
         if pid is None:
-            raise Exception("Bubble is not yet started (no init process)")
+            raise BubbleException("Bubble is not yet started (no init process)")
         return named_netns_create(self.net_namespace_raw, pid)
 
     def named_netns_remove(self):
@@ -1105,25 +1107,25 @@ class Bubble:
         (the namespace in which the bubble has been created)
         """
         if self._state!=BubbleState.RUNNING:
-            raise Exception(f"Bubble is {self._state.value}")
+            raise BubbleException(f"Bubble is {self._state.value}")
         bubblens=os.readlink(f"/proc/{self.init_pid}/ns/pid")
         try:
             proc_pid_ns=os.readlink(f"/proc/{pid}/ns/pid")
         except FileNotFoundError:
-            raise Exception(f"Process with host {pid} does not exist")
+            raise BubbleException(f"Process with host {pid} does not exist")
         if proc_pid_ns!=bubblens:
-            raise Exception(f"Process with host {pid} is not running in the bubble")
+            raise BubbleException(f"Process with host {pid} is not running in the bubble")
 
         with open(f"/proc/{pid}/status", "r") as fd:
-            for line in fd.readlines():
+            for line in fd:
                 if line.startswith("NSpid:"):
                     data=line[6:].strip()
                     try:
-                        (hpid, bpid, *_)=data.split()
+                        (_hpid, bpid, *_)=data.split()
                         return int(bpid)
                     except ValueError:
-                        raise Exception(f"NSpid line '{line}' does not list all the PIDs in all the namespaces")
-        raise Exception(f"No NSpid line in /proc/{pid}/status???")
+                        raise BubbleException(f"NSpid line '{line}' does not list all the PIDs in all the namespaces")
+        raise BubbleException(f"No NSpid line in /proc/{pid}/status???")
 
     def map_bubble_pid_to_host(self, pid:int) -> int|None:
         """Get the PID in the "host" namespace (the namespace in which the bubble has been created) of the
@@ -1134,13 +1136,13 @@ class Bubble:
         for fname in os.listdir("/proc"):
             try:
                 hpid=int(fname)
-            except Exception:
+            except ValueError:
                 # we don't care about non PID directories in /proc
                 continue
             try:
                 if os.readlink(f"/proc/{hpid}/ns/pid")==bubblens:
                     with open(f"/proc/{hpid}/status", "r") as fd:
-                        for line in fd.readlines():
+                        for line in fd:
                             if line.startswith("NSpid:"):
                                 data=line[6:].strip()
                                 try:
@@ -1148,7 +1150,7 @@ class Bubble:
                                     if bpid==spid:
                                         return int(hpid)
                                 except ValueError:
-                                    raise Exception(f"NSpid line '{line}' does not list all the PIDs in all the namespaces")
+                                    raise BubbleException(f"NSpid line '{line}' does not list all the PIDs in all the namespaces")
             except PermissionError:
                 pass
         return None
@@ -1158,7 +1160,7 @@ class Bubble:
         or any bubble itself in it
         """
         if self._state!=BubbleState.RUNNING:
-            raise Exception(f"Bubble is {self._state.value}")
+            raise BubbleException(f"Bubble is {self._state.value}")
         init_pid=self.init_pid
         proc=psutil.Process(pid)
         while proc is not None and proc.pid!=1:
@@ -1223,9 +1225,9 @@ class BubbleAPI:
 
     def _common_check(self, path):
         if path[0]!="/":
-            raise Exception(f"Invalid path '{path}'")
+            raise BubbleException(f"Invalid path '{path}'")
         if self.state!=BubbleState.RUNNING:
-            raise Exception(f"Bubble is {self.state.value}")
+            raise BubbleException(f"Bubble is {self.state.value}")
 
     def _get(self, path:str, params:dict|None=None):
         self._common_check(path)
@@ -1233,7 +1235,7 @@ class BubbleAPI:
             params=params, timeout=BubbleAPI.timeout)
         if resp.ok:
             return self._handle_response_generated_exception(resp.json())
-        raise Exception(resp.text)
+        raise BubbleException(resp.text)
 
     def _post(self, path:str, data):
         self._common_check(path)
@@ -1242,7 +1244,7 @@ class BubbleAPI:
             timeout=BubbleAPI.timeout)
         if resp.ok:
             return self._handle_response_generated_exception(resp.json())
-        raise Exception(resp.text)
+        raise BubbleException(resp.text)
 
     def _put(self, path:str, data):
         self._common_check(path)
@@ -1251,7 +1253,7 @@ class BubbleAPI:
             timeout=BubbleAPI.timeout)
         if resp.ok:
             return self._handle_response_generated_exception(resp.json())
-        raise Exception(resp.text)
+        raise BubbleException(resp.text)
 
     def _delete(self, path:str, data):
         if self.state!=BubbleState.RUNNING:
@@ -1265,7 +1267,7 @@ class BubbleAPI:
                 timeout=BubbleAPI.timeout)
             if resp.ok:
                 return self._handle_response_generated_exception(resp.json())
-            raise Exception(resp.text)
+            raise BubbleException(resp.text)
         except requests.exceptions.ConnectionError:
             # bubble is not running, there is nothing to do
             pass
@@ -1276,7 +1278,7 @@ class BubbleAPI:
         if isinstance(data, dict):
             exp=data.get("exception")
             if exp is not None:
-                raise Exception(exp)
+                raise BubbleException(exp)
         return data
 
     @property
@@ -1298,8 +1300,8 @@ class BubbleAPI:
         try:
             self._get("/ping")
             return True
-        except Exception as e:
-            syslog.syslog(syslog.LOG_WARNING, f"could not determine if bubble is ready: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_WARNING, f"could not determine if bubble is ready: {e}")
             return False
 
     def wait_for_bubble_ready(self, max_delay=None):
@@ -1315,7 +1317,7 @@ class BubbleAPI:
             time.sleep(delay/1000)
             total+=delay
             if max_delay is not None and total>max_delay:
-                raise Exception("Bubble failed to be set up or could not connect to bubble")
+                raise BubbleException("Bubble failed to be set up or could not connect to bubble")
             if self.ready:
                 break
 
@@ -1326,25 +1328,24 @@ class BubbleAPI:
         """
         try:
             self._post("/env", {"name": name, "value": value})
-            return None
-        except Exception as e:
-            raise Exception(f"Failed to start process: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to start process: {e}")
 
     @property
     def environment(self) -> dict[str,str]:
         """Get the environment variable which all the future processes run in the bubble will have"""
         try:
             return self._get("/env") # pyright: ignore
-        except Exception as e:
-            raise Exception(f"Failed to get environment variables: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to get environment variables: {e}")
 
     @property
     def auto_stop(self) -> bool:
         """Tells if the bubble destroys itself when the last managed process terminates"""
         try:
             return bool(self._get("/property", params={"name": "auto-stop"}))
-        except Exception as e:
-            raise Exception(f"Failed to get the 'auto-stop' property: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to get the 'auto-stop' property: {e}")
 
     @auto_stop.setter
     def auto_stop(self, auto_stop:bool):
@@ -1354,8 +1355,8 @@ class BubbleAPI:
         """
         try:
             self._put("/property", {"name": "auto-stop", "value": auto_stop})
-        except Exception as e:
-            raise Exception(f"Failed to set the 'auto-stop' property to {auto_stop}: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to set the 'auto-stop' property to {auto_stop}: {e}")
 
     def create_shared_tempory_directory(self) -> tuple[tempfile.TemporaryDirectory, str]:
         """Create a temporary directory which is visible both by processes running in the "host" and by processes in the bubble
@@ -1394,8 +1395,8 @@ class BubbleAPI:
                 "restart": restart
             })
             return data["pid"] # pyright: ignore
-        except Exception as e:
-            raise Exception(f"Failed to start process: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to start process: {e}")
 
     def stop_process(self, pid:int):
         """Stop a process running in the bubble
@@ -1403,26 +1404,26 @@ class BubbleAPI:
         """
         try:
             self._delete("/procs", {"pid": pid})
-        except Exception as e:
+        except Exception as e: # noqa: BLE001
             err=str(e)
             if "PID not found" not in err and "No such process" not in err:
-                raise Exception(f"Failed to stop process: {str(e)}")
+                raise BubbleException(f"Failed to stop process: {e}")
 
     def suspend_process(self, pid:int):
         """Suspend a process in the bubble
         """
         try:
             self._put("/procs", {"pid": pid, "state": "suspend"})
-        except Exception as e:
-            raise Exception(f"Failed to suspend process: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to suspend process: {e}")
 
     def resume_process(self, pid:int):
         """Resume a suspended a process in the bubble
         """
         try:
             self._put("/procs", {"pid": pid, "state": "resume"})
-        except Exception as e:
-            raise Exception(f"Failed to resume process: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to resume process: {e}")
 
     def get_processes(self, include_running:bool=True, include_terminated:bool=False) -> list[dict]:
         """List the managed processes in the bubble with at least the following attributes for each process:
@@ -1437,8 +1438,8 @@ class BubbleAPI:
             elif not include_running and include_terminated:
                 params={"state": "TERMINATED"}
             return self._get("/procs", params) # pyright: ignore
-        except Exception as e:
-            raise Exception(f"Failed to start process: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to start process: {e}")
 
     def get_process_exit_status(self, pid:int|None=None, wait:float=0) -> dict[int,int]|int|None:
         """If a process has terminated, get its exit status
@@ -1457,7 +1458,7 @@ class BubbleAPI:
             for proc in self.get_processes(include_running=False, include_terminated=True):
                 pid=proc.get("pid")
                 if pid is None:
-                    raise Exception("CODEBUG: get_processes() did not return a 'pid'")
+                    raise BubbleException("CODEBUG: get_processes() did not return a 'pid'")
                 data[pid]=self.get_process_exit_status(pid)
             return data
         else:
@@ -1483,11 +1484,8 @@ class BubbleAPI:
             return False
         try:
             st=self.get_process_exit_status(pid)
-            if st is not None:
-                return False
-            else:
-                return True
-        except Exception:
+            return st is None
+        except Exception: # noqa: BLE001
             return False
 
     def get_process_status(self, pid:int) -> int|None:
@@ -1498,37 +1496,37 @@ class BubbleAPI:
                 syslog.syslog(syslog.LOG_DEBUG, f"Getting status of pid {pid}")
             pid=int(pid)
             return self._get(f"/proc/{pid}") # pyright: ignore
-        except Exception as e:
-            raise Exception(f"Failed to get process's status: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to get process's status: {e}")
 
     def get_vde_networking_status(self):
         """If VDE networking has been specified, get the network status"""
         try:
             return self._get("/vdenet")
-        except Exception as e:
-            raise Exception(f"Failed to get VDE networking status: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to get VDE networking status: {e}")
 
     def activate_vde_networking(self):
         """If VDE networking has been specified, activate the networking features"""
         try:
             return self._put("/vdenet", {"active": True})
-        except Exception as e:
-            raise Exception(f"Failed to activate VDE networking: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to activate VDE networking: {e}")
 
     def deactivate_vde_networking(self):
         """If VDE networking has been specified, activate the networking features"""
         try:
             return self._put("/vdenet", {"active": False})
-        except Exception as e:
-            raise Exception(f"Failed to deactivate VDE networking: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed to deactivate VDE networking: {e}")
 
     def get_vde_networking_allowed_ips(self):
         """Get the list of VDE IP addresses which are allowed by the bubble's internal firewall
         """
         try:
             return self._get("/netfilter")
-        except Exception as e:
-            raise Exception(f"Failed: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed: {e}")
 
     def define_vde_networking_allowed_ips(self, ips:list[str]):
         """Define the list of VDE IP addresses which are allowed by the bubble's internal firewall
@@ -1537,5 +1535,5 @@ class BubbleAPI:
             if ips is None:
                 ips=[]
             return self._put("/netfilter", {"ips": ips})
-        except Exception as e:
-            raise Exception(f"Failed: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise BubbleException(f"Failed: {e}")

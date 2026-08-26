@@ -32,25 +32,28 @@ import psutil
 import nsbubble
 
 
+class VMException(Exception):
+    pass
+
 def _get_qemu_version() -> tuple[int,int]:
     """Determine QEMU's version
     Returns a (major, minor) version
     """
-    p=subprocess.run(["qemu-system-x86_64", "--version"], capture_output=True, text=True)
+    p=subprocess.run(["qemu-system-x86_64", "--version"], capture_output=True, text=True, check=False)
     if p.returncode!=0:
-        raise Exception(f"Could not determine QEMU's installed version: {p.stderr}")
+        raise VMException(f"Could not determine QEMU's installed version: {p.stderr}")
     # p.stdout will be like:
     #   QEMU emulator version 7.2.15 (Debian 1:7.2+dfsg-7+deb12u12)
     #   Copyright (c) 2003-2022 Fabrice Bellard and the QEMU Project developers
     try:
         (line, *_)=p.stdout.split("\n")
         if "version" not in line:
-            raise Exception()
+            raise VMException()
         (_, version, *_)=line[line.index("version"):].split()
         (maj, min, *_)=version.split(".")
         return (int(maj), int(min))
-    except Exception:
-        raise Exception(f"Unhandled QEMU version {p.stdout}")
+    except Exception: # noqa: BLE001
+        raise VMException(f"Unhandled QEMU version {p.stdout}")
 
 class QEMUImageFile:
     """Represents a QEMU image file in the QCOW2 format"""
@@ -65,24 +68,24 @@ class QEMUImageFile:
     def create(cls, filename:str, size_mb:int) -> QEMUImageFile:
         """Create a new QEMU image file"""
         args=["qemu-img", "create", "-f", "qcow2", filename, f"{size_mb}M"]
-        res=subprocess.run(args, capture_output=True)
+        res=subprocess.run(args, capture_output=True, check=False)
         if res.returncode!=0:
-            raise Exception(f"Could not create '{filename}': {res.stderr.decode()}")
+            raise VMException(f"Could not create '{filename}': {res.stderr.decode()}")
         return QEMUImageFile(filename)
 
     def _analyse(self):
         args=["qemu-img", "info", "-U", self._image_file]
-        res=subprocess.run(args, capture_output=True)
+        res=subprocess.run(args, capture_output=True, check=False)
         if res.returncode!=0:
-            raise Exception(f"Could not analyse '{self._image_file}': {res.stderr.decode()}")
+            raise VMException(f"Could not analyse '{self._image_file}': {res.stderr.decode()}")
 
         for line in res.stdout.decode().splitlines():
             if line.startswith("file format: ") and line[13:]!="qcow2":
-                raise Exception(f"Unhandled file format {line[13:]}")
+                raise VMException(f"Unhandled file format {line[13:]}")
             elif line.startswith("virtual size: "):
                 m=re.search(r"([0-9]*) bytes\)$", line)
                 if m is None:
-                    raise Exception(f"CODEBUG: unexpected virtual size line '{line}'")
+                    raise VMException(f"CODEBUG: unexpected virtual size line '{line}'")
                 self._size_bytes=int(m.groups()[0])
             elif line.startswith("backing file: "):
                 m=re.search(r"actual path: (.*)\)$", line)
@@ -122,9 +125,9 @@ class QEMUImageFile:
         Use this operation after having renamed the original backing file
         """
         args=["qemu-img", "rebase", "-u", "-F", "qcow2", "-b", new_backing_file, self._image_file]
-        res=subprocess.run(args, capture_output=True)
+        res=subprocess.run(args, capture_output=True, check=False)
         if res.returncode!=0:
-            raise Exception(f"Failed to rename backing file: {res.stderr}")
+            raise VMException(f"Failed to rename backing file: {res.stderr}")
         return QEMUImageFile(new_backing_file)
 
     def create_snapshot(self, filename:str, exist_ok=False) -> QEMUImageFile:
@@ -135,22 +138,22 @@ class QEMUImageFile:
             if exist_ok:
                 os.remove(filename)
             else:
-                raise Exception(f"File '{filename}' already exists")
+                raise VMException(f"File '{filename}' already exists")
 
         args=["qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", self._image_file, filename]
-        res=subprocess.run(args, capture_output=True)
+        res=subprocess.run(args, capture_output=True, check=False)
         if res.returncode!=0:
-            raise Exception(f"Failed to create snapshot: {res.stderr}")
+            raise VMException(f"Failed to create snapshot: {res.stderr}")
         return QEMUImageFile(filename)
 
     def commit(self):
         """If the QEMU image file has a backing store, commit the modifications which may have been made"""
         if self.backing is None:
-            raise Exception("Image file does not have any backing image")
+            raise VMException("Image file does not have any backing image")
         args=["qemu-img", "commit", "-d", self._image_file]
-        res=subprocess.run(args, capture_output=True)
+        res=subprocess.run(args, capture_output=True, check=False)
         if res.returncode!=0:
-            raise Exception(f"Failed to commit: {res.stderr}")
+            raise VMException(f"Failed to commit: {res.stderr}")
         os.remove(self._image_file)
 
     def get_backing_files_names(self) -> list[str]:
@@ -198,19 +201,19 @@ class QEMUImageFile:
 
         smallerfile=f"{self._image_file}.shrinked"
         args+=["--compress", self._image_file, smallerfile]
-        prog=subprocess.run(args, capture_output=True)
+        prog=subprocess.run(args, capture_output=True, check=False)
         if prog.returncode!=0:
             try:
                 os.remove(smallerfile)
-            except Exception:
+            except Exception: # noqa: BLE001,S110
                 pass
-            raise Exception(f"Could shrink '{self._image_file}': {prog.stderr.decode()}")
+            raise VMException(f"Could shrink '{self._image_file}': {prog.stderr.decode()}")
         os.rename(smallerfile, self._image_file)
         self._analyse()
         return self._size_bytes*100/csize
 
 @dataclass
-class VirtioSharedDirectory():
+class VirtioSharedDirectory:
     """Represent a directory shared using a virtiofs daemon (which is expected to already being running)
     In the VM, the shared directory will be mountable using "mount -t virtiofs <fsname> ..."
     """
@@ -221,7 +224,7 @@ class NotEnoughMemory(Exception):
     pass
 
 @dataclass
-class VMSpecs():
+class VMSpecs:
     """Represent some VM specifications
     NB:
     - the directory in which both of these files are does not need to be writable
@@ -385,7 +388,7 @@ class BubbleVM(nsbubble.Bubble):
 
         # handle command line args depending on QEMU's version
         # refer to https://www.qemu.org/docs/master/about/removed-features.html
-        (qemu_major, qemu_minor)=_get_qemu_version()
+        (qemu_major, _qemu_minor)=_get_qemu_version()
         if qemu_major<9:
             args+=[
                 "-machine", "type=q35,accel=kvm",
@@ -418,77 +421,73 @@ class BubbleVM(nsbubble.Bubble):
         if self._extra_isos is not None:
             for isofile in self._extra_isos:
                 if not os.path.exists(isofile):
-                    raise Exception(f"ISO file '{isofile}' not found")
+                    raise VMException(f"ISO file '{isofile}' not found")
                 args+=[
                     "-drive", f"file={isofile},media=cdrom"
                 ]
 
-        try:
-            # virtiofs shared directories, if any
-            if self._vfs_dirs is not None:
-                index=0
-                for vobj in self._vfs_dirs:
-                    args+=[
-                        "-chardev", f"socket,id=virtiochar{index},path={vobj.socket_path}",
-                        "-device", f"vhost-user-fs-pci,queue-size=1024,chardev=virtiochar{index},tag={vobj.fsname}",
-                    ]
-                    index+=1
-                if index>0:
-                    args+=["-object", f"memory-backend-file,id=mem,size={self._vm_spec.mem_mb}M,mem-path=/dev/shm,share=on", "-numa", "node,memdev=mem"]
-
-            # network settings
-            if self._vm_spec.net_type is not None and self._vm_spec.tap_iface is not None:
-                if self._vm_spec.net_type=="user":
-                    args+=["-netdev", "user,id=lx1"]
-                elif self._vm_spec.net_type.startswith("tap:"):
-                    iface=self._vm_spec.tap_iface
-                    if re.match("^[a-z0-9]{1,15}$", iface) is not None:
-                        args+=["-netdev", f"tap,id=lx1,ifname={iface},script=no,downscript=no"]
-                    else:
-                        raise Exception(f"Invalid network interface name '{iface}'")
-                else:
-                    raise Exception(f"Invalid network type specification '{self._vm_spec.net_type}'")
-                args+=["-device", "virtio-net-pci,netdev=lx1"]
-            else:
-                args+=["-net", "none"]
-
-            # UI settings
-            if self._vm_spec.graphical_device:
+        # virtiofs shared directories, if any
+        if self._vfs_dirs is not None:
+            index=0
+            for vobj in self._vfs_dirs:
                 args+=[
-                    # Spice VDAgent
-                    "-spice", f"unix=on,addr={self._spice_sock},disable-ticketing=on,image-compression=off,seamless-migration=on",
-                    "-device", "virtio-serial",
-                    "-chardev", "spicevmc,id=vdagent,debug=0,name=vdagent",
-                    "-device", "virtserialport,chardev=vdagent,name=com.redhat.spice.0",
-                    "-vga", "qxl",
-                    "-global", "qxl-vga.vram_size=262144",
-                    "-global", "qxl-vga.ram_size=262144",
+                    "-chardev", f"socket,id=virtiochar{index},path={vobj.socket_path}",
+                    "-device", f"vhost-user-fs-pci,queue-size=1024,chardev=virtiochar{index},tag={vobj.fsname}",
                 ]
+                index+=1
+            if index>0:
+                args+=["-object", f"memory-backend-file,id=mem,size={self._vm_spec.mem_mb}M,mem-path=/dev/shm,share=on", "-numa", "node,memdev=mem"]
+
+        # network settings
+        if self._vm_spec.net_type is not None and self._vm_spec.tap_iface is not None:
+            if self._vm_spec.net_type=="user":
+                args+=["-netdev", "user,id=lx1"]
+            elif self._vm_spec.net_type.startswith("tap:"):
+                iface=self._vm_spec.tap_iface
+                if re.match("^[a-z0-9]{1,15}$", iface) is not None:
+                    args+=["-netdev", f"tap,id=lx1,ifname={iface},script=no,downscript=no"]
+                else:
+                    raise VMException(f"Invalid network interface name '{iface}'")
             else:
-                args+=["-nographic"]
+                raise VMException(f"Invalid network type specification '{self._vm_spec.net_type}'")
+            args+=["-device", "virtio-net-pci,netdev=lx1"]
+        else:
+            args+=["-net", "none"]
 
-            # start QEMU
-            self.api.wait_for_bubble_ready()
-            qemulogdir=f"{self.run_dir}/qemu"
-            os.makedirs(qemulogdir, exist_ok=True)
-            caps=None
-            if self._vm_spec.tap_iface is not None:
-                caps="net_admin" # required to create the tapvm interface
-            self._qemu_pid=self.api.start_process(args, ignore_status=False, child_stderr_file="/bubble/run/qemu/qemu.stderr",
-                                                  child_stdout_file="/bubble/run/qemu/qemu.stdout", capabilities=caps)
-            time.sleep(1)
-            st=self.api.get_process_exit_status(self._qemu_pid)
-            if st is not None:
-                errfile=f"{qemulogdir}/qemu.stderr"
-                if os.path.exists(errfile):
-                    with open(errfile, "r") as fd:
-                        raise Exception(f"Could not start the VM: {fd.read()}")
-                raise Exception("Could not start the VM")
-            return self._qemu_pid
+        # UI settings
+        if self._vm_spec.graphical_device:
+            args+=[
+                # Spice VDAgent
+                "-spice", f"unix=on,addr={self._spice_sock},disable-ticketing=on,image-compression=off,seamless-migration=on",
+                "-device", "virtio-serial",
+                "-chardev", "spicevmc,id=vdagent,debug=0,name=vdagent",
+                "-device", "virtserialport,chardev=vdagent,name=com.redhat.spice.0",
+                "-vga", "qxl",
+                "-global", "qxl-vga.vram_size=262144",
+                "-global", "qxl-vga.ram_size=262144",
+            ]
+        else:
+            args+=["-nographic"]
 
-        except Exception as e:
-            # nothing for now
-            raise e
+        # start QEMU
+        self.api.wait_for_bubble_ready()
+        qemulogdir=f"{self.run_dir}/qemu"
+        os.makedirs(qemulogdir, exist_ok=True)
+        caps=None
+        if self._vm_spec.tap_iface is not None:
+            caps="net_admin" # required to create the tapvm interface
+        self._qemu_pid=self.api.start_process(args, ignore_status=False, child_stderr_file="/bubble/run/qemu/qemu.stderr",
+                                                child_stdout_file="/bubble/run/qemu/qemu.stdout", capabilities=caps)
+        time.sleep(1)
+        st=self.api.get_process_exit_status(self._qemu_pid)
+        if st is not None:
+            errfile=f"{qemulogdir}/qemu.stderr"
+            if os.path.exists(errfile):
+                with open(errfile, "r") as fd:
+                    raise VMException(f"Could not start the VM: {fd.read()}")
+            raise VMException("Could not start the VM")
+        return self._qemu_pid
+
 
     def get_vm_state(self) -> tuple[bool, bool]:
         """Tell if the VM and the viewer are running
