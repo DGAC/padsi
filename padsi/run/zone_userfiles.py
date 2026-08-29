@@ -56,6 +56,9 @@ def _compute_all_zones_xdg_directories(gconf:padsi.config.Configuration, uid:int
             all_zones_dirs[key]=value
     return all_zones_dirs
 
+class ZoneUserFilesException(Exception):
+    pass
+
 class ZoneUserFiles:
     """Object which keeps a list of all the directories which are somehow mounted from a zone's definition
     to create the home directory of the user in that zone.
@@ -111,15 +114,16 @@ class ZoneUserFiles:
                 privkey_file=os.path.join(ssh_dir, "padsi-vm-key")
                 if os.path.exists(privkey_file):
                     os.remove(privkey_file)
-                proc=subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-C", "PADSI generated", "-f", privkey_file], capture_output=True, text=True)
+                proc=subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-C", "PADSI generated", "-f", privkey_file],
+                    capture_output=True, text=True, check=False)
                 if proc.returncode!=0:
-                    raise Exception(proc.stderr.strip())
+                    raise ZoneUserFilesException(proc.stderr.strip())
                 os.chown(privkey_file, uid, gid)
                 os.chown(privkey_file+".pub", uid, gid)
             except FileNotFoundError:
-                raise Exception("ssk-keygen tool not found")
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Could not generate SSH keypair: {str(e)}")
+                raise ZoneUserFilesException("ssk-keygen tool not found")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Could not generate SSH keypair: {e}")
 
     @classmethod
     def get_ssh_pubkey_file(cls) -> str:
@@ -188,17 +192,17 @@ class ZoneUserFiles:
                     mounted.append(mp)
             if _debug:
                 syslog.syslog(syslog.LOG_DEBUG, f"{syslog_prefix}: setup done")
-        except Exception as e:
+        except Exception as e: # noqa: BLE001
             for mp in mounted[::-1]:
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"{syslog_prefix}: unmounting {mp.mount_path} from {mp.source_path}")
                 try:
                     mp.umount()
-                except Exception as se:
-                    syslog.syslog(syslog.LOG_WARNING, f"{syslog_prefix}: {str(se)}")
-            msg=f"{syslog_prefix}: setup failed: {str(e)}"
+                except Exception as se: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_WARNING, f"{syslog_prefix}: {se}")
+            msg=f"{syslog_prefix}: setup failed: {e}"
             syslog.syslog(syslog.LOG_ERR, msg)
-            raise Exception(msg)
+            raise ZoneUserFilesException(msg)
 
         # # (re) initialize any policy located in the HOME directory
         factory=padsi.config.ProgramPoliciesFactory()
@@ -211,8 +215,8 @@ class ZoneUserFiles:
             if policies is not None:
                 try:
                     policies.initialize_user_policies(home_dir=top_dir)
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"{syslog_prefix}: failed to initialize (HOME) policies for {progname}: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"{syslog_prefix}: failed to initialize (HOME) policies for {progname}: {e}")
 
         # create SSH keys if the zone can host VMs
         if zone_conf.has_virtual_machines:
@@ -228,5 +232,5 @@ class ZoneUserFiles:
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"{syslog_prefix}: unmounting {mp.mount_path} from {mp.source_path}")
                 mp.umount()
-            except Exception as e:
-                syslog.syslog(syslog.LOG_WARNING, f"{syslog_prefix}: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_WARNING, f"{syslog_prefix}: {e}")

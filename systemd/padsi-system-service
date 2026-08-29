@@ -38,25 +38,39 @@ import tempfile
 import time
 from dataclasses import dataclass
 
+import aiofiles
 import aionotify
 import psutil
 
 import firewall
 import padsi.misc
 from padsi.config import Configuration, TrafficShaper, VirtualMachine, VMUsage
-from padsi.system import NetworkInputManager, vm_files_analyse
-from padsi.run import (AdminVMFiles, VMFiles, VMManagementFiles, VMState,
-                       VMVersion, VMVersionType, ZoneApps,
-                       ZoneUserFiles, network_infra_attach_zone_apps,
-                       network_infra_cleanup,
-                       network_infra_create_attach_netns,
-                       network_infra_delete_netns, network_infra_dnat_incoming,
-                       network_infra_setup, zone_vm_setup)
+from padsi.run import (
+    AdminVMFiles,
+    VMFiles,
+    VMManagementFiles,
+    VMState,
+    VMVersion,
+    VMVersionType,
+    ZoneApps,
+    ZoneUserFiles,
+    network_infra_attach_zone_apps,
+    network_infra_cleanup,
+    network_infra_create_attach_netns,
+    network_infra_delete_netns,
+    network_infra_dnat_incoming,
+    network_infra_setup,
+    zone_vm_setup,
+)
 from padsi.simple_comm import Message, MessageType, Server
+from padsi.system import NetworkInputManager, vm_files_analyse
 
 _debug=False
 _padsi_install_dir=os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 _init_log_prefix="denied-host"
+
+class SystemServiceException(Exception):
+    pass
 
 class UserServer(Server):
     """User service for a specific user
@@ -102,8 +116,8 @@ class UserServer(Server):
         """
         try:
             cmde=request.data["cmde"]
-        except Exception:
-            raise Exception(f"Invalid request '{request.data}'")
+        except Exception: # noqa: BLE001
+            raise SystemServiceException(f"Invalid request '{request.data}'")
 
         match cmde:
             case "create-user-dirs":
@@ -181,7 +195,7 @@ class UserServer(Server):
             case "usb-device-reserve":
                 await self._usb_device_reserve(request.data)
             case _:
-                raise Exception(f"Unhandled '{cmde}' command")
+                raise SystemServiceException(f"Unhandled '{cmde}' command")
         return Message(MessageType.REPLY, None)
 
     #
@@ -197,24 +211,24 @@ class UserServer(Server):
         if not os.path.exists(prefixes_user_file):
             return {}
         lock_file=f"{prefix}/infos.lock"
-        with open(lock_file, "w") as lockfd:
+        async with aiofiles.open(lock_file, "w") as lockfd:
             fcntl.flock(lockfd, fcntl.LOCK_EX)
             try:
                 res={}
-                with open(prefixes_user_file, "rt") as fd:
-                    for line in fd.readlines():
+                async with aiofiles.open(prefixes_user_file, "rt") as fd:
+                    for line in await fd.readlines():
                         # will be like "mnt:[4026533288]net:[4026533291]=padsi.myzone\n"
                         (ns, zone)=line.split("=")
                         (_, zone)=zone.split(".")
                         res[ns]=zone.strip()
                 return res
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Problem reading info prefixes '{prefixes_user_file}': {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Problem reading info prefixes '{prefixes_user_file}': {e}")
                 return {}
             finally:
                 # unlock the lock file
                 fcntl.flock(lockfd, fcntl.LOCK_UN)
-                lockfd.close()
+                await lockfd.close()
 
     async def _update_zones_infos_files(self, args:dict):
         # steps:
@@ -228,7 +242,7 @@ class UserServer(Server):
             colors:dict=args["colors"]
             prefixes:dict=args["prefixes"]
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
         prefix=self._gconf.zones_infos_dir
         os.makedirs(prefix, exist_ok=True)
         lock_file=f"{prefix}/infos.lock"
@@ -237,7 +251,7 @@ class UserServer(Server):
         prefixes_agg_file=f"{prefix}/prefixes.txt"
         prefixes_user_file=f"{prefix}/prefixes-user-{self._uid}.txt"
 
-        with open(lock_file, "w") as lockfd:
+        async with aiofiles.open(lock_file, "w") as lockfd:
             fcntl.flock(lockfd, fcntl.LOCK_EX)
             try:
                 if colors is None:
@@ -248,8 +262,9 @@ class UserServer(Server):
                         pass
                 else:
                     # create /update the file for this user
-                    with open(colors_user_file, "w") as user_fd:
-                        json.dump(colors, user_fd)
+                    async with aiofiles.open(colors_user_file, "w") as user_fd:
+                        data=json.dumps(colors)
+                        await user_fd.write(data)
 
                 if prefixes is None:
                     # remove the file for the user (cleanup)
@@ -259,9 +274,9 @@ class UserServer(Server):
                         pass
                 else:
                     # create /update the file for this user
-                    with open(prefixes_user_file, "wt") as user_fd:
+                    async with aiofiles.open(prefixes_user_file, "wt") as user_fd:
                         for (key, value) in prefixes.items():
-                            user_fd.write(f"{key}=padsi.{value}\n")
+                            await user_fd.write(f"{key}=padsi.{value}\n")
 
                 # load all the JSON files and compute the aggregated data
                 colors_agg_data={}
@@ -271,43 +286,47 @@ class UserServer(Server):
                         fpath="---"
                         try:
                             fpath=os.path.join(prefix, fname)
-                            data=json.load(open(fpath, "r"))
-                            colors_agg_data.update(data)
-                        except Exception as e:
-                            syslog.syslog(syslog.LOG_ERR, f"Could not load JSON file '{fpath}': {str(e)}")
+                            async with aiofiles.open(fpath, "r") as rfd:
+                                data=await rfd.read()
+                                data=json.loads(data)
+                                colors_agg_data.update(data)
+                        except Exception as e: # noqa: BLE001
+                            syslog.syslog(syslog.LOG_ERR, f"Could not load JSON file '{fpath}': {e}")
                     elif "-user-" in fname and fname.endswith(".txt"):
                         fpath="---"
                         try:
                             fpath=os.path.join(prefix, fname)
-                            with open(fpath, "rt") as fd:
-                                for line in fd.readlines():
+                            async with aiofiles.open(fpath, "rt") as fd:
+                                for line in await fd.readlines():
                                     line=line.strip()
                                     (key, value)=line.split("=")
                                     prefixes_agg_data[key]=value
-                        except Exception as e:
-                            syslog.syslog(syslog.LOG_ERR, f"Could not load txt file '{fpath}': {str(e)}")
+                        except Exception as e: # noqa: BLE001
+                            syslog.syslog(syslog.LOG_ERR, f"Could not load txt file '{fpath}': {e}")
 
                 # write back the data
                 try:
-                    json.dump(colors_agg_data, open(colors_agg_file, "w"))
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Could not write data to aggregated JSON file '{colors_agg_file}': {str(e)}")
+                    async with aiofiles.open(colors_agg_file, "w") as fd:
+                        data=json.dumps(colors_agg_data)
+                        await fd.write(data)
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Could not write data to aggregated JSON file '{colors_agg_file}': {e}")
                 try:
-                    with open(prefixes_agg_file, "wt") as fd:
+                    async with aiofiles.open(prefixes_agg_file, "wt") as fd:
                         for (key, value) in prefixes_agg_data.items():
-                            fd.write(f"{key}={value}\n")
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Could not write data to aggregated text file '{prefixes_agg_file}': {str(e)}")
+                            await fd.write(f"{key}={value}\n")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Could not write data to aggregated text file '{prefixes_agg_file}': {e}")
             finally:
                     # unlock the lock file
                     fcntl.flock(lockfd, fcntl.LOCK_UN)
-                    lockfd.close()
+                    await lockfd.close()
 
     async def _fuse_cleanup(self, cleanup_args:dict):
         try:
             self._gconf.get_zone(cleanup_args["zone-name"])
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
         run_dir=self._gconf.get_user_run_dir(self._uid)
 
         # unmount resmaining FUSE mount points
@@ -347,16 +366,16 @@ class UserServer(Server):
                         os.rmdir(fpath)
                     except PermissionError as e:
                         all_ok=False
-                        syslog.syslog(syslog.LOG_WARNING, f"Could not remove userfiles directory '{fpath}': {str(e)} (filesystem may still be mounted)")
-                    except Exception as e:
+                        syslog.syslog(syslog.LOG_WARNING, f"Could not remove userfiles directory '{fpath}': {e} (filesystem may still be mounted)")
+                    except Exception as e: # noqa: BLE001
                         all_ok=False
-                        syslog.syslog(syslog.LOG_ERR, f"Could not remove userfiles directory '{fpath}': {str(e)} (exception type {type(e)})")
+                        syslog.syslog(syslog.LOG_ERR, f"Could not remove userfiles directory '{fpath}': {e} (exception type {type(e)})")
 
                 if all_ok:
                     try:
                         os.rmdir(userfiles_zones_dir)
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_ERR, f"Could not remove top userfiles directory '{userfiles_zones_dir}': {str(e)}")
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_ERR, f"Could not remove top userfiles directory '{userfiles_zones_dir}': {e}")
                 else:
                     syslog.syslog(syslog.LOG_INFO, f"Failsafe prevented removal of top userfiles directory '{userfiles_zones_dir}'")
 
@@ -368,14 +387,14 @@ class UserServer(Server):
                     if fpath!=userfiles_zones_dir:
                         try:
                             await loop.run_in_executor(None, shutil.rmtree, fpath)
-                        except Exception as e:
+                        except Exception as e: # noqa: BLE001
                             all_ok=False
-                            syslog.syslog(syslog.LOG_ERR, f"Could not remove user directory '{fpath}': {str(e)}")
+                            syslog.syslog(syslog.LOG_ERR, f"Could not remove user directory '{fpath}': {e}")
                 if all_ok:
                     try:
                         await loop.run_in_executor(None, shutil.rmtree, user_run_dir)
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_ERR, f"Could not remove user run dir '{user_run_dir}': {str(e)}")
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_ERR, f"Could not remove user run dir '{user_run_dir}': {e}")
                 else:
                     syslog.syslog(syslog.LOG_INFO, f"Failsafe prevented removal of files in user run dir '{user_run_dir}'")
 
@@ -384,7 +403,7 @@ class UserServer(Server):
             zone_conf=self._gconf.get_zone(args["zone-name"])
             syslog_prefix=args["syslog-prefix"]
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
         run_dir=self._gconf.get_user_run_dir(self._uid)
         loop=asyncio.get_event_loop()
         res=await loop.run_in_executor(None, ZoneUserFiles.setup, self._gconf, zone_conf, self._uid, self._gid, run_dir, syslog_prefix)
@@ -397,18 +416,18 @@ class UserServer(Server):
             zone_conf=self._gconf.get_zone(args["zone-name"])
             syslog_prefix=args["syslog-prefix"]
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
         run_dir=self._gconf.get_user_run_dir(self._uid)
         loop=asyncio.get_event_loop()
         try:
             res=await loop.run_in_executor(None, ZoneUserFiles.cleanup, self._gconf, zone_conf, self._uid, self._gid, run_dir, syslog_prefix)
             if isinstance(res, Exception):
-                syslog.syslog(syslog.LOG_ERR, f"Could not cleanup zone userfiles: {str(res)}")
+                syslog.syslog(syslog.LOG_ERR, f"Could not cleanup zone userfiles: {res}")
                 raise res
             return Message(MessageType.REPLY, res)
         except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Error while cleanup of zone userfiles: {str(e)}")
-            raise e
+            syslog.syslog(syslog.LOG_ERR, f"Error while cleanup of zone userfiles: {e}")
+            raise
 
     async def _vm_management_priv(self, is_setup:bool, args:dict):
         try:
@@ -419,7 +438,7 @@ class UserServer(Server):
             discriminant=args["discriminant"]
             z_homedir=args["zone-home-dir"]
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         loop=asyncio.get_event_loop()
         avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
@@ -427,16 +446,16 @@ class UserServer(Server):
             raise avmf
         vmf=avmf.get_vm_files(self._uid)
         if vmf is None:
-            raise Exception(f"No VM files found for user '{self._uid}'")
+            raise SystemServiceException(f"No VM files found for user '{self._uid}'")
         vm_version=args.get("vm-version")
         if vm_version is None:
-            raise Exception("CODEBUG: 'vm-version' not specified")
+            raise SystemServiceException("CODEBUG: 'vm-version' not specified")
         vm_version=vmf.get_vm_version_by_id(vm_version)
         if vm_version is None:
             msg=f"Unexpected None VM version in _vm_management_priv(), args['vm-version']={args['vm-version']}"
             syslog.syslog(syslog.LOG_WARNING, msg)
             if is_setup:
-                raise Exception(msg)
+                raise SystemServiceException(msg)
         else:
             _check_privileges_on_vm_version(self._gconf, vm_id, vm_version, self._uid)
             if is_setup:
@@ -457,7 +476,7 @@ class UserServer(Server):
             setup_args["bridge-name"], ipaddress.IPv4Network(setup_args["lower-net"]),
             setup_args["syslog-prefix"], setup_args["mtu"])
         if isinstance(res, KeyError):
-            raise Exception(f"CODEBUG: no '{str(res)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{res}' key present")
         if isinstance(res, Exception):
             raise res
 
@@ -471,7 +490,7 @@ class UserServer(Server):
             cleanup_args["components"], ipaddress.IPv4Network(cleanup_args["lower-net"]),
             cleanup_args["syslog-prefix"])
         if isinstance(res, KeyError):
-            raise Exception(f"CODEBUG: no '{str(res)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{res}' key present")
         if isinstance(res, Exception):
             raise res
 
@@ -483,7 +502,7 @@ class UserServer(Server):
                                        ipaddress.IPv4Interface(attach_args["infra-bridge-ip"]),
                                        attach_args["infra-bridge-name"], attach_args["syslog-prefix"], attach_args["mtu"])
         if isinstance(res, KeyError):
-            raise Exception(f"CODEBUG: no '{str(res)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{res}' key present")
         if isinstance(res, Exception):
             raise res
 
@@ -495,7 +514,7 @@ class UserServer(Server):
                                        ipaddress.IPv4Interface(attach_args["infra-bridge-ip"]),
                                        attach_args["infra-bridge-name"], attach_args["syslog-prefix"], attach_args["mtu"])
         if isinstance(res, KeyError):
-            raise Exception(f"CODEBUG: no '{str(res)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{res}' key present")
         if isinstance(res, Exception):
             raise res
 
@@ -506,14 +525,14 @@ class UserServer(Server):
         if tsp_name is not None:
             tsp=self._traffic_shapers.get(tsp_name)
             if tsp is None:
-                raise Exception(f"CODEBUG: no traffic shapper named '{tsp_name}'")
+                raise SystemServiceException(f"CODEBUG: no traffic shapper named '{tsp_name}'")
         loop=asyncio.get_event_loop()
         res=await loop.run_in_executor(None, network_infra_dnat_incoming,
             endpoint, ipaddress.IPv4Interface(args["final-ip"]),
             args["infra-netns"], args["infra-init-pid"],
             ipaddress.IPv4Network(args["lower-net"]), tsp, args["syslog-prefix"])
         if isinstance(res, KeyError):
-            raise Exception(f"CODEBUG: no '{str(res)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{res}' key present")
         if isinstance(res, Exception):
             raise res
 
@@ -541,8 +560,8 @@ class UserServer(Server):
                     "type": tsp.ts_type,
                     "functionnal": tsp.functionnal
                 }
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Could not get information about traffic shaper '{tsp.name}': {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Could not get information about traffic shaper '{tsp.name}': {e}")
         res={
             "traffic-shapers": t_shappers
         }
@@ -554,7 +573,7 @@ class UserServer(Server):
             verbose=args["verbose"]
             zone_name=args.get("zone")
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         data=await vm_files_analyse(self._gconf, self._uid, vm_id, verbose, zone_name)
         return Message(MessageType.REPLY, data)
@@ -575,12 +594,12 @@ class UserServer(Server):
             usage=VMUsage(args["usage"])
             vm_conf=self._gconf.get_vm(usage, vm_id)
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         if vm_conf is None:
-            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+            raise SystemServiceException(f"No declared virtual machine with '{vm_id}' ID")
         if not vm_conf.is_user_allowed(self._uid):
-            raise Exception(f"User {self._uid} is not allowed to {usage.value} VM '{vm_id}'")
+            raise SystemServiceException(f"User {self._uid} is not allowed to {usage.value} VM '{vm_id}'")
         vmf=VMFiles(vm_conf.directory, self._uid, self._gid, analyse=False)
         vmf.create_common_dirs()
 
@@ -589,13 +608,13 @@ class UserServer(Server):
             vm_id=args["vm-id"]
             usage=VMUsage(args["usage"])
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         vm_conf=self._gconf.get_vm(usage, vm_id)
         if vm_conf is None:
-            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+            raise SystemServiceException(f"No declared virtual machine with '{vm_id}' ID")
         if not vm_conf.is_user_allowed(self._uid):
-            raise Exception(f"User {self._uid} is not allowed to {usage.value} VM '{vm_id}'")
+            raise SystemServiceException(f"User {self._uid} is not allowed to {usage.value} VM '{vm_id}'")
         vmf=VMFiles(vm_conf.directory, self._uid, self._gid, analyse=False)
         os.makedirs(vmf.staging_directory, exist_ok=True)
         os.chown(vmf.staging_directory, self._uid, self._gid)
@@ -606,15 +625,15 @@ class UserServer(Server):
             vm_id=args["vm-id"]
             vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
             if vm_conf is None:
-                raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+                raise SystemServiceException(f"No declared virtual machine with '{vm_id}' ID")
             if vmversion_uid is not None and vmversion_uid!=self._uid and not vm_conf.is_user_allowed(self._uid):
-                raise Exception(f"User {self._uid} has no admin privilege on VM '{vm_id}'")
+                raise SystemServiceException(f"User {self._uid} has no admin privilege on VM '{vm_id}'")
             message=args["message"]
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         if not vm_conf.is_user_allowed(self._uid):
-            raise Exception(f"User {self._uid} is not allowed to update VM '{vm_id}'")
+            raise SystemServiceException(f"User {self._uid} is not allowed to update VM '{vm_id}'")
 
         loop=asyncio.get_event_loop()
         avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
@@ -622,10 +641,10 @@ class UserServer(Server):
             raise avmf
         vmf=avmf.get_vm_files(vmversion_uid)
         if vmf is None:
-            raise Exception(f"No VM files for {vmversion_uid}")
+            raise SystemServiceException(f"No VM files for {vmversion_uid}")
         vmversion=vmf.get_vm_version_by_id(args["vm-version"])
         if vmversion is None:
-            raise Exception(f"No VM version '{args['vm-version']}'")
+            raise SystemServiceException(f"No VM version '{args['vm-version']}'")
 
         res=await loop.run_in_executor(None, vmf.commit_version, vmversion, None, 0, 0, message)
         if isinstance(res, Exception):
@@ -637,12 +656,12 @@ class UserServer(Server):
             vm_id=args["vm-id"]
             vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
             if vm_conf is None:
-                raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+                raise SystemServiceException(f"No declared virtual machine with '{vm_id}' ID")
             if vmversion_uid is not None and vmversion_uid!=self._uid and not vm_conf.is_user_allowed(self._uid):
-                raise Exception(f"Permission denied for user {self._uid} on VM '{vm_id}'")
+                raise SystemServiceException(f"Permission denied for user {self._uid} on VM '{vm_id}'")
             message=args["message"]
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         loop=asyncio.get_event_loop()
         avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
@@ -650,10 +669,10 @@ class UserServer(Server):
             raise avmf
         vmf=avmf.get_vm_files(vmversion_uid)
         if vmf is None:
-            raise Exception(f"No VM files for {vmversion_uid}")
+            raise SystemServiceException(f"No VM files for {vmversion_uid}")
         vmversion=vmf.get_vm_version_by_id(args["vm-version"])
         if vmversion is None:
-            raise Exception(f"No VM version '{args['vm-version']}'")
+            raise SystemServiceException(f"No VM version '{args['vm-version']}'")
 
         _check_privileges_on_vm_version(self._gconf, vm_id, vmversion, self._uid)
         res=await loop.run_in_executor(None, vmf.publish_staged, vmversion, 0, 0, message)
@@ -665,11 +684,11 @@ class UserServer(Server):
             vm_id=args["vm-id"]
             zone_name=args["zone"]
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
         if vm_conf is None:
-            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+            raise SystemServiceException(f"No declared virtual machine with '{vm_id}' ID")
         loop=asyncio.get_event_loop()
         avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
         if isinstance(avmf, Exception):
@@ -680,7 +699,7 @@ class UserServer(Server):
             try:
                 if zone_name is None or vmversion.zone_name==zone_name:
                     _check_privileges_on_vm_version(self._gconf, vm_id, vmversion, self._uid)
-            except Exception:
+            except Exception: # noqa: BLE001, S110
                 pass
             else:
                 if vmversion.state!=VMState.RUNNING: # just in case
@@ -700,15 +719,15 @@ class UserServer(Server):
             staged=args["staged"]
             nickname=args["nickname"]
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         force=args.get("force", False)
         vm_conf=_get_vm_conf_for_usage(self._gconf, vm_id, self._uid, None)
         vm_upd_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
         if vm_upd_conf is None:
-            raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+            raise SystemServiceException(f"No declared virtual machine with '{vm_id}' ID")
         if vmversion_uid is not None and vmversion_uid!=self._uid and not vm_upd_conf.is_user_allowed(self._uid):
-            raise Exception(f"Permission denied for user {self._uid} on VM '{vm_id}'")
+            raise SystemServiceException(f"Permission denied for user {self._uid} on VM '{vm_id}'")
 
         loop=asyncio.get_event_loop()
         avmf=await loop.run_in_executor(None, self._compute_avmf, vm_conf.directory, self._uid)
@@ -718,42 +737,42 @@ class UserServer(Server):
         if staged:
             vmversion=avmf.get_staged(VMVersionType.BASE, vmversion_uid)
             if vmversion is None:
-                raise Exception("No staged version for this VM")
+                raise SystemServiceException("No staged version for this VM")
         else:
             if vtype==VMVersionType.BASE:
                 vm_conf=_get_vm_conf_for_usage(self._gconf, vm_id, self._uid, [VMUsage.INSTALL, VMUsage.UPDATE])
             else:
                 vm_conf=self._gconf.get_vm(VMUsage.RUN, vm_id)
                 if vm_conf is None:
-                    raise Exception(f"no declared virtual machine with '{vm_id}' ID")
+                    raise SystemServiceException(f"no declared virtual machine with '{vm_id}' ID")
 
             match vtype:
                 case VMVersionType.BASE:
                     vmversion=avmf.get_base_version(vnum)
                 case VMVersionType.USER:
                     if zone_name is None:
-                        raise Exception("no zone specified (user VM versions are bound to zones)")
+                        raise SystemServiceException("no zone specified (user VM versions are bound to zones)")
                     vmversion=avmf.get_user_version(vnum, zone_name, vmversion_uid)
                 case VMVersionType.SNAP:
                     if zone_name is None:
-                        raise Exception("no zone specified (snapshot VM versions are bound to zones)")
+                        raise SystemServiceException("no zone specified (snapshot VM versions are bound to zones)")
                     if nickname is None:
                         vmversion=avmf.get_snapshot_version(vnum, zone_name, vmversion_uid)
                     else:
                         vmversion=avmf.get_named_snapshot_version(zone_name, nickname, vmversion_uid)
                 case _:
-                    raise Exception(f"Unhandled VMVersionType {vtype}")
+                    raise SystemServiceException(f"Unhandled VMVersionType {vtype}")
             if vmversion is None:
-                raise Exception(f"VM version for '{vm_id}' not found")
+                raise SystemServiceException(f"VM version for '{vm_id}' not found")
 
         if vmversion.state==VMState.RUNNING:
-            raise Exception("VM version is running")
-        if not force:
-            if vmversion.version_type==VMVersionType.BASE and not staged and vmversion not in avmf.obsolete_versions and \
+            raise SystemServiceException("VM version is running")
+        if not force and \
+            vmversion.version_type==VMVersionType.BASE and not staged and vmversion not in avmf.obsolete_versions and \
             vmversion.state==VMState.STOPPED:
-                raise Exception("VM version is in the latest version")
+                raise SystemServiceException("VM version is in the latest version")
         if len(avmf.get_children_versions(vmversion))>0:
-            raise Exception("VM version is used by other VM versions")
+            raise SystemServiceException("VM version is used by other VM versions")
 
         _check_privileges_on_vm_version(self._gconf, vm_id, vmversion, self._uid)
         syslog.syslog(syslog.LOG_INFO, f"Discarding files of VM version '{vmversion.id}'")
@@ -770,13 +789,13 @@ class UserServer(Server):
                 extract_id=args["extract-id"]
                 message=args["message"]
             except KeyError as e:
-                raise Exception(f"CODEBUG: no '{str(e)}' key present")
+                raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
             vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
             if vm_conf is None:
-                raise Exception(f"No declared virtual machine with '{vm_id}' ID")
+                raise SystemServiceException(f"No declared virtual machine with '{vm_id}' ID")
             if not vm_conf.is_user_allowed(self._uid):
-                raise Exception(f"Permission denied for user {self._uid} on VM '{vm_id}'")
+                raise SystemServiceException(f"Permission denied for user {self._uid} on VM '{vm_id}'")
 
             loop=asyncio.get_event_loop()
             vm_files=await loop.run_in_executor(None, VMFiles, vm_conf.directory, self._uid, self._gid)
@@ -793,7 +812,7 @@ class UserServer(Server):
                     if fname.startswith("vm-version-"):
                         vid=int(fname[11:])
                         if vid<0:
-                            raise Exception()
+                            raise SystemServiceException()
                         vm_versions_to_import[vid]=VMVersion.from_files(
                             os.path.join(extract_dir, fname, "base.img"),
                             os.path.join(extract_dir, fname, "base.vars"),
@@ -801,36 +820,37 @@ class UserServer(Server):
                         )
 
                 # manifest
-                with open(os.path.join(extract_dir, "manifest.json"), "r") as fd:
-                    manifest=json.load(fd)
+                async with aiofiles.open(os.path.join(extract_dir, "manifest.json"), "r") as fd:
+                    data=await fd.read()
+                    manifest=json.loads(data)
                     dep_size=manifest.get("dependency-size")
                     dep_hash=manifest.get("dependency-hash")
                     if dep_size is None and dep_hash is not None or dep_size is not None and dep_hash is None:
-                        raise Exception()
+                        raise SystemServiceException()
                     if dep_size is not None:
                         dep_vm_expected=True
                         for vm_v in vm_files.base_versions:
                             if os.stat(vm_v.image_file).st_size==dep_size:
-                                with open(vm_v.image_file, "rb") as fd:
+                                async with aiofiles.open(vm_v.image_file, "rb") as fd:
                                     syslog.syslog(syslog.LOG_DEBUG, f"Computing hash of {vm_v.image_file}")
-                                    hash=await loop.run_in_executor(None, hashlib.file_digest, fd, "sha256")
+                                    hash=await loop.run_in_executor(None, hashlib.file_digest, fd.raw, "sha256")
                                     if hash.hexdigest()==dep_hash:
                                         dep_vm_version=vm_v
                                         break
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Invalid saved VM versions' files structure or contents: {str(e)}")
-                raise Exception("Invalid saved VM versions' files structure or contents")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Invalid saved VM versions' files structure or contents: {e}")
+                raise SystemServiceException("Invalid saved VM versions' files structure or contents")
 
             # check global coherence
             vm_versions_ids=sorted(vm_versions_to_import.keys(), reverse=True)
             syslog.syslog(syslog.LOG_DEBUG, f"VM versions to import: {vm_versions_to_import}, sorted IDs: {vm_versions_ids}")
             if dep_vm_expected and dep_vm_version is None:
-                raise Exception("Could not idenfy dependency VM version in this instance of PADSI")
+                raise SystemServiceException("Could not idenfy dependency VM version in this instance of PADSI")
             elif not dep_vm_expected:
                 # check 1st VM version to import is complete
                 vm_version=vm_versions_to_import[vm_versions_ids[0]]
                 if not vm_version.is_complete:
-                    raise Exception("First VM version to import is not complete")
+                    raise SystemServiceException("First VM version to import is not complete")
 
             # import VM versions one at a time
             res:list[str]=[]
@@ -873,7 +893,7 @@ class UserServer(Server):
             if extract_dir is not None:
                 try:
                     shutil.rmtree(extract_dir)
-                except Exception:
+                except Exception: # noqa: BLE001,S110
                     pass
 
     async def _vm_launcher(self, args:dict) -> Message:
@@ -906,20 +926,20 @@ class UserServer(Server):
             vm_id=args["vm-id"]
             nickname=args["nickname"]
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         match action:
             case "create":
                 zone_conf=self._gconf.get_zone(zone_name)
                 vm_conf=zone_conf.get_virtual_machine(vm_id)
                 if vm_conf is None:
-                    raise Exception(f"VM {vm_id} is not allowed in the '{zone_name}' zone")
+                    raise SystemServiceException(f"VM {vm_id} is not allowed in the '{zone_name}' zone")
                 if not vm_conf.is_user_allowed(self._uid):
-                    raise Exception(f"Permission denied for user {self._uid} on VM '{vm_id}'")
+                    raise SystemServiceException(f"Permission denied for user {self._uid} on VM '{vm_id}'")
 
                 template=os.path.join(_padsi_install_dir, "padsi", "VMViewer.desktop.templ")
                 if not os.path.exists(template):
-                    raise Exception(f"Template file '{template}' is missing")
+                    raise SystemServiceException(f"Template file '{template}' is missing")
 
                 if nickname in (None, "default"):
                     if vm_conf.os_version is None:
@@ -942,18 +962,18 @@ class UserServer(Server):
                     "vmid": vm_id
                 }
 
-                with open(template, "rt") as fd:
-                    tmp=tempfile.NamedTemporaryFile("wt")
-                    for line in fd.readlines():
-                        nline=padsi.misc.expand_variables_in_string(line, variables)
-                        tmp.write(nline)
-                    tmp.flush()
+                async with aiofiles.open(template, "rt") as fd:
+                    with tempfile.NamedTemporaryFile("wt") as tmp:
+                        for line in await fd.readlines():
+                            nline=padsi.misc.expand_variables_in_string(line, variables)
+                            tmp.write(nline)
+                        tmp.flush()
 
-                    de_path=compute_de_path(self._uid, self._gid, self._gconf, vm_id, zone_name, nickname)
-                    os.chown(tmp.name, self._uid, self._gid)
-                    os.chmod(tmp.name, 0o644)
-                    shutil.copyfile(tmp.name, de_path)
-                    syslog.syslog(syslog.LOG_INFO, f"Created VM desktop entry {de_path}")
+                        de_path=compute_de_path(self._uid, self._gid, self._gconf, vm_id, zone_name, nickname)
+                        os.chown(tmp.name, self._uid, self._gid)
+                        os.chmod(tmp.name, 0o644)
+                        shutil.copyfile(tmp.name, de_path)
+                        syslog.syslog(syslog.LOG_INFO, f"Created VM desktop entry {de_path}")
             case "delete":
                 de_path=compute_de_path(self._uid, self._gid, self._gconf, vm_id, zone_name, nickname)
                 try:
@@ -961,10 +981,10 @@ class UserServer(Server):
                     syslog.syslog(syslog.LOG_INFO, f"Deleted VM desktop entry {de_path}")
                 except FileNotFoundError:
                     pass
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_INFO, f"Failed to delete VM desktop entry {de_path}: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_INFO, f"Failed to delete VM desktop entry {de_path}: {e}")
             case _:
-                raise Exception(f"Unknown vm-launcher action '{action}'")
+                raise SystemServiceException(f"Unknown vm-launcher action '{action}'")
         return Message(MessageType.REPLY, None)
 
     async def _pcscd_access(self, args:dict):
@@ -972,7 +992,7 @@ class UserServer(Server):
         try:
             grant=args["action"]=="grant"
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         polkit_rules_file=os.path.join("/etc/polkit-1/rules.d", f"00-padsi-pcscd-{self._uid}.rules")
         if grant:
@@ -983,9 +1003,9 @@ class UserServer(Server):
             }});
             """
             name=pwd.getpwuid(self._uid).pw_name
-            with open(polkit_rules_file, "wt") as fd:
-                fd.write(tmpl.format(name=name))
-                fd.close()
+            async with aiofiles.open(polkit_rules_file, "wt") as fd:
+                await fd.write(tmpl.format(name=name))
+                await fd.close()
         else:
             try:
                 os.remove(polkit_rules_file)
@@ -997,7 +1017,7 @@ class UserServer(Server):
         try:
             grant=args["action"]=="grant"
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         polkit_rules_file=os.path.join("/etc/polkit-1/rules.d", f"00-padsi-usbredir-{self._uid}.rules")
         if grant:
@@ -1008,9 +1028,9 @@ class UserServer(Server):
             }});
             """
             name=pwd.getpwuid(self._uid).pw_name
-            with open(polkit_rules_file, "wt") as fd:
-                fd.write(tmpl.format(name=name))
-                fd.close()
+            async with aiofiles.open(polkit_rules_file, "wt") as fd:
+                await fd.write(tmpl.format(name=name))
+                await fd.close()
         else:
             try:
                 os.remove(polkit_rules_file)
@@ -1019,11 +1039,11 @@ class UserServer(Server):
 
     async def _usb_device_state(self, args:dict) -> Message:
         if self._usb_devices_watcher is None:
-            raise Exception("CODEBUG: self._usb_devices_watcher should not be None")
+            raise SystemServiceException("CODEBUG: self._usb_devices_watcher should not be None")
         try:
             states=self._usb_devices_watcher.get_devices_states(args["devices"])
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
         data={}
         for (dev_id, dev_data) in states.items():
@@ -1035,11 +1055,11 @@ class UserServer(Server):
 
     async def _usb_device_reserve(self, args:dict):
         if self._usb_devices_watcher is None:
-            raise Exception("CODEBUG: self._usb_devices_watcher should not be None")
+            raise SystemServiceException("CODEBUG: self._usb_devices_watcher should not be None")
         try:
             self._usb_devices_watcher.reserve_device(args["device-id"], self._uid)
         except KeyError as e:
-            raise Exception(f"CODEBUG: no '{str(e)}' key present")
+            raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
 @dataclass
 class UsbDevice:
@@ -1091,12 +1111,12 @@ class USBDevicesMonitor:
         """
         try:
             if not isinstance(device_id, str):
-                raise Exception()
+                raise SystemServiceException()
             (bus, dev)=device_id.split("/")
             bus=int(bus)
             dev=int(dev)
-        except Exception:
-            raise Exception(f"Invalid USB device ID '{device_id}'")
+        except Exception: # noqa: BLE001
+            raise SystemServiceException(f"Invalid USB device ID '{device_id}'")
 
     async def _update_pcscd_service_state(self, *_):
         """Start or stop pcscd service depending on if any smartcard is currently being redirected
@@ -1189,13 +1209,13 @@ class USBDevicesMonitor:
             syslog.syslog(syslog.LOG_DEBUG, f"USBDEV: new reservation {device_id=}, {uid=}")
 
         if device_id in self._devices:
-            raise Exception(f"USB device '{device_id}' is already being used")
+            raise SystemServiceException(f"USB device '{device_id}' is already being used")
 
         self._cleanup_reservations()
         resa=self._reservations.get(device_id)
         if resa is not None:
             if resa.uid!=uid:
-                raise Exception(f"USB device '{device_id}' is already being reserved for user {resa.uid}")
+                raise SystemServiceException(f"USB device '{device_id}' is already being reserved for user {resa.uid}")
             resa.valid_to=self._now()+self._reservation_delay
         else:
             self._reservations[device_id]=Reservation(device_id=device_id, is_smartcard=None,
@@ -1208,7 +1228,7 @@ class USBDevicesMonitor:
         self._check_usb_device_id_format(device_id)
         (status, out, _err)=await padsi.misc.asyncio_run(["lsusb", "-v", "-s", device_id.replace("/", ":")])
         if status!=0:
-            raise Exception(f"Could not get infos. about USB device {device_id}")
+            raise SystemServiceException(f"Could not get infos. about USB device {device_id}")
         for line in out.splitlines():
             line=line.strip()
             if line.startswith("bInterfaceClass"):
@@ -1247,7 +1267,7 @@ class USBDevicesMonitor:
             env=cenv,
             stdout=asyncio.subprocess.PIPE)
         if process.stdout is None:
-            raise Exception("CODEBUG: Process.stdout should not be None")
+            raise SystemServiceException("CODEBUG: Process.stdout should not be None")
         async for line in process.stdout:
             # line will be like:
             # OPEN;1000;158953;/dev/bus/usb/002/015
@@ -1258,7 +1278,7 @@ class USBDevicesMonitor:
                     syslog.syslog(syslog.LOG_DEBUG, f"USBDEV: notification: {line}")
                 (action, uid, pid, path)=line.split(";")
                 if not path.startswith("/dev/bus/usb/"):
-                    raise Exception()
+                    raise SystemServiceException()
                 device_id=path[13:]
                 uid=int(uid)
                 pid=int(pid)
@@ -1269,7 +1289,7 @@ class USBDevicesMonitor:
                     dproc=psutil.Process(pid)
                     exe=dproc.exe()
                     if not exe:
-                        raise Exception()
+                        raise SystemServiceException()
                     syslog.syslog(syslog.LOG_INFO, f"Process {exe} {action} device {path}")
                     is_pcscd=exe=="/usr/sbin/pcscd"
                 except psutil.NoSuchProcess:
@@ -1297,8 +1317,8 @@ class USBDevicesMonitor:
                     await self._mark_dev_closed(device_id, pid, uid)
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"USB device {device_id=}, {pid=}, {uid=}, {is_redir=}, new situation => {self._devices}")
-            except Exception as e:
-                syslog.syslog(syslog.LOG_INFO, f"Ignoring an invalid notification from the USB devices monitor: '{line}' ({str(e)})")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_INFO, f"Ignoring an invalid notification from the USB devices monitor: '{line}' ({e})")
 
         # Wait for process to finish
         syslog.syslog(syslog.LOG_INFO, "Waiting for USB devices monitor process to die")
@@ -1362,8 +1382,8 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         # check the configuration is valid, just in case
         try:
             _=Configuration(self._gconf.config_dir)
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Did not restart PADSI service as configuration is invalid: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Did not restart PADSI service as configuration is invalid: {e}")
             return
 
         # if the global configuration defines a program to run to check if now is a good time to restart the
@@ -1372,7 +1392,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
             try:
                 padsi_user=pwd.getpwnam("padsi")
             except KeyError:
-                raise Exception("Unable to find the 'padsi' user")
+                raise SystemServiceException("Unable to find the 'padsi' user")
 
             uid=os.geteuid()
             gid=os.getgid()
@@ -1381,7 +1401,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                 os.setegid(padsi_user.pw_uid)
                 os.seteuid(padsi_user.pw_gid)
 
-                proc=subprocess.run([self._gconf.need_restart_check])
+                proc=subprocess.run([self._gconf.need_restart_check], check=False)
                 if proc.returncode!=0:
                     syslog.syslog(syslog.LOG_INFO, f"The '{self._gconf.need_restart_check}' program returned {proc.returncode}, not restarting yet")
                     return
@@ -1393,8 +1413,8 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         syslog.syslog(syslog.LOG_INFO, "Signaling the PADSI service to restart (SIGTERM)")
         try:
             os.remove(need_restart_file)
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Failed to remove PADSI restart file '{need_restart_file}': {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Failed to remove PADSI restart file '{need_restart_file}': {e}")
         signal.raise_signal(signal.SIGTERM)
 
     def declare_traffic_shaper(self, tshaper:TrafficShaper):
@@ -1412,16 +1432,16 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
             resolvers:set[ipaddress.IPv4Address]=set()
             try:
                 with open("/etc/resolv.conf", "rt") as fd:
-                    for line in fd.readlines():
+                    for line in fd:
                         if line.startswith("nameserver"):
                             try:
                                 (_, addr)=line.split(maxsplit=1)
                                 (addr, *_)=addr.split("%")
                                 resolvers.add(ipaddress.IPv4Address(addr.strip()))
-                            except Exception:
+                            except Exception: # noqa: BLE001,S110
                                 pass
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Failed to parse /etc/resolv.conf: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Failed to parse /etc/resolv.conf: {e}")
             if len(resolvers)>0:
                 self._dns_resolvers=resolvers
                 break
@@ -1441,8 +1461,8 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                     syslog.syslog(syslog.LOG_INFO, f"Setting up traffic shaper {tshaper.name} (netns {tshaper.net_ns}) with lower_net {lower_net}")
                     tshaper.setup(self._host_fw, lower_net)
                     syslog.syslog(syslog.LOG_INFO, f"Finished setting up traffic shaper {tshaper.name} (netns {tshaper.net_ns})")
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Could not set uptraffic shaper {tshaper.name} (netns {tshaper.net_ns}): {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Could not set uptraffic shaper {tshaper.name} (netns {tshaper.net_ns}): {e}")
 
 
     async def _adapt_traffic_shapers(self):
@@ -1456,8 +1476,8 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
 
                 try:
                     await self._net_in_manager.adapt()
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Failed to adapt inbound network rules: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Failed to adapt inbound network rules: {e}")
 
                 if _debug:
                     syslog.syslog(syslog.LOG_INFO, "Adapting traffic shapers: updating list of DNS resolvers")
@@ -1484,9 +1504,9 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                             if tshaper.need_dns_resolution:
                                 dns_resolv_needed=True
                                 break
-                    except Exception as e:
+                    except Exception as e: #noqa: BLE001
                         dns_resolv_needed=True
-                        syslog.syslog(syslog.LOG_ERR, f"Could not determine if all traffic shapers need DNS resolution (assuming yes): {str(e)}")
+                        syslog.syslog(syslog.LOG_ERR, f"Could not determine if all traffic shapers need DNS resolution (assuming yes): {e}")
 
                     # temporary allow DNS resolution if necessary for traffic shaper
                     allowed_dns_flows:list[firewall.NetFlow]=[]
@@ -1494,13 +1514,13 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                         for ip in self._dns_resolvers:
                             flow=None
                             try:
-                                flow=firewall.NetFlow(None, firewall.Endpoint.from_repr(f"{str(ip)}^udp^53"))
+                                flow=firewall.NetFlow(None, firewall.Endpoint.from_repr(f"{ip}^udp^53"))
                                 if _debug:
                                     syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: allow tmp DNS resolution: {flow}")
                                 self._host_fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, flow, firewall.Policy.ALLOW)
                                 allowed_dns_flows.append(flow)
-                            except Exception as e:
-                                syslog.syslog(syslog.LOG_ERR, f"Could not allow outboud DNS flow '{flow}': {str(e)}")
+                            except Exception as e: # noqa: BLE001
+                                syslog.syslog(syslog.LOG_ERR, f"Could not allow outboud DNS flow '{flow}': {e}")
                         await asyncio.sleep(0.2) # let the FW make its changes
 
                     # let all the traffic shapers adapt to the new settings
@@ -1509,8 +1529,8 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                             try:
                                 syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: adapt traffic shaper {tshaper.name}")
                                 await tshaper.adapt(len(self._dns_resolvers)>0, self._host_fw)
-                            except Exception as e:
-                                syslog.syslog(syslog.LOG_ERR, f"Traffic shaper '{tshaper}' failed to adapt: {str(e)}")
+                            except Exception as e: # noqa: BLE001
+                                syslog.syslog(syslog.LOG_ERR, f"Traffic shaper '{tshaper}' failed to adapt: {e}")
 
                     # de-allow temporary DNS resolution
                     for flow in allowed_dns_flows:
@@ -1518,14 +1538,14 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                             if _debug:
                                 syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: remove tmp DNS resolution: {flow}")
                             self._host_fw.flow_delete_policy(firewall.FlowType.FILTER_OUTPUT, flow)
-                        except Exception as e:
-                            syslog.syslog(syslog.LOG_ERR, f"Could not block outboud DNS flow '{flow}': {str(e)}")
+                        except Exception as e: # noqa: BLE001
+                            syslog.syslog(syslog.LOG_ERR, f"Could not block outboud DNS flow '{flow}': {e}")
                 if _debug:
                     syslog.syslog(syslog.LOG_INFO, "Adapting traffic shapers: done")
             except asyncio.exceptions.CancelledError:
                 break
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Failed to adapt traffic shapers: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Failed to adapt traffic shapers: {e}")
 
     async def _watch_network_changes(self):
         """Task to watch for any DNS change (monitoring the /etc/resolv.conf file)
@@ -1548,7 +1568,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                 break
         try:
             watcher.close()
-        except Exception:
+        except Exception: # noqa: BLE001,S110
             pass
 
     async def _tsp_adapt_timer(self) -> None:
@@ -1608,15 +1628,15 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                 try:
                     fw.flush(ft)
                     fw.set_default_policy(ft, firewall.Policy.ALLOW, family=family)
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Could not clean up host firewall's flow type '{ft}': {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Could not clean up host firewall's flow type '{ft}': {e}")
 
     #
     # users' sessions management
     #
     def declare_session(self, uid:int, session: UserSession):
         if uid in self._user_sessions:
-            raise Exception(f"CODEBUG: user {uid} already has a UserSession")
+            raise SystemServiceException(f"CODEBUG: user {uid} already has a UserSession")
         self._user_sessions[uid]=session
 
     def _only_system_sessions(self) -> bool:
@@ -1651,8 +1671,8 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                 syslog.syslog(syslog.LOG_DEBUG, f"Stopping user service for user {uid}")
             try:
                 session.task.cancel()
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Stopping user service for user {uid} error: {str(e)})")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Stopping user service for user {uid} error: {e})")
             del self._user_sessions[uid]
 
             # check if this service needs to be restarted
@@ -1663,8 +1683,8 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         # set host firewall
         try:
             self._setup_fw_rules()
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Failed to set up host firewall: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Failed to set up host firewall: {e}")
 
         # start the USB devices monitor if there is at least one VM configured
         if len(self._gconf.get_vms_for_usage(VMUsage.RUN))>0:
@@ -1709,8 +1729,8 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                 await loop.run_in_executor(None, tshaper.destroy, self.host_fw)
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"Finished destroying traffic shaper {tshaper.name} (netns {tshaper.net_ns})")
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Could not destroy traffic shaper {tshaper.name} (netns {tshaper.net_ns}): {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Could not destroy traffic shaper {tshaper.name} (netns {tshaper.net_ns}): {e}")
         self._traffic_shapers={}
 
         # leave a clean FW
@@ -1734,7 +1754,7 @@ def _check_privileges_on_vm_version(gconf:Configuration, vm_id:str, vm_version:V
     """Check the user has a right to manipulate a VM version
     """
     if vm_version is None:
-        raise Exception("None vm_version passed to _check_privileges_on_vm_version()")
+        raise SystemServiceException("None vm_version passed to _check_privileges_on_vm_version()")
     match vm_version.version_type:
         case VMVersionType.BASE:
             _get_vm_conf_for_usage(gconf, vm_id, uid, [VMUsage.UPDATE])
@@ -1743,7 +1763,7 @@ def _check_privileges_on_vm_version(gconf:Configuration, vm_id:str, vm_version:V
         case VMVersionType.SNAP:
             _get_vm_conf_for_usage(gconf, vm_id, uid, [VMUsage.RUN])
         case _:
-            raise Exception(f"Unhandled VMVersionType {vm_version.version_type}")
+            raise SystemServiceException(f"Unhandled VMVersionType {vm_version.version_type}")
 
 def _get_vm_conf_for_usage(gconf:Configuration, vm_id:str, uid:int, usages:list[VMUsage]|None) -> VirtualMachine:
     """Get the VM configuration for the specified usage(s), and check is user is actually allowed that usage
@@ -1753,8 +1773,8 @@ def _get_vm_conf_for_usage(gconf:Configuration, vm_id:str, uid:int, usages:list[
         if vm_conf is not None and vm_conf.is_user_allowed(uid):
             return vm_conf
     if usages is None:
-        raise Exception(f"Unknown VM '{vm_id}' or permission denied for user {uid}")
-    raise Exception(f"Unknown VM '{vm_id}' or permission denied for user {uid} to {', '.join([u.value for u in usages])}")
+        raise SystemServiceException(f"Unknown VM '{vm_id}' or permission denied for user {uid}")
+    raise SystemServiceException(f"Unknown VM '{vm_id}' or permission denied for user {uid} to {', '.join([u.value for u in usages])}")
 
 
 async def monitor_proc(proc:subprocess.Popen, context:str):
@@ -1793,7 +1813,7 @@ async def killed(event:asyncio.Event):
     syslog.syslog(syslog.LOG_INFO, "SIG* received")
     # when systemd stops the padsi service, it sends the TERM signal to all the processes in the cgroup, let's wait a bit so that
     # processes run to properly shut down are not killed by systemd
-    time.sleep(0.5)
+    await asyncio.sleep(0.5)
     event.set()
 
 async def main(config_dir:str):
@@ -1805,8 +1825,8 @@ async def main(config_dir:str):
     try:
         if os.path.exists(need_restart_file):
             os.remove(need_restart_file)
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Could not remove the '{need_restart_file}' file: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Could not remove the '{need_restart_file}' file: {e}")
 
     # declare traffic shapers
     for tshaper in gconf.traffic_shapers:
@@ -1814,14 +1834,14 @@ async def main(config_dir:str):
 
     # start desktop entries monitor
     proc_tasks:list[asyncio.Task]=[]
-    m_proc=subprocess.Popen([os.path.join(_padsi_install_dir, "bin", "monitor-desktop-entries"), config_dir, "GLOBAL"])
+    m_proc=subprocess.Popen([os.path.join(_padsi_install_dir, "bin", "monitor-desktop-entries"), config_dir, "GLOBAL"]) # noqa: ASYNC220
     a_task=asyncio.create_task(monitor_proc(m_proc, "Desktop entries monitor"))
     proc_tasks.append(a_task)
 
     # start data guard (eBPF filter to /run/padsi/user)
     cenv=os.environ.copy()
     cenv["LOG_DIR"]=gconf.logs_dir
-    m_proc=subprocess.Popen([os.path.join(_padsi_install_dir, "bin", "data-access-guard")], env=cenv)
+    m_proc=subprocess.Popen([os.path.join(_padsi_install_dir, "bin", "data-access-guard")], env=cenv) # noqa: ASYNC220
     a_task=asyncio.create_task(monitor_proc(m_proc, "Data access guard"))
     proc_tasks.append(a_task)
 
@@ -1830,7 +1850,7 @@ async def main(config_dir:str):
         cenv=os.environ.copy()
         cenv["LOG_GROUP"]=str(gconf.firewall_logs_group)
         cenv["LOG_DIR"]=gconf.logs_dir
-        m_proc=subprocess.Popen([os.path.join(_padsi_install_dir, "bin", "fw-logger")], env=cenv)
+        m_proc=subprocess.Popen([os.path.join(_padsi_install_dir, "bin", "fw-logger")], env=cenv) # noqa: ASYNC220
         a_task=asyncio.create_task(monitor_proc(m_proc, "FW logs"))
         proc_tasks.append(a_task)
 
@@ -1841,7 +1861,7 @@ async def main(config_dir:str):
         try:
             padsi_user=pwd.getpwnam("padsi")
         except KeyError:
-            raise Exception("Unable to find the 'padsi' user")
+            raise SystemServiceException("Unable to find the 'padsi' user")
 
         run_dir="/run/padsi/padsi"
         logs_dir=os.path.join(gconf.logs_dir, "padsi")
@@ -1849,31 +1869,19 @@ async def main(config_dir:str):
             os.makedirs(dir, mode=0o700, exist_ok=True)
             os.chown(dir, padsi_user.pw_uid, padsi_user.pw_gid)
 
-        config_data:dict={
-            "config-dir":gconf.config_dir,
-            "run-dir": run_dir,
-            "logs-dir": logs_dir
-        }
-
-        config_file=tempfile.NamedTemporaryFile("wt")
-        os.chown(config_file.name, padsi_user.pw_uid, padsi_user.pw_gid)
-        json.dump(config_data, config_file)
-        config_file.flush()
-
         server=UserServer(gconf, service.net_input_manager, service.traffic_shapers,
             service.host_fw, service.lock, None, padsi_user.pw_uid, padsi_user.pw_gid)
         admin_service_task=asyncio.create_task(server.serve_client([
             os.path.join(_padsi_install_dir, "bin", "admin-service"),
-            config_file.name
+            gconf.config_dir, run_dir, logs_dir
         ]))
         while True:
             await asyncio.sleep(0.1)
             if admin_service_task.done():
                 e=admin_service_task.exception()
-                raise Exception(f"Could not start the admin-service: {str(e) if e is not None else 'CODEBUG'}")
+                raise SystemServiceException(f"Could not start the admin-service: {str(e) if e is not None else 'CODEBUG'}")
             if server.is_running:
                 break
-        syslog.syslog(syslog.LOG_DEBUG, f"admin-service config file: {config_file.name}")
         service.declare_session(padsi_user.pw_uid, UserSession(server=server, task=admin_service_task))
 
     # run!

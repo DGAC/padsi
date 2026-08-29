@@ -42,6 +42,9 @@ class ComponentInstance:
         self.component=comp
         self.auto_start=auto_start
 
+class ZoneFoundationsException(Exception):
+    pass
+
 class ZoneFoundations:
     """Common behaviour for all the "zones" (infra, apps, etc.)
     """
@@ -51,12 +54,12 @@ class ZoneFoundations:
     ):
         if zone_conf is not None:
             if admin_conf is not None:
-                raise Exception("CODEBUG: zone_conf and admin_ns should not be both specified")
+                raise ZoneFoundationsException("CODEBUG: zone_conf and admin_ns should not be both specified")
             self._syslog_prefix=f"{zone_type}_{uid}_{zone_conf.name}"
         elif admin_conf is not None:
             self._syslog_prefix=f"{zone_type}_{uid}_{admin_conf.name}"
         else:
-            raise Exception("CODEBUG: zone_conf and admin_ns should not be both None")
+            raise ZoneFoundationsException("CODEBUG: zone_conf and admin_ns should not be both None")
 
         self._z_type=zone_type
         self._gconf=global_config
@@ -91,14 +94,14 @@ class ZoneFoundations:
     def zone_conf(self) -> padsi.config.Zone:
         """Associated Zone configuration"""
         if self._z_conf is None:
-            raise Exception("CODEBUG: zone_conf should not be None in ZoneFoundations")
+            raise ZoneFoundationsException("CODEBUG: zone_conf should not be None in ZoneFoundations")
         return self._z_conf
 
     @property
     def admin_conf(self) -> padsi.config.AdminNS:
         """Associated admin. NS configuration"""
         if self._a_ns is None:
-            raise Exception("CODEBUG: admin_conf should not be None in ZoneFoundations")
+            raise ZoneFoundationsException("CODEBUG: admin_conf should not be None in ZoneFoundations")
         return self._a_ns
 
     @property
@@ -116,7 +119,7 @@ class ZoneFoundations:
         """Temporary directory for the zone (in the context of the "init" mount namespace)
         """
         if self._tmpdir is None:
-            raise Exception("CODEBUG: tmpdir not yet created")
+            raise ZoneFoundationsException("CODEBUG: tmpdir not yet created")
         return self._tmpdir.name
 
     @property
@@ -188,7 +191,7 @@ class ZoneFoundations:
     @property
     def env_variables(self) -> dict[str,str]:
         if self._api is None:
-            raise Exception("Zone has not yet been started")
+            raise ZoneFoundationsException("Zone has not yet been started")
         return {} if self._api.environment is None else self._api.environment
 
     def add_component(self, comp:Component, auto_start:bool=True):
@@ -203,7 +206,7 @@ class ZoneFoundations:
         """Actually start the bubble and the declared components
         """
         if self._bubble is not None:
-            raise Exception(f"Zone {self._z_type} has already been started")
+            raise ZoneFoundationsException(f"Zone {self._z_type} has already been started")
 
         # compute needed mount points, capabilities, users and groups
         mounts=self.compute_mount_points()
@@ -246,8 +249,8 @@ class ZoneFoundations:
                 try:
                     syslog.syslog(syslog.LOG_INFO, f"{self._syslog_prefix}: starting component '{icomp.component.name}'")
                     icomp.component.start(api)
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: error starting component '{icomp.component.name}': {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: error starting component '{icomp.component.name}': {e}")
 
     def stop(self):
         """Stop the bubble and all the components
@@ -276,7 +279,7 @@ class ZoneFoundations:
             - state: str
         """
         if self._api is None:
-            raise Exception("processes property: zone has not yet been started")
+            raise ZoneFoundationsException("processes property: zone has not yet been started")
         return self._api.get_processes()
 
     @property
@@ -322,7 +325,7 @@ class ZoneFoundations:
 
     @property
     def features(self) -> nsbubble.Features:
-        raise Exception("The features() method must be overridden")
+        raise ZoneFoundationsException("The features() method must be overridden")
 
     def create_bubble(self, features:nsbubble.Features) -> nsbubble.Bubble:
         return nsbubble.Bubble(features=features, run_dir=self.run_dir)

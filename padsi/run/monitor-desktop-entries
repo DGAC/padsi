@@ -34,6 +34,9 @@ from padsi.run import ZoneUserFiles
 
 _debug=True
 
+class ProgException(Exception):
+    pass
+
 class UserZonesMonitor:
     """Object to monitor the creation of directories which signal that a zone has been started, and to start watch for
     user modified desktop entry files in that zone.
@@ -59,10 +62,10 @@ class UserZonesMonitor:
                 try:
                     os.makedirs(xdg_apps_dir, exist_ok=True)
                     break
-                except PermissionError as e:
+                except PermissionError:
                     counter+=1
                     if counter==10:
-                        raise e
+                        raise
                     await asyncio.sleep(10)
 
             monit=DesktopEntriesDirectoryMonitor(self._gconf, xdg_apps_dir, zone_name=zone_name)
@@ -77,10 +80,10 @@ class UserZonesMonitor:
         for zone_name in self._gconf.get_zones_names():
             try:
                 await self._watch_zone(zone_name)
-            except Exception as e:
-                msg=f"Can't watch desktop entries in zone {zone_name}: {str(e)}"
+            except Exception as e: # noqa: BLE001
+                msg=f"Can't watch desktop entries in zone {zone_name}: {e}"
                 syslog.syslog(syslog.LOG_WARNING, msg)
-                logging.warning(msg)
+                logging.warning(msg) # noqa: LOG015
 
     async def run(self):
         # wait for the directory to be present
@@ -106,27 +109,27 @@ class UserZonesMonitor:
                 if event is None:
                     msg="CODEBUG: self._watcher.get_event() returned None"
                     syslog.syslog(syslog.LOG_ERR, msg)
-                    logging.warning(msg)
+                    logging.warning(msg) # noqa: LOG015
                 else:
                     try:
                         if event.flags & aionotify.Flags.CREATE:
                             if os.path.isdir(os.path.join(self._watch_dir, event.name)): # event.name in self._gconf.get_zones_names() and
                                 try:
                                     await self._watch_zone(event.name)
-                                except Exception as e:
-                                    syslog.syslog(syslog.LOG_WARNING, f"Can't watch desktop entries in '{self._watch_dir}': {str(e)}")
+                                except Exception as e: # noqa: BLE001
+                                    syslog.syslog(syslog.LOG_WARNING, f"Can't watch desktop entries in '{self._watch_dir}': {e}")
                         else:
                             if event.flags!=aionotify.Flags.IGNORED:
-                                raise Exception(f"Unhandled event flags {event.flags}")
-                    except Exception as e:
-                        msg=f"Error handling user zones monitor event '{event.flags}' on '{event.name}': {str(e)}"
+                                raise ProgException(f"Unhandled event flags {event.flags}")
+                    except Exception as e: # noqa: BLE001
+                        msg=f"Error handling user zones monitor event '{event.flags}' on '{event.name}': {e}"
                         syslog.syslog(syslog.LOG_ERR, msg)
-                        logging.warning(msg)
+                        logging.error(msg) # noqa: LOG015
             except asyncio.exceptions.IncompleteReadError:
                 break
         try:
             self._watcher.close()
-        except Exception:
+        except Exception: # noqa: BLE001,S110
             pass
         finally:
             self._watcher=None
@@ -146,14 +149,14 @@ class DesktopEntriesDirectoryMonitor:
 
     def _handle_de_created(self, de_file:str) -> tuple[set[str],set[str]]:
         if os.path.isfile(de_file) and de_file.endswith(".desktop"):
-            logging.debug(f"Handling presence of {'GLOBAL' if self._zone_name is None else 'USER '+self._zone_name} '{de_file}'")
+            logging.debug(f"Handling presence of {'GLOBAL' if self._zone_name is None else 'USER '+self._zone_name} '{de_file}'") # noqa: LOG015
             res=self._gconf.desktop_entry_install(de_file=de_file, user_zone_name=self._zone_name)
             return res
         return (set(),set())
 
     def _handle_de_deleted(self, de_file:str) -> tuple[set[str],set[str]]:
         if de_file.endswith(".desktop"):
-            logging.debug(f"Handling deletion of {'GLOBAL' if self._zone_name is None else 'USER '+self._zone_name} '{de_file}'")
+            logging.debug(f"Handling deletion of {'GLOBAL' if self._zone_name is None else 'USER '+self._zone_name} '{de_file}'") # noqa: LOG015
             res=self._gconf.desktop_entry_uninstall(de_file=de_file, user_zone_name=self._zone_name)
             return res
         return (set(),set())
@@ -163,8 +166,8 @@ class DesktopEntriesDirectoryMonitor:
         e_de_files:set[str]=self._gconf.get_already_created_desktop_entry_files(self._watch_dir, self._zone_name)
         e_icon_files:set[str]=self._gconf.get_already_created_icon_files(self._watch_dir, self._zone_name)
         if _debug:
-            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): existing files DE files: {e_de_files}")
-            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): existing files icon files: {e_icon_files}")
+            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): existing files DE files: {e_de_files}") # noqa: LOG015
+            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): existing files icon files: {e_icon_files}") # noqa: LOG015
 
         # create/reuse files
         n_de_files:set[str]=set()
@@ -175,8 +178,8 @@ class DesktopEntriesDirectoryMonitor:
             n_de_files.update(de_files)
             n_icon_files.update(icon_files)
         if _debug:
-            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): created/updated files DE files: {n_de_files}")
-            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): created/updated icon DE files: {n_icon_files}")
+            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): created/updated files DE files: {n_de_files}") # noqa: LOG015
+            logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): created/updated icon DE files: {n_icon_files}") # noqa: LOG015
 
         # remove obsolete desktop entry files
         exp_prefix=self._gconf.get_de_files_install_dir(self._watch_dir, self._zone_name)
@@ -184,32 +187,32 @@ class DesktopEntriesDirectoryMonitor:
             try:
                 if fname.startswith(exp_prefix):
                     if fname.endswith(".desktop"):
-                        logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): removing obsolete desktop entry file {fname}")
+                        logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): removing obsolete desktop entry file {fname}") # noqa: LOG015
                         os.remove(fname)
                 else:
                     msg=f"CODEBUG: Catchup {self._watch_dir}: was about to remove desktop entry file '{fname}' not in {exp_prefix}"
                     syslog.syslog(syslog.LOG_ERR, msg)
-                    logging.error(msg)
-            except Exception as e:
-                msg=f"Catchup  {self._watch_dir}: could not remove obsolete desktop entry file {fname}: {str(e)}"
+                    logging.error(msg) # noqa: LOG015
+            except Exception as e: # noqa: BLE001
+                msg=f"Catchup  {self._watch_dir}: could not remove obsolete desktop entry file {fname}: {e}"
                 syslog.syslog(syslog.LOG_ERR, msg)
-                logging.error(msg)
+                logging.error(msg) # noqa: LOG015
 
         # remove obsolete icon files
         exp_prefix=self._gconf.get_icons_install_dir(self._watch_dir, self._zone_name)
         for fname in e_icon_files.difference(n_icon_files):
             try:
                 if fname.startswith(exp_prefix):
-                    logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): removing obsolete icon file {fname}")
+                    logging.debug(f"Catchup {self._watch_dir} (zone {self._zone_name}): removing obsolete icon file {fname}") # noqa: LOG015
                     os.remove(fname)
                 else:
                     msg=f"CODEBUG: Catchup {self._watch_dir}: was about to remove icon file '{fname}' not in {exp_prefix}"
                     syslog.syslog(syslog.LOG_ERR, msg)
-                    logging.error(msg)
-            except Exception as e:
-                msg=f"Catchup {self._watch_dir}: could not remove obsolete icon file {fname}: {str(e)}"
+                    logging.error(msg) # noqa: LOG015
+            except Exception as e: # noqa: BLE001
+                msg=f"Catchup {self._watch_dir}: could not remove obsolete icon file {fname}: {e}"
                 syslog.syslog(syslog.LOG_ERR, msg)
-                logging.error(msg)
+                logging.error(msg) # noqa: LOG015
 
     async def run(self):
         self._watcher=aionotify.Watcher()
@@ -222,11 +225,11 @@ class DesktopEntriesDirectoryMonitor:
             try:
                 event=await self._watcher.get_event()
                 if _debug:
-                    logging.info(f"Got event: {event}")
+                    logging.info(f"Got event: {event}") # noqa: LOG015
                 if event is None:
                     msg="CODEBUG: self._watcher.get_event() returned None"
                     syslog.syslog(syslog.LOG_ERR, msg)
-                    logging.warning(msg)
+                    logging.error(msg) # noqa: LOG015
                 else:
                     try:
                         if event.flags & aionotify.Flags.DELETE:
@@ -234,16 +237,16 @@ class DesktopEntriesDirectoryMonitor:
                         elif event.flags & aionotify.Flags.CREATE:
                             self._handle_de_created(os.path.join(self._watch_dir, event.name))
                         elif event.flags!=aionotify.Flags.IGNORED:
-                            raise Exception(f"Unhandled event flags {event.flags}")
-                    except Exception as e:
-                        msg=f"Error handling desktop entries directory event '{event.flags}' on '{event.name}': {str(e)}"
+                            raise ProgException(f"Unhandled event flags {event.flags}")
+                    except Exception as e: # noqa: BLE001
+                        msg=f"Error handling desktop entries directory event '{event.flags}' on '{event.name}': {e}"
                         syslog.syslog(syslog.LOG_ERR, msg)
-                        logging.error(msg)
+                        logging.error(msg) # noqa: LOG015
             except asyncio.exceptions.IncompleteReadError:
                 break
         try:
             self._watcher.close()
-        except Exception:
+        except Exception: # noqa: BLE001,S110
             pass
         finally:
             self._watcher=None
@@ -254,7 +257,7 @@ class DesktopEntriesDirectoryMonitor:
         try:
             if self._watcher is not None:
                 self._watcher.close()
-        except Exception:
+        except Exception: # noqa: BLE001,S110
             pass
 
 async def main(gconf: Configuration, is_global:bool):
@@ -300,7 +303,7 @@ if __name__=="__main__":
         match sys.argv[2]:
             case "GLOBAL":
                 if uid!=0:
-                    raise Exception(f"The {__file__} program must be run as root in this context")
+                    raise ProgException(f"The {__file__} program must be run as root in this context")
                 if not os.path.exists(gconf.logs_dir):
                     os.makedirs(gconf.logs_dir)
                 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s",
@@ -309,17 +312,17 @@ if __name__=="__main__":
                 gconf.XDG_DATA_DIRS_install()
             case "USER":
                 if uid==0:
-                    raise Exception(f"The {__file__} program must not be run as root in this context")
+                    raise ProgException(f"The {__file__} program must not be run as root in this context")
                 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s",
                                     datefmt="%Y%m%d-%H:%M:%S",
                                     filename=os.path.join(gconf.logs_dir, str(uid), "de-monitor.log"))
                 is_global=False
             case _:
-                raise Exception(f"Invalid context '{sys.argv[2]}'")
+                raise ProgException(f"Invalid context '{sys.argv[2]}'")
 
         logging.Formatter.converter=time.gmtime # set the converter to use UTC
         syslog.syslog(syslog.LOG_INFO, f"PID: {os.getpid()}, {'GLOBAL' if is_global else 'USER'} scope, using configuration in '{config_dir}'")
         asyncio.run(main(gconf, is_global))
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {e}")
         sys.exit(1)

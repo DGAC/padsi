@@ -19,7 +19,7 @@
 
 
 #
-# PADSI object to represent instanciated ("running") Zones
+# PADSI object to represent a bubble in which the user's applications are running
 #
 
 from __future__ import annotations
@@ -55,6 +55,9 @@ def _get_PATH_environ(uid:int) -> str|None:
                 if p3.uids().real==uid and p3.name()=="gnome-shell":
                     return p3.environ().get("PATH")
     return None
+
+class ZoneAppsException(Exception):
+    pass
 
 class ZoneApps(ZoneFoundations):
     """Instance of a zone in which user's applications are run
@@ -121,7 +124,7 @@ class ZoneApps(ZoneFoundations):
     @property
     def env_variables(self) -> dict[str,str]:
         if self.api is None:
-            raise Exception("env_variables property: zone has not yet been started")
+            raise ZoneAppsException("env_variables property: zone has not yet been started")
         return {} if self.api.environment is None else self.api.environment
 
     @property
@@ -142,7 +145,7 @@ class ZoneApps(ZoneFoundations):
         """Start the DBus session in the bubble"""
         syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: starting DBUS")
         if self.api is None:
-            raise Exception("DBus start: zone has not yet been started")
+            raise ZoneAppsException("DBus start: zone has not yet been started")
 
         # (re)create XDG desktop directories
         self.api.start_process(["xdg-user-dirs-update", "--force"], ignore_status=True)
@@ -188,13 +191,13 @@ class ZoneApps(ZoneFoundations):
                                 # define the env. variable in the bubble
                                 m=re.search("'([^']*)", path)
                                 if m is None:
-                                    raise Exception(f"Could not parse dbus-launch output line {line}")
+                                    raise ZoneAppsException(f"Could not parse dbus-launch output line {line}")
                                 bus_address=m.group(1)
 
                                 # get the host vision of the same path
                                 m=re.search("/bubble/run/([^']*)", path)
                                 if m is None:
-                                    raise Exception(f"Could not parse dbus-launch output line {line}")
+                                    raise ZoneAppsException(f"Could not parse dbus-launch output line {line}")
                                 (socket_path, _)=os.path.join(os.path.realpath(self.run_dir), m.group(1)).split(",")
                                 socket_name=f"unix:path={os.path.realpath(self.run_dir)}/{m.group(1)}"
 
@@ -202,7 +205,7 @@ class ZoneApps(ZoneFoundations):
                                 (_, value)=line.split("=", maxsplit=1)
                                 m=re.search("([0-9]*)", value)
                                 if m is None:
-                                    raise Exception(f"Could not parse dbus-launch output line {line}")
+                                    raise ZoneAppsException(f"Could not parse dbus-launch output line {line}")
                                 bus_pid=m.group(1)
 
                         if socket_name is not None and bus_address is not None and bus_pid is not None:
@@ -211,13 +214,13 @@ class ZoneApps(ZoneFoundations):
                             self.api.declare_env_variable("DBUS_SESSION_BUS_PID", bus_pid) # DBUS_SESSION_BUS_PID has no use outside of the bubble
                             dbus_env["DBUS_SESSION_BUS_ADDRESS"]=socket_name
                             break
-            except Exception as e:
+            except Exception as e: # noqa: BLE001
                 last_e=e
-                syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: error while starting DBUS daemon (will retry): {str(e)}")
+                syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: error while starting DBUS daemon (will retry): {e}")
             counter+=1
             if counter>20:
                 if last_e is None:
-                    raise Exception(f"{self.syslog_prefix}: dbus-launch did not return the expected data, got: '{launch_result}'")
+                    raise ZoneAppsException(f"{self.syslog_prefix}: dbus-launch did not return the expected data, got: '{launch_result}'")
                 raise last_e
         self._dbus_env_in_host=dbus_env
 
@@ -225,9 +228,9 @@ class ZoneApps(ZoneFoundations):
         """Start a DBus router instance in its own bubble
         """
         if self._dbus_socket_path_in_host is None:
-            raise Exception("CODEBUG: self._dbus_socket_path_in_host should not be None")
+            raise ZoneAppsException("CODEBUG: self._dbus_socket_path_in_host should not be None")
         if self.api is None:
-            raise Exception("CODEBUG: zone has not yet been started")
+            raise ZoneAppsException("CODEBUG: zone has not yet been started")
 
         dbus_router_socket_path=os.path.join(self.run_dir, "dbus-router", "router.socket")
         self._dbus_router=ZoneDBusRouter(zone=self.zone_conf, options=options, logs_dir=self.logs_dir,
@@ -271,7 +274,7 @@ class ZoneApps(ZoneFoundations):
         if self._infra_dns_ip is not None:
             resolv_conf=f"{self.run_dir}/resolv.conf"
             with open(resolv_conf, "w") as fd:
-                fd.write(f"nameserver {str(self._infra_dns_ip)}\n")
+                fd.write(f"nameserver {self._infra_dns_ip}\n")
                 fd.close()
             mounts[resolv_conf]={
                 "mount-point": "/etc/resolv.conf",
@@ -308,8 +311,8 @@ class ZoneApps(ZoneFoundations):
             try:
                 host_all_certs_file=os.path.join(host_certs_dir, "ca-certificates.crt")
                 shutil.copyfile(host_all_certs_file, all_certs_file)
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Could not copy {host_all_certs_file} in '{certs_dir}': {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Could not copy {host_all_certs_file} in '{certs_dir}': {e}")
 
             for (name, data) in pki_option.ca_certs.items():
                 fname=os.path.join(certs_dir, f"{name}.crt")
@@ -320,11 +323,11 @@ class ZoneApps(ZoneFoundations):
                         fd.write(data)
                         fd.write("\n")
 
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Could not create cert {name} in '{certs_dir}': {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Could not create cert {name} in '{certs_dir}': {e}")
 
             # rehash
-            proc=subprocess.run(["openssl", "rehash", certs_dir], capture_output=True, text=True)
+            proc=subprocess.run(["openssl", "rehash", certs_dir], capture_output=True, text=True, check=False)
             if proc.returncode!=0:
                 syslog.syslog(syslog.LOG_ERR, f"Could not openssl rehash certs in '{certs_dir}': {proc.stderr}")
 
@@ -339,14 +342,14 @@ class ZoneApps(ZoneFoundations):
         pkcs11_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11)
         if pkcs11_option.enabled:
             pkcs11_option=padsi.config.PKCS11Option.downcast(pkcs11_option)
-            if pkcs11_option.driver_path is not None:
-                if not pkcs11_option.driver_path.startswith("/usr") and not pkcs11_option.driver_path.startswith("/lib"): # pyright: ignore
-                    # FIXME: also add DLL dependencies (use 'ldd')
-                    mounts[pkcs11_option.driver_path]={
-                        "mount-point": pkcs11_option.driver_path,
-                        "read-only": True,
-                        "monitored": False
-                    }
+            if pkcs11_option.driver_path is not None and \
+                not pkcs11_option.driver_path.startswith("/usr") and not pkcs11_option.driver_path.startswith("/lib"):
+                # FIXME: also add DLL dependencies (use 'ldd')
+                mounts[pkcs11_option.driver_path]={
+                    "mount-point": pkcs11_option.driver_path,
+                    "read-only": True,
+                    "monitored": False
+                }
 
         # FIDO2 usage
         fido2_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.FIDO2)
@@ -374,7 +377,7 @@ class ZoneApps(ZoneFoundations):
             # set up LD_PRELOAD for the netlink shim
             shim_lib=os.path.realpath(os.path.join(script_dir, "..", "..", "bin", "netlink-shim.so"))
             if not os.path.isfile(shim_lib):
-                raise Exception(f"Netlink shim library '{shim_lib}' is missing")
+                raise ZoneAppsException(f"Netlink shim library '{shim_lib}' is missing")
             preload_file=os.path.join(self.tmp_dir, "netlink.preload")
             with open(preload_file, "wt") as fd:
                 fd.write(f"{shim_lib}\n")
@@ -414,7 +417,7 @@ class ZoneApps(ZoneFoundations):
         bind_medias=self.zone_conf.get_option(padsi.config.ZoneOptionType.MASS_STORAGE).enabled
         with_drm=self.zone_conf.get_option(padsi.config.ZoneOptionType.DRM).enabled
         with_fuse=self.zone_conf.get_option(padsi.config.ZoneOptionType.FUSE).enabled
-        with_mmedia=self.zone_conf.get_option(padsi.config.ZoneOptionType.MULTIMEDIA).enabled
+        with_mmedia=self.zone_conf.get_option(padsi.config.ZoneOptionType.MULTIMEDIA).enabled or self.zone_conf.get_option(padsi.config.ZoneOptionType.SCREEN_SHARE).enabled
         with_pulse=self.zone_conf.get_option(padsi.config.ZoneOptionType.PULSE_AUDIO).enabled
         with_pcscd=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11).enabled or \
             self.zone_conf.get_option(padsi.config.ZoneOptionType.GPG_CARD).enabled
@@ -438,8 +441,8 @@ class ZoneApps(ZoneFoundations):
                 if policies is not None:
                     try:
                         policies.add_trusted_ca(mp_set, zuf.zone_home_dir, "Web redirection CA", self._extra_root_cert)
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add Root CA to {progname}: {str(e)}")
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add Root CA to {progname}: {e}")
 
         pki_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKI)
         if pki_option.enabled:
@@ -451,8 +454,8 @@ class ZoneApps(ZoneFoundations):
                         try:
                             syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: adding trusted CA '{nickname}' for '{progname}'")
                             policies.add_trusted_ca(mp_set, zuf.zone_home_dir, nickname, ca_cert)
-                        except Exception as e:
-                            syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add trusted CA '{nickname}' to {progname}: {str(e)}")
+                        except Exception as e: # noqa: BLE001
+                            syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add trusted CA '{nickname}' to {progname}: {e}")
 
         pkcs11_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11)
         if pkcs11_option.enabled:
@@ -463,8 +466,8 @@ class ZoneApps(ZoneFoundations):
                 if policies is not None and pkcs11_option.driver_name is not None and pkcs11_option.driver_path is not None:
                     try:
                         policies.add_pkcs11_driver(mp_set, zuf.zone_home_dir, pkcs11_option.driver_name, pkcs11_option.driver_path)
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add PKCS#11 driver '{pkcs11_option.driver_path}' to {progname}: {str(e)}")
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add PKCS#11 driver '{pkcs11_option.driver_path}' to {progname}: {e}")
 
     def start(self):
         """Actually start the bubble
@@ -476,7 +479,7 @@ class ZoneApps(ZoneFoundations):
                 cenv=os.environ.copy()
                 cenv["DISPLAY"]=denv.x11_display
                 cenv["XAUTHORITY"]=denv.x11_auth
-                x=subprocess.run(["xlsclients"], env=cenv, capture_output=True)
+                x=subprocess.run(["xlsclients"], env=cenv, capture_output=True, check=False)
                 if x.returncode!=0:
                     syslog.syslog(syslog.LOG_WARNING, f"{self.syslog_prefix}: failed to force starting of XWayland: {x.stderr.decode()}")
             else:
@@ -486,7 +489,7 @@ class ZoneApps(ZoneFoundations):
         assert(self.bubble is not None)
         mp_set=self.bubble.mountpoint_set
         if mp_set is None:
-            raise Exception("CODEBUG: bubble's MountpointSet is None")
+            raise ZoneAppsException("CODEBUG: bubble's MountpointSet is None")
         self._apply_policies(mp_set, self._zuf)
         self._start_zone_dbus()
 
@@ -506,7 +509,7 @@ class ZoneApps(ZoneFoundations):
     @property
     def dbus_env(self):
         if self.bubble is None:
-            raise Exception("dbus_env property: zone has not yet been started")
+            raise ZoneAppsException("dbus_env property: zone has not yet been started")
         return self._dbus_env_in_host
 
     def has_gui_processes(self) -> bool:
@@ -539,9 +542,9 @@ class ZoneApps(ZoneFoundations):
         try:
             # quick check
             if int(os.path.basename(plogs_dir))!=uid:
-                raise Exception()
-        except Exception:
-            raise Exception(f"CODEBUG: Logs dir '{logs_dir}' for UID {uid} should contain the UID of the user")
+                raise ZoneAppsException()
+        except Exception: # noqa: BLE001
+            raise ZoneAppsException(f"CODEBUG: Logs dir '{logs_dir}' for UID {uid} should contain the UID of the user")
         os.chown(plogs_dir, uid, gid)
         os.chmod(plogs_dir, 0o700)
 

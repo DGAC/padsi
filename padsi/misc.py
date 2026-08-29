@@ -32,6 +32,9 @@ from dataclasses import dataclass
 import psutil
 
 
+class MiscException(Exception):
+    pass
+
 def get_user_name(uid) -> str:
     """Returns the user's name associated to an UID"""
     return pwd.getpwuid(uid).pw_name
@@ -59,16 +62,16 @@ def get_mnt_namespace(pid: int) -> str:
     """
     try:
         return os.readlink(f"/proc/{pid}/ns/mnt")
-    except Exception as e:
-        raise Exception(f"Could not get the mount namespace of process with PID {pid}: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        raise MiscException(f"Could not get the mount namespace of process with PID {pid}: {e}")
 
 def get_net_namespace(pid: int) -> str:
     """Get the network namespace of a process.
     """
     try:
         return os.readlink(f"/proc/{pid}/ns/net")
-    except Exception as e:
-        raise Exception(f"Could not get the network namespace of process with PID {pid}: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        raise MiscException(f"Could not get the network namespace of process with PID {pid}: {e}")
 
 def makedirs_with_owner(path:str, set_owner_after:str, uid:int, gid:int):
     """Create directories if they don't already exist with the specified owner
@@ -87,7 +90,7 @@ def makedirs_with_owner(path:str, set_owner_after:str, uid:int, gid:int):
         cpath=os.path.join(cpath, part)
         if os.path.exists(cpath):
             if not os.path.isdir(cpath):
-                raise Exception(f"Path '{cpath}' is supposed to be a directory by is not")
+                raise MiscException(f"Path '{cpath}' is supposed to be a directory by is not")
         else:
             os.mkdir(cpath)
             if set_owner:
@@ -114,26 +117,26 @@ def compute_user_xdg_subdirectories(uid:int) -> dict[str,str]:
         if os.geteuid()==0:
             args=["su", "-", pwd.getpwuid(uid).pw_name, "-c", "xdg-user-dirs-update --force"]
         else:
-            raise Exception(f"CODEBUG: user '{os.geteuid()}' is trying to reset XDG dirs of user {uid}")
+            raise MiscException(f"CODEBUG: user '{os.geteuid()}' is trying to reset XDG dirs of user {uid}")
     else:
         args=["xdg-user-dirs-update", "--force"]
-    proc=subprocess.run(args, cwd=host_home_dir, capture_output=True, text=True)
+    proc=subprocess.run(args, cwd=host_home_dir, capture_output=True, text=True, check=False)
     if proc.returncode!=0:
-        raise Exception(f"Failed to (re)create XDG directories: {proc.stderr if proc.stderr else proc.stdout}")
+        raise MiscException(f"Failed to (re)create XDG directories: {proc.stderr if proc.stderr else proc.stdout}")
 
     # list directories
     res:dict[str,str]={}
     for xdg_dir in xdg_dirs:
         # xdg_dir will be like "DOCUMENTS"
-        proc=subprocess.run(["xdg-user-dir", xdg_dir], env=cenv, capture_output=True, text=True)
+        proc=subprocess.run(["xdg-user-dir", xdg_dir], env=cenv, capture_output=True, text=True, check=False)
         if proc.returncode!=0:
-            raise Exception(f"Could not get XDG directory '{xdg_dir}' (unknown to xdg-user-dir?)")
+            raise MiscException(f"Could not get XDG directory '{xdg_dir}' (unknown to xdg-user-dir?)")
         res_dir=proc.stdout.strip()
         if os.path.samefile(res_dir, host_home_dir):
             syslog.syslog(syslog.LOG_WARNING, f"XDG {xdg_dir}' directory is the same as the user's home directory, ignoring")
         else:
             if not res_dir.startswith(host_home_dir):
-                raise Exception(f"XDG {xdg_dir}' directory '{res_dir}' is not in the user's home directory '{host_home_dir}'")
+                raise MiscException(f"XDG {xdg_dir}' directory '{res_dir}' is not in the user's home directory '{host_home_dir}'")
             if not os.path.exists(res_dir):
                 # ensure the directory actually exists!
                 gid=pwd.getpwuid(uid).pw_gid
@@ -145,7 +148,7 @@ def compute_user_xdg_subdirectories(uid:int) -> dict[str,str]:
 def get_variables_in_string(string):
     """Get the list of variables in the string passed as argument"""
     if not isinstance(string, str):
-        raise Exception(f"Expected @string to be a string, got a {type(string)}")
+        raise MiscException(f"Expected @string to be a string, got a {type(string)}")
     return re.findall(r'\{!?[a-zA-Z0-9_]{1,}(?:=[^"\'=}]*)?\}', string)
 
 def expand_variables_in_string(string, variables:dict[str,str]|None, extra_variables=None, partial_expand=False) -> str:
@@ -163,18 +166,18 @@ def expand_variables_in_string(string, variables:dict[str,str]|None, extra_varia
     if variables is None:
         return string
     if not isinstance(variables, dict):
-        raise Exception(f"Expected @variables to be a dictionary, got a {type(variables)}")
+        raise MiscException(f"Expected @variables to be a dictionary, got a {type(variables)}")
     if extra_variables is None:
         extra_variables={}
     elif not isinstance(extra_variables, dict):
-        raise Exception(f"Expected @extra_variables to be a dictionary, got a {type(extra_variables)}")
+        raise MiscException(f"Expected @extra_variables to be a dictionary, got a {type(extra_variables)}")
 
     allvars=get_variables_in_string(string)
     for var in allvars:
         rvar=var[1:-1]
 
         if rvar[0]=="!":
-            string=string.replace(var, "{%s}"%rvar[1:])
+            string=string.replace(var, "{rvar[1:]}")
             continue # ignore this variable
 
         default=None
@@ -191,14 +194,14 @@ def expand_variables_in_string(string, variables:dict[str,str]|None, extra_varia
         elif default is not None:
             string=string.replace(var, default)
         elif not partial_expand:
-            raise Exception(f"Can't expand unknown variable '{rvar}'")
+            raise MiscException(f"Can't expand unknown variable '{rvar}'")
     return string
 
 def is_iso_image(iso_file:str) -> bool:
     """Tell if a file is n ISO image"""
-    proc=subprocess.run(["file", "-E", "-b", "--mime-type", iso_file], capture_output=True, text=True)
+    proc=subprocess.run(["file", "-E", "-b", "--mime-type", iso_file], capture_output=True, text=True, check=False)
     if proc.returncode!=0:
-        raise Exception(f"could not determine if '{iso_file}' is an ISO image: {proc.stdout}")
+        raise MiscException(f"could not determine if '{iso_file}' is an ISO image: {proc.stdout}")
     return proc.stdout.strip()=="application/x-iso9660-image"
 
 def generate_iso_image(contents:list[str], volume_name:str|None=None, iso_file:str|None=None):
@@ -206,10 +209,10 @@ def generate_iso_image(contents:list[str], volume_name:str|None=None, iso_file:s
     or directly as the iso_file otherwise
     """
     if len(contents)==0:
-        raise Exception("no ISO content specified")
+        raise MiscException("no ISO content specified")
     tmp=None
     if not iso_file:
-        tmp=tempfile.NamedTemporaryFile(suffix=".iso")
+        tmp=tempfile.NamedTemporaryFile(suffix=".iso") # noqa: SIM115
         iso_file=tmp.name
 
     args:list[str]=["genisoimage", "-o", iso_file, "-graft-points", "-R", "-J", "-input-charset", "utf-8"]
@@ -220,13 +223,13 @@ def generate_iso_image(contents:list[str], volume_name:str|None=None, iso_file:s
     rootnames:set[str]=set()
     for fname in contents:
         if not isinstance(fname, str):
-            raise Exception(f"Invalid non string specification '{fname}'")
+            raise MiscException(f"Invalid non string specification '{fname}'")
         try:
             realname=os.path.realpath(os.path.expanduser(fname))
             if os.path.isfile(realname):
                 base=os.path.basename(realname)
                 if base in rootnames:
-                    raise Exception(f"several files have the same name '{base}'")
+                    raise MiscException(f"several files have the same name '{base}'")
                 rootnames.add(base)
                 args+=[realname]
             elif os.path.isdir(realname):
@@ -240,13 +243,13 @@ def generate_iso_image(contents:list[str], volume_name:str|None=None, iso_file:s
                 args+=[f"{alias}={realname}"]
                 aliases.add(alias)
             else:
-                raise Exception("not a file or directory")
-        except Exception as e:
-            raise Exception(f"failed to create ISO file: {str(e)}")
+                raise MiscException("not a file or directory")
+        except Exception as e: # noqa: BLE001
+            raise MiscException(f"failed to create ISO file: {e}")
 
-    proc=subprocess.run(args, capture_output=True, text=True)
+    proc=subprocess.run(args, capture_output=True, text=True, check=False)
     if proc.returncode!=0:
-        raise Exception(f"Could not create ISO image file: {proc.stderr if proc.stderr else proc.stdout}")
+        raise MiscException(f"Could not create ISO image file: {proc.stderr if proc.stderr else proc.stdout}")
     return tmp
 
 class LateFunction:
@@ -270,7 +273,7 @@ class LateFunction:
         """Set or increase the delay after which the function will be called
         """
         if self._wait_until is None:
-            now=datetime.datetime.now().timestamp()
+            now=datetime.datetime.now(datetime.timezone.utc).timestamp()
             self._wait_until=now+wait_duration
             self._task=asyncio.create_task(self._wait())
             self._task.add_done_callback(self._wait_done_cb)
@@ -284,16 +287,16 @@ class LateFunction:
         self._cancelled=True
 
     async def _wait(self):
-        now=datetime.datetime.now().timestamp()
+        now=datetime.datetime.now(datetime.timezone.utc).timestamp()
         if self._wait_until is None:
-            raise Exception("CODEBUG: self._wait_until should not be None")
+            raise MiscException("CODEBUG: self._wait_until should not be None")
         while True:
             await asyncio.sleep(self._wait_until-now)
             if self._cancelled:
                 self._cancelled=False
                 return
 
-            now=datetime.datetime.now().timestamp()
+            now=datetime.datetime.now(datetime.timezone.utc).timestamp()
             if now>self._wait_until:
                 loop=asyncio.get_event_loop()
                 self._wait_until=None
@@ -326,12 +329,10 @@ class UserSessionNotifier:
     def user_logged_in_cb(self, uid:int, gid:int, shell_proc:psutil.Process):
         """Function called when a user has logged in
         """
-        pass
 
     def user_logged_out_cb(self, uid:int):
         """Function called when a user has logged out
         """
-        pass
 
     async def run(self):
         p1=psutil.Process(1) # system's init process
@@ -355,8 +356,8 @@ class UserSessionNotifier:
                                         session=_UserSession(uid, shell_proc.gids().real, shell_proc.pid)
                                         self._sessions[session.shell_pid]=session
                                         self.user_logged_in_cb(session.uid, session.gid, shell_proc)
-                                except Exception as e:
-                                    syslog.syslog(syslog.LOG_ERR, f"Error handling user {shell_proc.uids().real} logged: {str(e)}")
+                                except Exception as e: # noqa: BLE001
+                                    syslog.syslog(syslog.LOG_ERR, f"Error handling user {shell_proc.uids().real} logged: {e}")
 
                     # handle users which have logged out
                     for pid in [pid for pid in self._sessions if pid not in all_shell_pids]:
@@ -366,15 +367,15 @@ class UserSessionNotifier:
                                 self.user_logged_out_cb(session.uid)
                                 del self._sessions[pid]
 
-                        except Exception as e:
-                            syslog.syslog(syslog.LOG_ERR, f"Error handling user's shell {pid} logged out: {str(e)}")
+                        except Exception as e: # noqa: BLE001
+                            syslog.syslog(syslog.LOG_ERR, f"Error handling user's shell {pid} logged out: {e}")
 
                 except psutil.ZombieProcess:
                     pass # come back later, transient state
                 except psutil.AccessDenied:
                     syslog.syslog(syslog.LOG_ERR, "Error handling user logged or unlogged: process list access denied")
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Error handling user logged or unlogged: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Error handling user logged or unlogged: {e}")
             except asyncio.exceptions.IncompleteReadError:
                 break
 

@@ -34,11 +34,13 @@ import padsi.config
 import padsi.network
 from padsi.simple_comm import Message, MessageType, Server
 
-from .components import dns, fw_logger
+from .components import dns, fw_logger, wayland_proxy, web_infra
 from .components import static_firewall as stfw
-from .components import wayland_proxy, web_infra
 from .zone_foundations import ZoneFoundations
 
+
+class ZoneInfraException(Exception):
+    pass
 
 class ZoneServer(Server):
     """Server which handles requests from the zone service"""
@@ -50,8 +52,8 @@ class ZoneServer(Server):
         """Actually handle requests"""
         try:
             _cmde = request.data["cmde"]
-        except Exception:
-            raise Exception(f"Invalid request '{request.data}'")
+        except Exception: # noqa: BLE001
+            raise ZoneInfraException(f"Invalid request '{request.data}'")
         syslog.syslog(syslog.LOG_ERR, "TODO!!!")
         return Message(MessageType.REPLY, None)
 
@@ -139,7 +141,7 @@ class ZoneInfra(ZoneFoundations):
                     rules=[]
                     for name in ("wpad.", "proxy."):
                         rule=padsi.config.ResolvRule(action="allow", descr=f"Allow to {name}",
-                            endpoint=firewall.Endpoint.from_repr(name), resolv=[f"A/3600/{str(self._br_ip.ip)}"])
+                            endpoint=firewall.Endpoint.from_repr(name), resolv=[f"A/3600/{self._br_ip.ip}"])
                         rules.append(rule)
                     comp.add_extra_rules("web-proxy", rules)
 
@@ -205,7 +207,7 @@ class ZoneInfra(ZoneFoundations):
         by programs running in the zone, points to the zone's web proxy component
         """
         if len(self.zone_conf.web_proxies)>0:
-            value = f"http://{str(self._br_ip.ip)}:3128"
+            value = f"http://{self._br_ip.ip}:3128"
             return {"http_proxy": value, "https_proxy": value}
         return None
 
@@ -279,10 +281,10 @@ class ZoneInfra(ZoneFoundations):
         try:
             self._br_last_addr_index += 1
             a = padsi.config.users_br_network[self._br_last_addr_index]
-            addr = ipaddress.IPv4Interface(f"{str(a)}/{padsi.config.users_br_network.prefixlen}")
+            addr = ipaddress.IPv4Interface(f"{a}/{padsi.config.users_br_network.prefixlen}")
             return addr
-        except Exception:
-            raise Exception(f"No more available IP in the network associated to zone '{self.zone_conf.name}'")
+        except Exception: # noqa: BLE001
+            raise ZoneInfraException(f"No more available IP in the network associated to zone '{self.zone_conf.name}'")
 
     def add_dns_resolution_rules(self, context: str, rules: list[padsi.config.ResolvRule]):
         """Add some context specific DNS rules"""

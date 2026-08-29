@@ -24,7 +24,6 @@
 # which will be used via the padsi-do tool
 
 import asyncio
-import json
 import os
 import pwd
 import signal
@@ -36,19 +35,20 @@ from aiohttp import web
 from aiohttp.web_response import json_response
 
 import padsi.config
-from padsi.run import parse_vm_version
+from padsi.run import parse_vm_version, vm_proxy
 from padsi.run.admin_infra import AdminInfra
-import padsi.run.vm_proxy as vm_proxy
 from padsi.simple_comm import Client, Message, MessageType
-
 
 _debug=False
 
+class AdminServiceException(Exception):
+    pass
+
 class AdminService:
-    def __init__(self, config:dict):
-        self._gconf=padsi.config.Configuration(config["config-dir"])
-        self._run_dir=config["run-dir"]
-        self._logs_dir=config["logs-dir"]
+    def __init__(self, config_dir:str, run_dir:str, logs_dir:str):
+        self._gconf=padsi.config.Configuration(config_dir)
+        self._run_dir=run_dir
+        self._logs_dir=logs_dir
         user=pwd.getpwnam("padsi")
         self._uid=user.pw_uid
         self._gid=user.pw_gid
@@ -77,9 +77,9 @@ class AdminService:
         # remove socket if any
         try:
             os.unlink(socket_file)
-        except OSError as e:
+        except OSError:
             if os.path.exists(socket_file):
-                raise e
+                raise
 
         # create new socket file
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -109,18 +109,18 @@ class AdminService:
                     "traffic-shaper": infra.traffic_shaper.name if infra.traffic_shaper is not None else None
                 }
             return json_response(res)
-        except Exception as e:
-            return web.Response(text=f"Could not get status ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Could not get status ({e})", status=400)
 
     async def _api_vm_status(self, request: web.Request):
         try:
             vm_id = request.rel_url.query.get("vm-id")
             if vm_id is None:
-                raise Exception
+                raise AdminServiceException
             verbose = request.rel_url.query.get("verbose") == "True"
             zone_name = request.rel_url.query.get("zone")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             vm: padsi.config.VirtualMachine | None = None
@@ -130,11 +130,11 @@ class AdminService:
                     vm = vmu
                     break
             if vm is None:
-                raise Exception(f"Unknown virtual machine '{vm_id}' or not enough privileges")
+                raise AdminServiceException(f"Unknown virtual machine '{vm_id}' or not enough privileges")
             if zone_name is not None:
                 zone=self._gconf.get_zone(zone_name)
                 if not zone.get_virtual_machine(vm.id):
-                    raise Exception(f"Virtual machine '{vm_id}' can't be used in zone")
+                    raise AdminServiceException(f"Virtual machine '{vm_id}' can't be used in zone")
 
             result = await self._call_system_service(
                 {
@@ -146,8 +146,8 @@ class AdminService:
             )
             return json_response(result)
 
-        except Exception as e:
-            return web.Response(text=f"Could not get the VM's status: ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Could not get the VM's status: ({e})", status=400)
 
     async def _api_vm_post(self, request: web.Request):
         """Import or load a VM from its HDD and VARS files
@@ -165,13 +165,13 @@ class AdminService:
                     vars_file = data.get("vars-file")
                     extract_id = data.get("extract-id")
                 case _:
-                    raise Exception(f"Invalid action {data.get('action')}")
+                    raise AdminServiceException(f"Invalid action {data.get('action')}")
 
             zone_name = data.get("zone")
             if zone_name is not None and not isinstance(zone_name, str):
-                raise Exception("Invalid zone name")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+                raise AdminServiceException("Invalid zone name")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         # do the job
         if action == "import":
@@ -179,15 +179,22 @@ class AdminService:
                 vm_version=await vm_proxy.stage_imported_files(self._gconf, self._call_system_service, vm_id,
                         self._uid, self._gid, hdd_file, vars_file, message)
                 return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": None})
-            except Exception as e:
-                return web.Response(text=f"Could not import the VM: {str(e)}", status=400)
+            except PermissionError:
+                user=os.getuid()
+                try:
+                    user=pwd.getpwuid(user).pw_name
+                except KeyError:
+                    syslog.syslog(syslog.LOG_ERR, f"User with ID {user} is not declared")
+                return web.Response(text=f"Could not import the VM: permission denied (check permissions of user '{user}')", status=400)
+            except Exception as e: # noqa: BLE001
+                return web.Response(text=f"Could not import the VM: {e}", status=400)
         else:
             try:
                 vm_version=await vm_proxy.vm_load(self._gconf, self._call_system_service, vm_id,
                     self._uid, self._gid, extract_id, message)
                 return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": None})
-            except Exception as e:
-                return web.Response(text=f"Could not load the VM: {str(e)}", status=400)
+            except Exception as e: # noqa: BLE001
+                return web.Response(text=f"Could not load the VM: {e}", status=400)
 
     async def _api_vm_modify(self, request: web.Request):
         """Publish a staged VM version or merge a VM version with its backing VM version
@@ -198,13 +205,13 @@ class AdminService:
             data = await request.json()
             action = data.get("action")
             if action not in ("publish", "merge"):
-                raise Exception(f"Unknown action '{action}'")
+                raise AdminServiceException(f"Unknown action '{action}'")
             merge = action == "merge"
             zone_name = data.get("zone")
             message = data.get("message")
             vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         # do the job
         try:
@@ -217,7 +224,7 @@ class AdminService:
             else:
                 res=await vm_proxy.vm_publish(self._gconf, self._call_system_service, vm_id, self._uid, message)
                 return json_response(res)
-        except Exception as e:
+        except Exception as e: # noqa: BLE001
             return web.Response(text=str(e), status=400)
 
     async def _api_vm_delete(self, request: web.Request):
@@ -227,14 +234,14 @@ class AdminService:
             data = await request.json()
             action = data.get("action")
             if action not in ("discard", "clean"):
-                raise Exception(f"Unknown action '{action}'")
+                raise AdminServiceException(f"Unknown action '{action}'")
             cleanup = action == "clean"
             vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
             force = data.get("force", False)
             vm_version=data.get("vm-version")
             zone_name = data.get("zone")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         # do the job
         if cleanup:
@@ -242,14 +249,14 @@ class AdminService:
                 # discard all the obsolete (unused anymore) VM versions
                 res = await vm_proxy.vm_cleanup(self._gconf, self._call_system_service, vm_id, zone_name)
                 return json_response(res)
-            except Exception as e:
-                return web.Response(text=f"Could not clean VM: ({str(e)})", status=400)
+            except Exception as e: # noqa: BLE001
+                return web.Response(text=f"Could not clean VM: ({e})", status=400)
         else:
             try:
                 res= await vm_proxy.vm_discard(self._gconf, self._call_system_service, vm_id, vm_version, zone_name, force)
                 return json_response(res)
-            except Exception as e:
-                return web.Response(text=f"Could not discard VM version ({str(e)})", status=400)
+            except Exception as e: # noqa: BLE001
+                return web.Response(text=f"Could not discard VM version ({e})", status=400)
 
     async def _call_system_service(self, data):
         """Send a request to the system service"""
@@ -287,8 +294,8 @@ class AdminService:
                 )
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"Removed obsolete admin netns {nsname}")
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Error removing obsolete admin netns '{nsname}': {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Error removing obsolete admin netns '{nsname}': {e}")
 
         # set up of all admin_ns
         infra_objects:list[AdminInfra]=[]
@@ -350,7 +357,7 @@ class AdminService:
                 infra_objects.append(infra)
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"Network set for admin infra '{adminns.name}' on traffic shaper {tsp.name if tsp is not None else '---'}")
-            except Exception as e:
+            except Exception as e: # noqa: BLE001
                 if infra is not None:
                     if setup:
                         await self._call_system_service({
@@ -363,7 +370,7 @@ class AdminService:
                             "syslog-prefix": infra.syslog_prefix,
                         })
                     infra.stop()
-                syslog.syslog(syslog.LOG_ERR, f"Error starting admin infra '{adminns.name}' on traffic shaper {tsp.name if tsp is not None else '---'}: {str(e)}")
+                syslog.syslog(syslog.LOG_ERR, f"Error starting admin infra '{adminns.name}' on traffic shaper {tsp.name if tsp is not None else '---'}: {e}")
         self._infra_objects=infra_objects
 
         # wait for a SIG* to stop
@@ -403,41 +410,36 @@ class AdminService:
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"Cleaned admin intra {infra.admin_conf.name}")
 
-            except Exception as e:
+            except Exception as e: # noqa: BLE001
                 tsp=infra.traffic_shaper
-                syslog.syslog(syslog.LOG_ERR, f"Error stopping admin infra '{infra.admin_conf.name}' on traffic shaper {tsp.name if tsp is not None else '---'}: {str(e)}")
+                syslog.syslog(syslog.LOG_ERR, f"Error stopping admin infra '{infra.admin_conf.name}' on traffic shaper {tsp.name if tsp is not None else '---'}: {e}")
         if _debug:
             syslog.syslog(syslog.LOG_DEBUG, "Terminated")
 
 if __name__=="__main__":
     def usage():
-        msg=f"{sys.argv[0]} <configuration file>"
+        msg=f"{sys.argv[0]} <config. dir> <run. dir> <logs. dir>"
         syslog.syslog(syslog.LOG_ERR, msg)
         print(msg)
         sys.exit(1)
-    if len(sys.argv)!=2:
+    if len(sys.argv)!=4:
         usage()
 
     try:
-        # load config file
-        config_file=sys.argv[1]
-        with open(config_file, "rt") as fd:
-            config=json.load(fd)
-
         # check running conditions
         try:
             padsi_user=pwd.getpwnam("padsi")
         except KeyError:
-            raise Exception("Unable to find the 'padsi' user")
+            raise AdminServiceException("Unable to find the 'padsi' user")
 
         if os.geteuid()!=padsi_user.pw_uid or \
             os.getegid()!=padsi_user.pw_gid:
-            raise Exception("Must be run as user 'padsi'")
+            raise AdminServiceException("Must be run as user 'padsi'")
 
         syslog.syslog(syslog.LOG_INFO, f"PID: {os.getpid()}")
-        service=AdminService(config)
+        service=AdminService(sys.argv[1], sys.argv[2], sys.argv[3])
         asyncio.run(service.run())
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {str(e)}")
-        print(f"Failed to start: {str(e)}", file=sys.stderr)
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {e}")
+        print(f"Failed to start: {e}", file=sys.stderr)
         sys.exit(1)

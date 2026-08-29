@@ -42,13 +42,16 @@ import firewall
 import nsbubble
 import padsi.config
 import padsi.misc
-import padsi.namesgenerator as namesgenerator
 import padsi.run
+from padsi import namesgenerator
+from padsi.run import vm_proxy
 from padsi.run.vm.version import VMState
-import padsi.run.vm_proxy as vm_proxy
 from padsi.simple_comm import Client, Message, MessageType, ServerProcessDied
 
 _debug = False
+
+class UserServiceException(Exception):
+    pass
 
 
 class ZoneData:
@@ -121,8 +124,8 @@ class ZoneData:
                 for zone in self.apps:
                     try:
                         zone.stop()
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_WARNING, f"Could not destroy zone instance {'VM ' if isinstance(zone, padsi.run.ZoneVM) else ''}instance: {str(e)}")
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_WARNING, f"Could not destroy zone instance {'VM ' if isinstance(zone, padsi.run.ZoneVM) else ''}instance: {e}")
                 self.apps = None
 
             # get rid of the zone's infrastructure
@@ -140,14 +143,14 @@ class ZoneData:
                                 "syslog-prefix": self.infra.syslog_prefix,
                             }
                         )
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_WARNING, f"Could not clean up zone network: {str(e)}")
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_WARNING, f"Could not clean up zone network: {e}")
 
                     self.infra.stop()
                 except ServerProcessDied:
                     pass
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_WARNING, f"Could not destroy network zone: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_WARNING, f"Could not destroy network zone: {e}")
                 self.infra = None
 
             # unmount any FUSE mounted filesystem
@@ -175,8 +178,8 @@ class ZoneData:
                         syslog.syslog(syslog.LOG_DEBUG, f"finished 'zone-userfiles-cleanup' for conf {self.zone_name=}")
                 except ServerProcessDied:
                     pass
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Could not clean up zone's user files: {type(e)} ({str(e)})")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Could not clean up zone's user files: {type(e)} ({e})")
                 self.userfiles = None
 
             # revoke any PCSCD granted access
@@ -184,16 +187,16 @@ class ZoneData:
                 await self.service._call_system_service(
                     {"cmde": "access-pcscd", "action": "deny"}
                 )
-            except Exception as e:
-                syslog.syslog(syslog.LOG_WARNING, f"Could not revoke access to PCSCD service: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_WARNING, f"Could not revoke access to PCSCD service: {e}")
 
             # revoke any USB redirection granted access
             try:
                 await self.service._call_system_service(
                     {"cmde": "access-usbredir", "action": "deny"}
                 )
-            except Exception as e:
-                syslog.syslog(syslog.LOG_WARNING, f"Could not revoke access to USB VM redirection: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_WARNING, f"Could not revoke access to USB VM redirection: {e}")
 
     async def add_zone(self, zone: padsi.run.ZoneApps|padsi.run.ZoneVM):
         async with self._lock:
@@ -228,20 +231,20 @@ class ZoneData:
                                 resolv,
                             )
                         )
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_ERR, f"Failed to take VM {izone.vm_version} into account for DN resolution: {str(e)}")
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_ERR, f"Failed to take VM {izone.vm_version} into account for DN resolution: {e}")
 
             # update rules where applicable
             for izone in vmzones:
                 try:
                     izone.add_dns_resolution_rules("VM", new_rules)
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Failed to update resolv. rules for zone {izone}: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Failed to update resolv. rules for zone {izone}: {e}")
             if self.infra is not None:
                 try:
                     self.infra.add_dns_resolution_rules("VM", new_rules)
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Failed to update resolv. rules for network of zone: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Failed to update resolv. rules for network of zone: {e}")
 
     def get_namespaces_colors(self) -> dict:
         """Get the namespaces to color information"""
@@ -337,9 +340,9 @@ class PadsiUserService:
         # remove socket if any
         try:
             os.unlink(socket_file)
-        except OSError as e:
+        except OSError:
             if os.path.exists(socket_file):
-                raise e
+                raise
 
         # create new socket file
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -405,7 +408,7 @@ class PadsiUserService:
                 syslog.syslog(syslog.LOG_DEBUG, "PadsiUserService: killed by signal, starting shutdown")
 
             # clear the VMManagementFiles objects
-            for _, vmm in self._vm_versions.items():
+            for vmm in self._vm_versions.values():
                 await vmm.cleanup()
             self._vm_versions = {}
 
@@ -414,16 +417,16 @@ class PadsiUserService:
                 for zdata in self._zones.values():
                     await zdata.destroy()
                 self._zones = {}
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Zone data destroy error: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Zone data destroy error: {e}")
 
             # clear user's runtime dir
             try:
                 await self._call_system_service({"cmde": "clean-user-runtime-dir"})
             except ServerProcessDied:
                 pass
-            except Exception as e:
-                syslog.syslog(syslog.LOG_WARNING, f"Failed to clean user's runtime directory: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_WARNING, f"Failed to clean user's runtime directory: {e}")
 
             # stop the client task
             if _debug:
@@ -437,13 +440,13 @@ class PadsiUserService:
                 os.remove(self.socket_file)
             except FileNotFoundError:
                 pass
-            except Exception as e:
-                syslog.syslog(syslog.LOG_WARNING, f"Failed to clean PadsiUserService's socket_file '{self.socket_file}': {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_WARNING, f"Failed to clean PadsiUserService's socket_file '{self.socket_file}': {e}")
 
         try:
             await self._update_zone_infos_files()
-        except Exception as e:
-            syslog.syslog(syslog.LOG_WARNING, f"Failed to update PadsiUserService's zone_infos_files: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_WARNING, f"Failed to update PadsiUserService's zone_infos_files: {e}")
         if _debug:
             syslog.syslog(syslog.LOG_DEBUG, "PadsiUserService: finished shutdown")
         self._kill_event.set()
@@ -493,8 +496,8 @@ class PadsiUserService:
             )
         except ServerProcessDied:
             pass
-        except Exception as e:
-            syslog.syslog(syslog.LOG_WARNING, f"Failed to update colors files: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_WARNING, f"Failed to update colors files: {e}")
 
     def _start_initial_zones_finished(self, _task: asyncio.Task):
         # clean up reference when task finished
@@ -507,13 +510,13 @@ class PadsiUserService:
         )
         res=await asyncio.gather(*tasks, return_exceptions=True)
         if isinstance(res[0], BaseException):
-            msg=f"Error while starting zone '{zone_conf.name}' infra: {str(res[0])}"
+            msg=f"Error while starting zone '{zone_conf.name}' infra: {res[0]}"
             syslog.syslog(syslog.LOG_ERR, msg)
-            raise Exception(msg)
+            raise UserServiceException(msg)
         if isinstance(res[1], BaseException):
-            msg=f"Error while starting zone '{zone_conf.name}' userfiles: {str(res[1])}"
+            msg=f"Error while starting zone '{zone_conf.name}' userfiles: {res[1]}"
             syslog.syslog(syslog.LOG_ERR, msg)
-            raise Exception(msg)
+            raise UserServiceException(msg)
         return (res[0], res[1])
 
     async def _start_initial_zones(self):
@@ -523,13 +526,13 @@ class PadsiUserService:
             if zone_conf.start_mode == padsi.config.StartMode.ALWAYS:
                 try:
                     await self._get_zone_apps(zone_conf)
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Error while starting zone '{zone_name}': {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Error while starting zone '{zone_name}': {e}")
             elif zone_conf.start_mode == padsi.config.StartMode.ALWAYS_INFRA:
                 try:
                     await self._get_zone_infra_and_userfiles(zone_conf)
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Error while starting zone '{zone_name}' infra: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Error while starting zone '{zone_name}' infra: {e}")
         syslog.syslog(syslog.LOG_INFO, "Finished starting always present zones")
 
     async def _zones_background_cleaner(self):
@@ -569,13 +572,13 @@ class PadsiUserService:
                 for vmv in vmversion_to_discard:
                     try:
                         vmv.discard_files()
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_WARNING, f"Could not discard VMVersion {vmv}: {str(e)}")
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_WARNING, f"Could not discard VMVersion {vmv}: {e}")
             except asyncio.CancelledError:
                 syslog.syslog(syslog.LOG_ERR, "Zones' background cleaner cancelled")
                 return
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Zones' background cleaner, error: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Zones' background cleaner, error: {e}")
 
     #
     # VM versions usage tracking
@@ -619,8 +622,8 @@ class PadsiUserService:
 
         if ensure_unique:
             if unique_descr:
-                raise Exception(unique_descr)
-            raise Exception(f"Task '{task.descr}' is already running")
+                raise UserServiceException(unique_descr)
+            raise UserServiceException(f"Task '{task.descr}' is already running")
 
         # wait for the task to be finished
         start_ts=datetime.datetime.now(datetime.timezone.utc).timestamp()
@@ -648,13 +651,13 @@ class PadsiUserService:
                     res = task.asyncio_task.result()
                     if res is not None:
                         # should not happen since tasks are not expected to return anything
-                        syslog.syslog(syslog.LOG_ERR, f"Task '{task.id}' returned unused data: {str(res)}")
+                        syslog.syslog(syslog.LOG_ERR, f"Task '{task.id}' returned unused data: {res}")
                 except asyncio.InvalidStateError:
                     # can happen if task is calling for itself
                     if task.asyncio_task != asyncio.current_task():
                         syslog.syslog(syslog.LOG_ERR, f"_mark_task_finished called for task {task.id} which is still running")
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Task '{task.id}' failed: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Task '{task.id}' failed: {e}")
             del self._running_tasks[task.id]
 
     #
@@ -780,7 +783,7 @@ class PadsiUserService:
     async def _get_zone_apps(self, zone_conf: padsi.config.Zone) -> padsi.run.ZoneApps:
         """Create or reuse a zone'APPS bubble (start it if necessary)"""
         if zone_conf.get_option(padsi.config.ZoneOptionType.VM_ONLY).enabled:
-            raise Exception("VM only zone, no apps. allowed")
+            raise UserServiceException("VM only zone, no apps. allowed")
 
         can_reuse_apps = True # to be modified when we introduce stronger isolation mechanisms for some programs
 
@@ -791,13 +794,13 @@ class PadsiUserService:
                 return izone
             task = Task(f"zone:{zone_conf.name}", f"Creating zone {zone_conf.name}")
         else:
-            task = Task(f"zone:{zone_conf.name}-{str(uuid.uuid4())}", f"Creating zone {zone_conf.name} (unique)")
+            task = Task(f"zone:{zone_conf.name}-{uuid.uuid4()}", f"Creating zone {zone_conf.name} (unique)")
 
         try:
             waited = await self._mark_task_started(task)
             if waited:
                 if not can_reuse_apps:
-                    raise Exception("CODEBUG: ISOLATE zones creation already exists?")
+                    raise UserServiceException("CODEBUG: ISOLATE zones creation already exists?")
                 izone = await self._get_existing_non_vm_zone(zone_conf)
                 if izone is not None:
                     return izone
@@ -811,8 +814,8 @@ class PadsiUserService:
                 syslog.syslog(syslog.LOG_INFO, "ASKING to allow PCSCD usage")
                 try:
                     await self._call_system_service({"cmde": "access-pcscd", "action": "grant"})
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Failed to grant PCSCD usage: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Failed to grant PCSCD usage: {e}")
 
             # create a new zone
             syslog.syslog(syslog.LOG_INFO,f"Starting zone '{zone_conf.name}' as UID {os.getuid()}, EUID {os.geteuid()}")
@@ -871,7 +874,7 @@ class PadsiUserService:
         boot_iso: str | None = None, extra_isos: list[str] | None = None, iso_file: str | None = None) -> padsi.run.ZoneVM:
         """Create a zone for the VM and start it"""
         if self._is_vmversion_used(vm_version):
-            raise Exception(f"VM version '{vm_version}' is already used by a running VM")
+            raise UserServiceException(f"VM version '{vm_version}' is already used by a running VM")
 
         syslog.syslog(syslog.LOG_INFO, f"Starting VM zone '{zone_conf.name}' as UID {os.getuid()}, EUID {os.geteuid()}")
 
@@ -897,8 +900,8 @@ class PadsiUserService:
                     await self._call_system_service(
                         {"cmde": "access-usbredir", "action": "grant"}
                     )
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Failed to grant USB redirection: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Failed to grant USB redirection: {e}")
 
             # always create a new zone
             await self._prepare_zone_dirs(zone_conf, vm_conf=vm_conf)
@@ -949,7 +952,7 @@ class PadsiUserService:
             # update zone's color file for the PADSI UI
             zdata = self._zones.get(zone_conf.name)
             if zdata is None:
-                raise Exception(f"CODEBUG: zdata should not be None for zone '{zone_conf.name}'")
+                raise UserServiceException(f"CODEBUG: zdata should not be None for zone '{zone_conf.name}'")
             if vm_conf.usage == padsi.config.VMUsage.RUN:
                 await self._update_zone_infos_files()
 
@@ -986,9 +989,9 @@ class PadsiUserService:
             )
 
             return vmzone
-        except Exception as e:
+        except Exception:
             await self.unmark_vmversion(vm_version)
-            raise e
+            raise
         finally:
             await self._mark_task_finished(task)
 
@@ -1003,8 +1006,8 @@ class PadsiUserService:
                 }
             )
         except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Failed to call zone-apps-prepare-dirs: {str(e)}")
-            raise e
+            syslog.syslog(syslog.LOG_ERR, f"Failed to call zone-apps-prepare-dirs: {e}")
+            raise
 
     #
     # REST API
@@ -1028,7 +1031,7 @@ class PadsiUserService:
                         if izone.mnt_namespace and izone.net_namespace
                         else None
                     )
-                except Exception as e:
+                except Exception as e: # noqa: BLE001
                     info["error"] = str(e)
         return info
 
@@ -1048,7 +1051,7 @@ class PadsiUserService:
                         if router.mnt_namespace and router.net_namespace
                         else None
                     )
-                except Exception as e:
+                except Exception as e: # noqa: BLE001
                     info["error"] = str(e)
         return info
 
@@ -1141,8 +1144,8 @@ class PadsiUserService:
                 )
 
             return json_response(data)
-        except Exception as e:
-            return web.Response(text=f"Could not get status ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Could not get status ({e})", status=400)
 
     def _set_zone_autostop(self, izone: padsi.run.ZoneApps):
         # defining zones' auto-stopping is impossible: some programs like gnome-terminal will spawn some other
@@ -1160,38 +1163,38 @@ class PadsiUserService:
             data = await request.json()
             zone_name = data.get("zone")
             if not zone_name:
-                raise Exception("zone not specified")
+                raise UserServiceException("zone not specified")
             zone_conf = self._gconf.get_zone(zone_name)
             args = data.get("args")
             if not args:
-                raise Exception("process to run is not specified")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+                raise UserServiceException("process to run is not specified")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             if len(args) == 0:
-                raise Exception("Invalid empty arguments")
+                raise UserServiceException("Invalid empty arguments")
             progname = args[0].strip()
             if progname == "":
-                raise Exception("Invalid empty program name")
+                raise UserServiceException("Invalid empty program name")
 
             izone = await self._get_zone_apps(zone_conf)
             loop = asyncio.get_running_loop()
             pid = await loop.run_in_executor(None, izone.api.start_process, args) # pyright: ignore
             self._set_zone_autostop(izone)
             return json_response({"pid": pid})
-        except Exception as e:
-            return web.Response(text=f"Could not start the program: ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Could not start the program: ({e})", status=400)
 
     async def _api_vm_status(self, request: web.Request):
         try:
             vm_id = request.rel_url.query.get("vm-id")
             if vm_id is None:
-                raise Exception
+                raise UserServiceException
             verbose = request.rel_url.query.get("verbose") == "True"
             zone_name = request.rel_url.query.get("zone")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             vm: padsi.config.VirtualMachine | None = None
@@ -1201,11 +1204,11 @@ class PadsiUserService:
                     vm = vmu
                     break
             if vm is None:
-                raise Exception(f"Unknown virtual machine '{vm_id}' or not enough privileges")
+                raise UserServiceException(f"Unknown virtual machine '{vm_id}' or not enough privileges")
             if zone_name is not None:
                 zone=self._gconf.get_zone(zone_name)
                 if not zone.get_virtual_machine(vm.id):
-                    raise Exception(f"Virtual machine '{vm_id}' can't be used in zone")
+                    raise UserServiceException(f"Virtual machine '{vm_id}' can't be used in zone")
 
             result = await self._call_system_service(
                 {
@@ -1217,17 +1220,17 @@ class PadsiUserService:
             )
             return json_response(result)
 
-        except Exception as e:
-            return web.Response(text=f"Could not get the VM's status: ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Could not get the VM's status: ({e})", status=400)
 
     def _vm_show_viewer(self, zone_name: str, vm_version: padsi.run.VMVersion):
         """Force the VM viewer to be displayed"""
         zdata = self._zones.get(zone_name)
         if zdata is None:
-            raise Exception(f"No ZoneData object for zone '{zone_name}'")
+            raise UserServiceException(f"No ZoneData object for zone '{zone_name}'")
         izone = zdata.get_zone_vm(vm_version)
         if izone is None:
-            raise Exception("VM is not running")
+            raise UserServiceException("VM is not running")
         if izone.vm_viewer_host_pid is not None:
             os.kill(izone.vm_viewer_host_pid, signal.SIGUSR1)
 
@@ -1237,10 +1240,10 @@ class PadsiUserService:
             syslog.syslog(syslog.LOG_INFO, f"Importing VM version with task {task.id}")
             return await vm_proxy.stage_imported_files(self._gconf, self._call_system_service,
                 vm_id, self._uid, self._gid, hdd_file, vars_file, message)
-        except Exception as e:
-            msg=f"Failed to import VM version with task {task.id}: {str(e)}"
+        except Exception as e: # noqa: BLE001
+            msg=f"Failed to import VM version with task {task.id}: {e}"
             syslog.syslog(syslog.LOG_ERR, msg)
-            raise Exception(msg)
+            raise UserServiceException(msg)
         finally:
             await self._mark_task_finished(task)
 
@@ -1252,9 +1255,9 @@ class PadsiUserService:
             await self._mark_task_started(task, ensure_unique=True, unique_descr="VM is already being imported")
             task.asyncio_task = asyncio.create_task(self._import_vm_version(task, vm_id, hdd_file, vars_file, message))
             return json_response({"vm-id": vm_id, "task": task.descr})
-        except Exception as e:
+        except Exception:
             await self._mark_task_finished(task)
-            raise e
+            raise
 
     async def _load_vm_versions(self, task: Task, vm_id:str, extract_id: str, message: str | None):
         """Actual asyncio task to load VM versions"""
@@ -1262,8 +1265,8 @@ class PadsiUserService:
             # identify all the VM versions which will be loaded and the dependencies if any
             await vm_proxy.vm_load(self._gconf, self._call_system_service, vm_id,
                 self._uid, self._gid, extract_id, message)
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Failed to load VM versions with task {task.id}: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Failed to load VM versions with task {task.id}: {e}")
         finally:
             await self._mark_task_finished(task)
 
@@ -1276,27 +1279,27 @@ class PadsiUserService:
             await self._mark_task_started(task, ensure_unique=True, unique_descr="VM is already being loaded")
             task.asyncio_task = asyncio.create_task(self._load_vm_versions(task, vm_id, extract_id, message))
             return json_response({"vm-id": vm_id, "task": task.descr})
-        except Exception as e:
+        except Exception:
             await self._mark_task_finished(task)
-            raise e
+            raise
 
     async def _vm_run(self, vm_id: str, nickname: str | None, zone_name: str):
         task: Task | None = None
         try:
             # determine VM and zone configs to use
             if not zone_name:
-                raise Exception("zone not specified")
+                raise UserServiceException("zone not specified")
             zone_conf: padsi.config.Zone = self._gconf.get_zone(zone_name)
             vm_conf: padsi.config.VirtualMachine | None = zone_conf.get_virtual_machine(vm_id)
             if vm_conf is None:
-                raise Exception(f"No declared virtual machine with '{vm_id}' ID (for the '{padsi.config.VMUsage.RUN.value}' usage) in the '{zone_name}' zone")
+                raise UserServiceException(f"No declared virtual machine with '{vm_id}' ID (for the '{padsi.config.VMUsage.RUN.value}' usage) in the '{zone_name}' zone")
 
             # check user has the permission
             vm_conf.check_user_allowed(self._uid)
 
             # compute VMFiles for the specified VM configuration
             if not os.path.exists(vm_conf.directory):
-                raise Exception("Could not find any base version to use")
+                raise UserServiceException("Could not find any base version to use")
             loop = asyncio.get_event_loop()
             vm_files = await loop.run_in_executor(None, padsi.run.VMFiles, vm_conf.directory, self._uid, self._gid)
 
@@ -1308,7 +1311,7 @@ class PadsiUserService:
                         # nickname not used!
                         break
             elif not padsi.run.VMVersion.nickname_is_valid(nickname):
-                raise Exception(f"Invalid nickname '{nickname}'")
+                raise UserServiceException(f"Invalid nickname '{nickname}'")
             else:
                 nname = nickname
 
@@ -1318,13 +1321,13 @@ class PadsiUserService:
                 f"Starting VM '{vm_id}' with nickname '{nname}' ('{padsi.config.VMUsage.RUN.value}' usage)",
             )
             await self._mark_task_started(task, ensure_unique=True, unique_descr=f"VM {vm_id} '{nname}' is already being started")
-            await vm_proxy.create_vm_dirs(self._call_system_service, vm_id)
+            await vm_proxy.create_vm_dirs(self._call_system_service, vm_id, padsi.config.VMUsage.RUN)
 
             # comply with network requirements
             if zone_conf.network_spec is not None:
                 (compat, failed)=vm_conf.is_network_compatible(zone_conf.network_spec, zone_conf.web_proxies)
                 if not compat:
-                    raise Exception(f"VM network requirements '{failed}' not compatible with zone's networking restrictions")
+                    raise UserServiceException(f"VM network requirements '{failed}' not compatible with zone's networking restrictions")
             await self._prepare_zone_dirs(zone_conf, vm_conf=vm_conf)
 
             # determine actual VM version to use
@@ -1343,14 +1346,14 @@ class PadsiUserService:
                     if vnum is not None:
                         vm_version = vm_files.get_snapshot_version(vnum, zone_name)
                         if vm_version is None:
-                            raise Exception
+                            raise UserServiceException
                         # check we have a correct VM version
                         if (userid is not None and userid != self._uid) or staged \
                             or vm_version.version_type != padsi.run.VMVersionType.SNAP:
-                            raise Exception()
+                            raise UserServiceException()
                         if pnname is not None:
                             nname = pnname
-                except Exception:
+                except Exception: # noqa: BLE001
                     syslog.syslog(syslog.LOG_WARNING, f"Can't use VM version '{vm_version}'")
 
             if vm_version is not None:
@@ -1377,7 +1380,7 @@ class PadsiUserService:
                 if user_vmversion is None or vm_files.last_user_version_is_obsolete(zone_name):
                     # instanciate a USER VM version
                     if vm_files.last_base_version is None:
-                        raise Exception("No BASE VM version available")
+                        raise UserServiceException("No BASE VM version available")
                     if user_vmversion is not None and user_vmversion.state==VMState.DISCARDED:
                         # get rid of that VM version
                         if _debug:
@@ -1421,10 +1424,10 @@ class PadsiUserService:
                             "task": task.descr,
                         }
                     )
-        except Exception as e:
+        except Exception:
             if task is not None:
                 await self._mark_task_finished(task)
-            raise e
+            raise
 
     async def _vm_install_or_update(self, usage: padsi.config.VMUsage, vm_id: str, zone_name: str|None,
         boot_iso: str | None, extra_isos: list[str] | None, iso_file: str | None):
@@ -1436,11 +1439,11 @@ class PadsiUserService:
                 zone_conf = self._gconf.get_zone(zone_name)
             vm_conf: padsi.config.VirtualMachine | None = self._gconf.get_vm(usage, vm_id)
             if vm_conf is None:
-                raise Exception(f"No declared virtual machine with '{vm_id}' ID (for the '{usage.value}' usage)")
+                raise UserServiceException(f"No declared virtual machine with '{vm_id}' ID (for the '{usage.value}' usage)")
 
             # check user has the permission
             vm_conf.check_user_allowed(self._uid)
-            await vm_proxy.create_vm_dirs(self._call_system_service, vm_id)
+            await vm_proxy.create_vm_dirs(self._call_system_service, vm_id, usage)
 
             # compute VMFiles for the specified VM configuration
             loop = asyncio.get_event_loop()
@@ -1458,12 +1461,12 @@ class PadsiUserService:
                 if zone_conf.network_spec is not None:
                     (compat, failed)=vm_conf.is_network_compatible(zone_conf.network_spec, zone_conf.web_proxies)
                     if not compat:
-                        raise Exception(f"VM network requirements '{failed}' not compatible with zone's networking restrictions")
+                        raise UserServiceException(f"VM network requirements '{failed}' not compatible with zone's networking restrictions")
                     else:
                         syslog.syslog(syslog.LOG_ERR, f"VM '{vm_id}' ('{usage.value}') will use zone '{zone_name}' networking as specified")
             else:
-                for zone_name in self._gconf.get_zones_names():
-                    z = self._gconf.get_zone(zone_name)
+                for zn in self._gconf.get_zones_names():
+                    z = self._gconf.get_zone(zn)
                     if z.network_spec is not None:
                         (compat, failed)=vm_conf.is_network_compatible(z.network_spec, z.web_proxies)
                         if compat:
@@ -1471,7 +1474,7 @@ class PadsiUserService:
                             syslog.syslog(syslog.LOG_INFO, f"VM '{vm_id}' ('{usage.value}') will use zone '{zone_name}' networking as compatible",)
                             break
                 if zone_conf is None:
-                    raise Exception("Could not identify a zone which networking restrictions are compatible with VM network requirements for installation")
+                    raise UserServiceException("Could not identify a zone which networking restrictions are compatible with VM network requirements for installation")
             zone_name=zone_conf.name
             await self._prepare_zone_dirs(zone_conf, vm_conf=vm_conf)
 
@@ -1494,7 +1497,7 @@ class PadsiUserService:
                 # we are updating a base VM
                 base_mvversion = vm_files.last_base_version
                 if base_mvversion is None:
-                    raise Exception("VM has no base version to update")
+                    raise UserServiceException("VM has no base version to update")
                 vm_version = await loop.run_in_executor(None, vm_files.stage_existing_version, base_mvversion,
                     self._uid, self._gid)
 
@@ -1518,10 +1521,10 @@ class PadsiUserService:
                     "task": task.descr,
                 }
             )
-        except Exception as e:
+        except Exception:
             if task is not None:
                 await self._mark_task_finished(task)
-            raise e
+            raise
 
     async def _api_vm_post(self, request: web.Request):
         """Start a new VM in the specified zone, for any usage (install, update or run),
@@ -1537,7 +1540,7 @@ class PadsiUserService:
             message = data.get("message")
             zone_name = data.get("zone")
             if zone_name is not None and not isinstance(zone_name, str):
-                raise Exception(f"Invalid zone name '{zone_name}'")
+                raise UserServiceException(f"Invalid zone name '{zone_name}'")
             action=data.get("action")
             match action:
                 case "import" | "load":
@@ -1548,13 +1551,13 @@ class PadsiUserService:
                 case _:
                     usage = padsi.config.VMUsage(action)
                     if usage == padsi.config.VMUsage.RUN and not zone_name:
-                        raise Exception("Missing or empty zone name")
+                        raise UserServiceException("Missing or empty zone name")
                     if nickname is not None and usage != padsi.config.VMUsage.RUN:
-                        raise Exception(f"VM usage {usage.value} does not allow specifying a nickname")
+                        raise UserServiceException(f"VM usage {usage.value} does not allow specifying a nickname")
 
             boot_iso = data.get("boot-iso")
             if boot_iso is not None and not isinstance(boot_iso, str):
-                raise Exception("Invalid boot ISO file name")
+                raise UserServiceException("Invalid boot ISO file name")
             extra_isos = data.get("extra-isos")
             if extra_isos is not None:
                 if isinstance(extra_isos, list):
@@ -1564,14 +1567,14 @@ class PadsiUserService:
                             or not isinstance(path, str)
                             or not padsi.misc.is_iso_image(path)
                         ):
-                            raise Exception(f"Invalid path {path} extra ISOs argument")
+                            raise UserServiceException(f"Invalid path {path} extra ISOs argument")
                 else:
-                    raise Exception("Invalid extra ISOs argument")
+                    raise UserServiceException("Invalid extra ISOs argument")
             iso_file = data.get("extra-iso-file")
             if iso_file is not None and (not isinstance(iso_file, str) or not padsi.misc.is_iso_image(iso_file)):
-                raise Exception("Invalid extra ISO file argument")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+                raise UserServiceException("Invalid extra ISO file argument")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         # do the job
         try:
@@ -1588,14 +1591,14 @@ class PadsiUserService:
                         assert(usage is not None)
                         return await self._vm_install_or_update(usage, vm_id, zone_name, boot_iso, extra_isos, iso_file)
                     else:
-                        raise Exception(f"Unnown '{usage}' VM usage")
-        except Exception as e:
+                        raise UserServiceException(f"Unnown '{usage}' VM usage")
+        except Exception as e: # noqa: BLE001
             if usage is None:
                 if data.get("action") == "import":
-                    return web.Response(text=f"Could not import the VM: {str(e)}", status=400)
+                    return web.Response(text=f"Could not import the VM: {e}", status=400)
                 else:
-                    return web.Response(text=f"Could not load the VM: {str(e)}", status=400)
-            return web.Response(text=f"Could not start the VM: {str(e)}", status=400)
+                    return web.Response(text=f"Could not load the VM: {e}", status=400)
+            return web.Response(text=f"Could not start the VM: {e}", status=400)
 
     async def _api_vm_display(self, request: web.Request):
         """Display the VM viewer for a running VM"""
@@ -1605,21 +1608,21 @@ class PadsiUserService:
             nickname = data.get("nickname")
             zone_name = data.get("zone")
             if zone_name is not None and not isinstance(zone_name, str):
-                raise Exception("Invalid zone name")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+                raise UserServiceException("Invalid zone name")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             # determine VM and zone configs to use
             if not zone_name:
-                raise Exception("zone not specified")
+                raise UserServiceException("zone not specified")
             if not nickname:
-                raise Exception("No VM name specified")
+                raise UserServiceException("No VM name specified")
 
             zone_conf: padsi.config.Zone = self._gconf.get_zone(zone_name)
             vm_conf: padsi.config.VirtualMachine | None = zone_conf.get_virtual_machine(vm_id)
             if vm_conf is None:
-                raise Exception(f"No declared virtual machine with '{vm_id}' ID (for the '{padsi.config.VMUsage.RUN.value}' usage) in the '{zone_name}' zone")
+                raise UserServiceException(f"No declared virtual machine with '{vm_id}' ID (for the '{padsi.config.VMUsage.RUN.value}' usage) in the '{zone_name}' zone")
 
             # check user has the permission
             vm_conf.check_user_allowed(self._uid)
@@ -1632,19 +1635,19 @@ class PadsiUserService:
             vm_version: padsi.run.VMVersion | None = vm_files.get_named_snapshot_version(zone_name, nickname)
             if vm_version is None:
                 try:
-                    (userid, vtype, vnum, staged, nickname) = padsi.run.parse_vm_version(nickname)
+                    (_userid, _vtype, vnum, _staged, nickname) = padsi.run.parse_vm_version(nickname)
                     if vnum is not None:
                         vm_version = vm_files.get_snapshot_version(vnum, zone_name)
-                except Exception:
-                    raise Exception(f"Invalid nickname '{nickname}'")
+                except Exception: # noqa: BLE001
+                    raise UserServiceException(f"Invalid nickname '{nickname}'")
 
             if vm_version is not None and self._is_vmversion_used(vm_version):
                 # show the VM viewer
                 self._vm_show_viewer(zone_name, vm_version)
                 return json_response(None)
-            raise Exception("VM does not exist or is not running")
-        except Exception as e:
-            return web.Response(text=f"Could not display the VM: ({str(e)})", status=400)
+            raise UserServiceException("VM does not exist or is not running")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Could not display the VM: ({e})", status=400)
 
     async def _vm_run_raw(self, task: Task, zone_conf: padsi.config.Zone, vm_conf: padsi.config.VirtualMachine,
         vm_version: padsi.run.VMVersion, boot_iso: str | None = None, extra_isos: list[str] | None = None, iso_file: str | None = None):
@@ -1654,8 +1657,8 @@ class PadsiUserService:
                 boot_iso=boot_iso, extra_isos=extra_isos, iso_file=iso_file)
             if izone.api is not None:
                 izone.api.auto_stop = True
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Failed to start VM with task {task.id}: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Failed to start VM with task {task.id}: {e}")
         finally:
             await self._mark_task_finished(task)
 
@@ -1671,23 +1674,23 @@ class PadsiUserService:
                 syslog.syslog(syslog.LOG_INFO, f"Starting USER VM customization ({vm_version})")
                 izone = await self._start_vm_zone(zone_conf, vm_conf, vm_version)
                 if izone.api is None:
-                    raise Exception("CODEBUG: izone.api should not be None")
+                    raise UserServiceException("CODEBUG: izone.api should not be None")
                 izone.api.auto_stop = True
                 await asyncio.sleep(5)
                 loop = asyncio.get_running_loop()
                 while True:
                     await asyncio.sleep(0.5)
                     if izone.bubble is None:
-                        raise Exception("CODEBUG: izone.bubble should not be None")
+                        raise UserServiceException("CODEBUG: izone.bubble should not be None")
                     state = await loop.run_in_executor(None, izone.bubble.get_state)
                     if state != nsbubble.BubbleState.RUNNING:
                         syslog.syslog(syslog.LOG_INFO, f"Finished USER VM customization with state {vm_version.state}")
                         if vm_version.state != padsi.run.VMState.STOPPED:
-                            raise Exception("USER VM customization has been aborted")
+                            raise UserServiceException("USER VM customization has been aborted")
                         break
-        except Exception as e:
+        except Exception as e: # noqa: BLE001
             cust_failed = True
-            syslog.syslog(syslog.LOG_ERR, f"Failed to customize VM with task {task.id}: {str(e)}")
+            syslog.syslog(syslog.LOG_ERR, f"Failed to customize VM with task {task.id}: {e}")
         finally:
             await self._mark_task_finished(cust_task)
 
@@ -1703,8 +1706,8 @@ class PadsiUserService:
         try:
             return await vm_proxy.vm_publish(self._gconf, self._call_system_service,
                 vm_id, userid, message)
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Task {task.id} failed: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Task {task.id} failed: {e}")
         finally:
             await self._mark_task_finished(task)
 
@@ -1714,8 +1717,8 @@ class PadsiUserService:
         try:
             await vm_proxy.vm_merge(self._gconf, self._call_system_service, vm_id, zone_name, userid,
                 vtype, vnum, message)
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Task {task.id} failed: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Task {task.id} failed: {e}")
         finally:
             await self._mark_task_finished(task)
 
@@ -1728,7 +1731,7 @@ class PadsiUserService:
             data = await request.json()
             action = data.get("action")
             if action not in ("publish", "merge"):
-                raise Exception(f"Unknown action '{action}'")
+                raise UserServiceException(f"Unknown action '{action}'")
             merge = action == "merge"
             zone_name = data.get("zone")
             message = data.get("message")
@@ -1738,21 +1741,21 @@ class PadsiUserService:
                 else (None, None, None, None, None)
             if userid is None:
                 userid = self._uid
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         # check request already being handled
         try:
             usermsg = f"for user {userid}"
             if merge:
                 if vtype is None:
-                    raise Exception("Could not determine VM version type")
+                    raise UserServiceException("Could not determine VM version type")
                 task = Task(f"vm_modify:{vm_id}:{merge}:{userid}",
                     f"Merging VM '{vm_id}' {vtype.value}.{vnum} {usermsg}")
             else:
                 task = Task(f"vm_modify:{vm_id}:{merge}:{userid}",
                     f"Publishing VM '{vm_id}' {usermsg}")
-        except Exception as e:
+        except Exception as e: # noqa: BLE001
             return web.Response(text=str(e), status=400)
 
         # do the job
@@ -1766,7 +1769,7 @@ class PadsiUserService:
             else:
                 task.asyncio_task = asyncio.create_task(self._vm_publish(task, vm_id, userid, message))
             return json_response({"task": task.descr})
-        except Exception as e:
+        except Exception as e: # noqa: BLE001
             await self._mark_task_finished(task)
             return web.Response(text=str(e), status=400)
 
@@ -1777,14 +1780,14 @@ class PadsiUserService:
             data = await request.json()
             action = data.get("action")
             if action not in ("discard", "clean"):
-                raise Exception(f"Unknown action '{action}'")
+                raise UserServiceException(f"Unknown action '{action}'")
             cleanup = action == "clean"
             vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
             force = data.get("force", False)
             vm_version=data.get("vm-version")
             zone_name = data.get("zone")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         # do the job
         if cleanup:
@@ -1792,14 +1795,14 @@ class PadsiUserService:
                 # discard all the obsolete (unused anymore) VM versions
                 res = await vm_proxy.vm_cleanup(self._gconf, self._call_system_service, vm_id, zone_name)
                 return json_response(res)
-            except Exception as e:
-                return web.Response(text=f"Could not clean VM: ({str(e)})", status=400)
+            except Exception as e: # noqa: BLE001
+                return web.Response(text=f"Could not clean VM: ({e})", status=400)
         else:
             try:
                 res= await vm_proxy.vm_discard(self._gconf, self._call_system_service, vm_id, vm_version, zone_name, force)
                 return json_response(res)
-            except Exception as e:
-                return web.Response(text=f"Could not discard VM version ({str(e)})", status=400)
+            except Exception as e: # noqa: BLE001
+                return web.Response(text=f"Could not discard VM version ({e})", status=400)
 
     async def _api_launcher_post(self, request: web.Request):
         # analyse arguments
@@ -1809,9 +1812,9 @@ class PadsiUserService:
             nickname = data.get("nickname")
             zone_name = data.get("zone")
             if zone_name is not None and not isinstance(zone_name, str):
-                raise Exception("Invalid zone name")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+                raise UserServiceException("Invalid zone name")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         # do the job
         try:
@@ -1826,12 +1829,12 @@ class PadsiUserService:
                     }
                 )
             except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Could not create VM launcher: {str(e)}")
-                raise e
+                syslog.syslog(syslog.LOG_ERR, f"Could not create VM launcher: {e}")
+                raise
             return json_response(None)
 
-        except Exception as e:
-            return web.Response(text=f"Could not create VM launcher: ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Could not create VM launcher: ({e})", status=400)
 
     async def _api_launcher_delete(self, request: web.Request):
         # analyse arguments
@@ -1841,9 +1844,9 @@ class PadsiUserService:
             nickname = data.get("nickname")
             zone_name = data.get("zone")
             if zone_name is not None and not isinstance(zone_name, str):
-                raise Exception("Invalid zone name")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+                raise UserServiceException("Invalid zone name")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         # do the job
         try:
@@ -1858,12 +1861,12 @@ class PadsiUserService:
                     }
                 )
             except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Could not delete VM launcher: {str(e)}")
-                raise e
+                syslog.syslog(syslog.LOG_ERR, f"Could not delete VM launcher: {e}")
+                raise
             return json_response(None)
 
-        except Exception as e:
-            return web.Response(text=f"Could not delete VM launcher: ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Could not delete VM launcher: ({e})", status=400)
 
     #
     # Web redirection
@@ -1875,15 +1878,15 @@ class PadsiUserService:
         try:
             host = request.rel_url.query.get("host")
             if not isinstance(host, str):
-                raise Exception(f"Invalid host specification '{host}'")
+                raise UserServiceException(f"Invalid host specification '{host}'")
             port = int(request.rel_url.query.get("port"))  # pyright: ignore
             if port <= 0 or port > 65355:
-                raise Exception(f"Invalid port number '{port}'")
+                raise UserServiceException(f"Invalid port number '{port}'")
             pid = int(request.rel_url.query.get("pid"))  # pyright: ignore
             if pid <= 0:
-                raise Exception(f"Invalid PID number '{pid}'")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+                raise UserServiceException(f"Invalid PID number '{pid}'")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             # get the zone in which the process is
@@ -1891,14 +1894,14 @@ class PadsiUserService:
             async with self._lock:
                 for zdata in self._zones.values():
                     try:
-                        if zdata.infra is not None and zdata.infra.bubble is not None:
-                            if zdata.infra.bubble.is_host_pid_beneath_bubble(pid):
+                        if zdata.infra is not None and zdata.infra.bubble is not None and \
+                            zdata.infra.bubble.is_host_pid_beneath_bubble(pid):
                                 zone_conf = zdata.infra.zone_conf
                                 if _debug:
                                     syslog.syslog(syslog.LOG_DEBUG, f"Zone for PID {pid} is {zone_conf.name}")
                                 break
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_WARNING, f"Failed to check if PID {pid} is in a bubble: {str(e)}")
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_WARNING, f"Failed to check if PID {pid} is in a bubble: {e}")
 
             # get the list of zones to which a web redirection can be done
             allowed_zones: list[str] | None = None
@@ -1917,7 +1920,7 @@ class PadsiUserService:
                 for zone_name in allowed_zones:
                     try:
                         zone_conf = self._gconf.get_zone(zone_name)
-                    except Exception:
+                    except Exception: # noqa: BLE001
                         syslog.syslog(syslog.LOG_WARNING, f"Zone '{zone_name}' is listed as possible Web redirections zone but does not exist")
                         zone_conf = None
 
@@ -1952,26 +1955,26 @@ class PadsiUserService:
                                             break
 
             return json_response({"zones": res})
-        except Exception as e:
-            return web.Response(text=f"Error: ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Error: ({e})", status=400)
 
     async def _api_web_redir_post(self, request: web.Request):
         try:
             data = await request.json()
             zone_name = data.get("zone")
             if not zone_name or not isinstance(zone_name, str):
-                raise Exception(f"Invalid zone name '{zone_name}'")
+                raise UserServiceException(f"Invalid zone name '{zone_name}'")
             zone_conf = self._gconf.get_zone(zone_name)
             url = data.get("url")
             if url is not None and not isinstance(url, str):
-                raise Exception(f"Invalid URL '{url}'")
+                raise UserServiceException(f"Invalid URL '{url}'")
             browser = data.get("browser")
             if browser is not None and not isinstance(browser, str):
-                raise Exception(f"Invalid browser '{browser}'")
+                raise UserServiceException(f"Invalid browser '{browser}'")
             if browser not in padsi.config.ProgramPoliciesFactory().supported_browsers:
-                raise Exception(f"Unsupported browser '{browser}'")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+                raise UserServiceException(f"Unsupported browser '{browser}'")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             izone = await self._get_zone_apps(zone_conf)
@@ -1981,8 +1984,8 @@ class PadsiUserService:
             pid = await loop.run_in_executor(None, izone.api.start_process, args) # pyright: ignore
             self._set_zone_autostop(izone)
             return json_response({"pid": pid})
-        except Exception as e:
-            return web.Response(text=f"Could not create VM launcher: ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Could not create VM launcher: ({e})", status=400)
 
     #
     # USB devices access
@@ -1998,12 +2001,12 @@ class PadsiUserService:
         try:
             devices_ids = request.rel_url.query.get("devices")
             if not isinstance(devices_ids, str):
-                raise Exception(f"Invalid USB devices IDs list '{devices_ids}'")
+                raise UserServiceException(f"Invalid USB devices IDs list '{devices_ids}'")
             if not devices_ids:  # empty list
                 return json_response({})
             devices_ids = devices_ids.split(",")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             # ask the system service
@@ -2012,7 +2015,7 @@ class PadsiUserService:
                     {"cmde": "usb-device-state", "devices": devices_ids}
                 )
                 if not isinstance(data, dict):
-                    raise Exception("CODEBUG: 'usb-device-state' did not return a dict")
+                    raise UserServiceException("CODEBUG: 'usb-device-state' did not return a dict")
                 # data will be like:
                 # {
                 #     "003:012": {
@@ -2036,19 +2039,19 @@ class PadsiUserService:
                     }
                 return json_response(resdata)
             except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Could not get USB devices' status for '{devices_ids}': {str(e)}")
-                raise e
-        except Exception as e:
-            return web.Response(text=f"Could not get USB devices' status for '{devices_ids}': ({str(e)})", status=400)
+                syslog.syslog(syslog.LOG_ERR, f"Could not get USB devices' status for '{devices_ids}': {e}")
+                raise
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Could not get USB devices' status for '{devices_ids}': ({e})", status=400)
 
     async def _api_usb_device_post(self, request: web.Request):
         try:
             data = await request.json()
             device_id = data.get("device-id")
             if not isinstance(device_id, str):
-                raise Exception(f"USB device ID '{device_id}'")
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+                raise UserServiceException(f"USB device ID '{device_id}'")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             # ask the system service
@@ -2058,10 +2061,10 @@ class PadsiUserService:
                 )
                 return json_response(data)
             except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Could not reserve USB device '{device_id}': {str(e)}")
-                raise e
-        except Exception as e:
-            return web.Response(text=f"Could not reserve USB device '{device_id}': ({str(e)})", status=400)
+                syslog.syslog(syslog.LOG_ERR, f"Could not reserve USB device '{device_id}': {e}")
+                raise
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Could not reserve USB device '{device_id}': ({e})", status=400)
 
 
 async def monitor_process(proc: subprocess.Popen, context: str):
@@ -2091,11 +2094,11 @@ async def main(user_session_dir: str, config_dir: str):
         try:
             script_dir = os.path.realpath(os.path.dirname(__file__))
             script_file = os.path.join(script_dir, "monitor-desktop-entries")
-            proc = subprocess.Popen([script_file, config_dir, "USER"])
+            proc = subprocess.Popen([script_file, config_dir, "USER"]) # noqa: ASYNC220
             task = asyncio.create_task(monitor_process(proc, "Desktop entries monitor"))
             extra["DE"] = [proc, task]
         except FileNotFoundError:
-            raise Exception(f"Desktop entries monitoring program '{script_file}' is missing")
+            raise UserServiceException(f"Desktop entries monitoring program '{script_file}' is missing")
 
         # start the Web redirections notifications server if necessary
         notif_server_required = False
@@ -2114,13 +2117,13 @@ async def main(user_session_dir: str, config_dir: str):
                     "web_infra",
                 )
                 script_file = os.path.join(prog_dir, "notif-server.py")
-                proc = subprocess.Popen([script_file, user_session_dir, config_dir])
+                proc = subprocess.Popen([script_file, user_session_dir, config_dir]) # noqa: ASYNC220
                 task = asyncio.create_task(
                     monitor_process(proc, "Notifications server")
                 )
                 extra["NOTIF"] = [proc, task]
             except FileNotFoundError:
-                raise Exception(f"Notifications server program '{script_file}' is missing")
+                raise UserServiceException(f"Notifications server program '{script_file}' is missing")
 
         # start the netlink shim if necessary
         netlink_shim_required = False
@@ -2135,16 +2138,16 @@ async def main(user_session_dir: str, config_dir: str):
         if netlink_shim_required:
             try:
                 script_file = os.path.join(script_dir, "netlink-proxy")
-                proc = subprocess.Popen([script_file, user_session_dir])
+                proc = subprocess.Popen([script_file, user_session_dir]) # noqa: ASYNC220
                 task = asyncio.create_task(monitor_process(proc, "Netlink proxy"))
                 extra["NETLINK"] = [proc, task]
             except FileNotFoundError:
-                raise Exception(f"Netlink proxy program '{script_file}' is missing")
+                raise UserServiceException(f"Netlink proxy program '{script_file}' is missing")
 
         # run
         await userservice.run()
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {e}")
     finally:
         for proc_task in extra.values():
             (proc, task) = proc_task
@@ -2156,7 +2159,7 @@ async def main(user_session_dir: str, config_dir: str):
 if __name__ == "__main__":
     try:
         if len(sys.argv) != 3:
-            raise Exception(f"Usage: {sys.argv[0]} <user session directory> <configuration directory>")
+            raise UserServiceException(f"Usage: {sys.argv[0]} <user session directory> <configuration directory>")
 
         # drop privileges if necessary
         if os.getuid() != os.geteuid():
@@ -2170,7 +2173,7 @@ if __name__ == "__main__":
         syslog.syslog(syslog.LOG_INFO, f"PID: {os.getpid()}, UID {os.getuid()} in {user_session_dir}, Using configuration in '{config_dir}'")
 
         asyncio.run(main(user_session_dir, config_dir))
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Error: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Error: {e}")
         print(str(e), file=sys.stderr)
         sys.exit(1)

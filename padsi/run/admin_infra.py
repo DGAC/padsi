@@ -33,9 +33,8 @@ import padsi.config
 import padsi.network
 from padsi.config.trafficshaper import TrafficShaper
 
-from .components import dns, fw_logger
+from .components import dns, fw_logger, web_infra
 from .components import static_firewall as stfw
-from .components import web_infra
 from .zone_foundations import ZoneFoundations
 
 
@@ -74,9 +73,9 @@ class AdminInfra(ZoneFoundations):
 
         self._br_name = "br0"
         a = padsi.config.admin_br_network[1]
-        self._br_ip = ipaddress.IPv4Interface(f"{str(a)}/{padsi.config.admin_br_network.prefixlen}") # IP address of the bridge
+        self._br_ip = ipaddress.IPv4Interface(f"{a}/{padsi.config.admin_br_network.prefixlen}") # IP address of the bridge
         a= padsi.config.admin_br_network[2]
-        self._admin_ip = ipaddress.IPv4Interface(f"{str(a)}/{padsi.config.admin_br_network.prefixlen}") # IP address of the veth in the admin NS
+        self._admin_ip = ipaddress.IPv4Interface(f"{a}/{padsi.config.admin_br_network.prefixlen}") # IP address of the veth in the admin NS
 
         self._ns_name=AdminInfra.get_admin_ns_name(admin_conf)
 
@@ -187,7 +186,7 @@ class AdminInfra(ZoneFoundations):
         by programs running in the zone, points to the zone's web proxy component
         """
         if len(self.admin_conf.web_proxies)>0:
-            value = f"http://{str(self._br_ip.ip)}:3128"
+            value = f"http://{self._br_ip.ip}:3128"
             return {"http_proxy": value, "https_proxy": value}
         return None
 

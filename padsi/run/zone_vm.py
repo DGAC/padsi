@@ -37,14 +37,11 @@ import time
 import firewall
 import nsbubble
 import padsi.config
-from padsi.misc import (compute_user_xdg_subdirectories,
-                        expand_variables_in_string)
+from padsi.misc import compute_user_xdg_subdirectories, expand_variables_in_string
 
-from .components import dhcp, dns, fw_logger
+from .components import dhcp, dns, fw_logger, usbredir, virtiofs, web_infra
 from .components import static_firewall as stfw
-from .components import usbredir, virtiofs
 from .components import vm_monitor as monitor
-from .components import web_infra
 from .network_infra import external_zone_iface
 from .vm.mgmtfiles import VMManagementFiles
 from .vm.version import VMState, VMVersion
@@ -118,6 +115,9 @@ def _create_proxy(zone_conf:padsi.config.Zone, vm_conf: padsi.config.VirtualMach
     resolv_rules.append(padsi.config.ResolvRule("allow", None, firewall.Endpoint.from_repr("*")))
 
     return padsi.config.Proxy(next_hop, fw_rules, resolv_rules, "Proxy for zone's proxy")
+
+class ZoneVMException(Exception):
+    pass
 
 class ZoneVM(ZoneFoundations):
     """Object to set up and configure a zone in which a (single) VM will run
@@ -199,7 +199,7 @@ class ZoneVM(ZoneFoundations):
                 rules=[]
                 for name in ("wpad.", "proxy."):
                     rule=padsi.config.ResolvRule(action="allow", descr=f"Allow VM to {name}",
-                        endpoint=firewall.Endpoint.from_repr(name), resolv=[f"A/3600/{str(padsi.config.tap_ip)}"])
+                        endpoint=firewall.Endpoint.from_repr(name), resolv=[f"A/3600/{padsi.config.tap_ip}"])
                     rules.append(rule)
                 comp.add_extra_rules("web-proxy", rules)
 
@@ -224,14 +224,14 @@ class ZoneVM(ZoneFoundations):
             fw_rules.append(padsi.config.FWRule(
                 "allow",
                 "Web proxy access",
-                firewall.Endpoint.from_repr(f"{str(self._z_infra.bridge_ip.ip)} ^ tcp ^ 3128"),
+                firewall.Endpoint.from_repr(f"{self._z_infra.bridge_ip.ip} ^ tcp ^ 3128"),
                 padsi.config.FWRuleChain.OUTPUT,
             ))
             if self.zone_conf.get_option(padsi.config.ZoneOptionType.INTER_VM_NET).enabled:
                 fw_rules.append(padsi.config.FWRule(
                     "allow",
                     "Inter VM communications",
-                    firewall.Endpoint.from_repr(f"{str(self._z_infra.bridge_ip.network)}"),
+                    firewall.Endpoint.from_repr(f"{self._z_infra.bridge_ip.network}"),
                     padsi.config.FWRuleChain.FORWARD,
                 ))
             if _debug:
@@ -351,7 +351,7 @@ class ZoneVM(ZoneFoundations):
         script_dir = os.path.dirname(os.path.realpath(__file__))
         shim_lib = os.path.realpath(os.path.join(script_dir, "..", "..", "bin", "netlink-shim.so"))
         if not os.path.isfile(shim_lib):
-            raise Exception(f"Netlink shim library '{shim_lib}' is missing")
+            raise ZoneVMException(f"Netlink shim library '{shim_lib}' is missing")
         preload_file = os.path.join(self._run_dir, "netlink.preload")
         with open(preload_file, "wt") as fd:
             fd.write(f"{shim_lib}\n")
@@ -382,8 +382,8 @@ class ZoneVM(ZoneFoundations):
                 self._vm_v.set_state(VMState.CREATED, "Initial creation")
 
         except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: starting zone failed: {str(e)}")
-            raise e
+            syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: starting zone failed: {e}")
+            raise
 
     def _grab_ssh_pubkeys(self) -> bool:
         """
@@ -508,7 +508,7 @@ class ZoneVM(ZoneFoundations):
     def start_vm(self):
         """Actually start the VM"""
         if self.bubble is None or self.api is None:
-            raise Exception("VM's zone has not yet been started")
+            raise ZoneVMException("VM's zone has not yet been started")
         try:
             assert(isinstance(self.bubble, nsbubble.BubbleVM))
             vmbubble:nsbubble.BubbleVM=self.bubble
@@ -557,12 +557,12 @@ class ZoneVM(ZoneFoundations):
                 viewer_pid=ui_pid,
             )
         except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: starting zone failed: {str(e)}")
+            syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: starting zone failed: {e}")
             if self._vm_viewer_host_pid is not None:
                 # kill the now useless VM viewer
                 os.kill(self._vm_viewer_host_pid, signal.SIGTERM)
                 self._vm_viewer_host_pid = None
-            raise e
+            raise
 
     @property
     def vm_conf(self) -> padsi.config.VirtualMachine:
@@ -616,7 +616,7 @@ def zone_vm_setup(net_bubble_netns: str, net_bubble_init_pid: int, log_denied_sp
         # allow programs in the zone's bubble to communicate with the VM
         fw_zone_ns.flow_set_policy(
             firewall.FlowType.FILTER_OUTPUT,
-            firewall.NetFlow.from_repr(f"*>>{str(padsi.config.vm_ip)}"),
+            firewall.NetFlow.from_repr(f"*>>{padsi.config.vm_ip}"),
             firewall.Policy.ALLOW,
         )
 

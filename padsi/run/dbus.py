@@ -27,20 +27,23 @@ import nsbubble
 import padsi.config
 
 
+class DBusException(Exception):
+    pass
+
 def _get_host_dbus_socket_path() -> str:
     if "INVOCATION_ID" in os.environ:
         # we are being run by systemd => get the information from the gnome-shell itself:
         # os.geteiud() -> /run/user/<uid> -> look for the DBus socket
         path=os.path.join("/run", "user", str(os.geteuid()), "bus")
         if not os.path.exists(path):
-            raise Exception(f"Expected DBus server socket '{path}' does not exist")
+            raise DBusException(f"Expected DBus server socket '{path}' does not exist")
     else:
         dbus_env=os.environ.get("DBUS_SESSION_BUS_ADDRESS")
         if not dbus_env: # will be like "unix:path=/run/user/1000/bus"
-            raise Exception(f"The DBUS_SESSION_BUS_ADDRESS environment variable is not defined, env:{os.environ}")
+            raise DBusException(f"The DBUS_SESSION_BUS_ADDRESS environment variable is not defined, env:{os.environ}")
         (_, path)=dbus_env.split("=")
         if not os.path.exists(path):
-            raise Exception(f"DBus socket '{path}' does not exist")
+            raise DBusException(f"DBus socket '{path}' does not exist")
     return path
 
 class ZoneDBusRouter:
@@ -63,7 +66,7 @@ class ZoneDBusRouter:
 
         self._dbus_router_path=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))), "bin", "dbus-router")
         if not os.path.isfile(self._dbus_router_path):
-            raise Exception(f"DBus router {self._dbus_router_path} is missing")
+            raise DBusException(f"DBus router {self._dbus_router_path} is missing")
 
         znid=str(uuid.uuid4()) # to differentiate a zone's wayland proxy from another for the same user
         self._run_dir=f"{run_dir}/dbus-router-zone-{znid}"
@@ -172,8 +175,8 @@ class ZoneDBusRouter:
                 pass
             if st is not None:
                 # process has stopped!
-                raise Exception(f"DBus router for zone {self._zone_config.name} has stopped (status {st})")
+                raise DBusException(f"DBus router for zone {self._zone_config.name} has stopped (status {st})")
             if os.path.exists(self.socket):
                 self._dbus_router_host_pid=self._bubble.map_bubble_pid_to_host(pid)
                 return
-        raise Exception(f"DBus router for zone {self._zone_config.name} did not create its Unix socket file")
+        raise DBusException(f"DBus router for zone {self._zone_config.name} did not create its Unix socket file")

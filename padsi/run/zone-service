@@ -26,8 +26,13 @@ import socket
 import sys
 import syslog
 
-from aiohttp import (ClientConnectionError, ClientSession, ClientTimeout,
-                     UnixConnector, web)
+from aiohttp import (
+    ClientConnectionError,
+    ClientSession,
+    ClientTimeout,
+    UnixConnector,
+    web,
+)
 from aiohttp.web_response import json_response
 
 import padsi.config
@@ -36,7 +41,10 @@ from padsi.simple_comm import Client, Message
 _debug=False
 _timeout=ClientTimeout(30)
 
-class PadsiZoneService():
+class ZoneServiceException(Exception):
+    pass
+
+class PadsiZoneService:
     """Implementation of the zone service's REST API"""
     def __init__(self, gconf:padsi.config.Configuration, zone_name:str, zone_infra_run_dir:str):
         self._gconf=gconf
@@ -77,9 +85,9 @@ class PadsiZoneService():
         for socket_file in (self._infra_socket_file, self._user_socket_file):
             try:
                 os.unlink(socket_file)
-            except OSError as e:
+            except OSError:
                 if os.path.exists(socket_file):
-                    raise e
+                    raise
 
         # create new socket files
         infra_sock=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -127,8 +135,8 @@ class PadsiZoneService():
                     os.remove(socket_file)
                 except FileNotFoundError:
                     pass
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_WARNING, f"Failed to clean PadsiZoneService's socket_file '{socket_file}': {str(e)}")
+                except Exception as e: # noqa: BLE001 # noqa: BLE001
+                    syslog.syslog(syslog.LOG_WARNING, f"Failed to clean PadsiZoneService's socket_file '{socket_file}': {e}")
 
         if _debug:
             syslog.syslog(syslog.LOG_DEBUG, "PadsiZoneService: finished shutdown")
@@ -146,20 +154,20 @@ class PadsiZoneService():
         """
         if not request.transport or request.transport.get_extra_info("sockname")!=self._infra_socket_file:
             syslog.syslog(syslog.LOG_ERR, f"Invalid request {request} coming from non infra sockat")
-            raise Exception("invalid request")
+            raise ZoneServiceException("invalid request")
 
     def _check_request_from_user(self, request:web.Request):
         """Ensure that the request is coming from the "user socket"
         """
         if not request.transport or request.transport.get_extra_info("sockname")!=self._user_socket_file:
             syslog.syslog(syslog.LOG_ERR, f"Invalid request {request} coming from non user sockat")
-            raise Exception("invalid request")
+            raise ZoneServiceException("invalid request")
 
     async def _api_vms_get(self, request:web.Request):
         try:
             self._check_request_from_user(request)
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001 # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             res:dict[str,str]={}
@@ -168,14 +176,14 @@ class PadsiZoneService():
                 if vm is not None and vm.is_user_allowed(self._uid):
                     res[vmid]=vm.description
             return json_response(res)
-        except Exception as e:
-            return web.Response(text=f"Error: {str(e)}", status=400)
+        except Exception as e: # noqa: BLE001 # noqa: BLE001
+            return web.Response(text=f"Error: {e}", status=400)
 
     async def _api_vm_status(self, request:web.Request):
         try:
             self._check_request_from_user(request)
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001 # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             data={
@@ -188,19 +196,19 @@ class PadsiZoneService():
                     if response.ok:
                         res=await response.json()
                         return json_response(res)
-                    raise Exception(await response.text())
+                    raise ZoneServiceException(await response.text())
             except ClientConnectionError:
-                raise Exception("PADSI user service connection failed")
-        except Exception as e:
-            return web.Response(text=f"Error: {str(e)}", status=400)
+                raise ZoneServiceException("PADSI user service connection failed")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Error: {e}", status=400)
 
     async def _api_vm_post(self, request:web.Request):
         """Forward the request to the PADSI user service
         """
         try:
             self._check_request_from_user(request)
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             data=await request.json()
@@ -210,19 +218,19 @@ class PadsiZoneService():
                     if response.ok:
                         res=await response.json()
                         return json_response(res)
-                    raise Exception(await response.text())
+                    raise ZoneServiceException(await response.text())
             except ClientConnectionError:
-                raise Exception("PADSI user service connection failed")
-        except Exception as e:
-            return web.Response(text=f"Error: {str(e)}", status=400)
+                raise ZoneServiceException("PADSI user service connection failed")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Error: {e}", status=400)
 
     async def _api_vm_delete(self, request:web.Request):
         """Forward the request to the PADSI user service
         """
         try:
             self._check_request_from_user(request)
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             data=await request.json()
@@ -232,19 +240,19 @@ class PadsiZoneService():
                     if response.ok:
                         res=await response.json()
                         return json_response(res)
-                    raise Exception(await response.text())
+                    raise ZoneServiceException(await response.text())
             except ClientConnectionError:
-                raise Exception("PADSI user service connection failed")
-        except Exception as e:
-            return web.Response(text=f"Error: {str(e)}", status=400)
+                raise ZoneServiceException("PADSI user service connection failed")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Error: {e}", status=400)
 
     async def _api_vm_display(self, request:web.Request):
         """Forward the request to the PADSI user service
         """
         try:
             self._check_request_from_user(request)
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             data=await request.json()
@@ -254,19 +262,19 @@ class PadsiZoneService():
                     if response.ok:
                         res=await response.json()
                         return json_response(res)
-                    raise Exception(await response.text())
+                    raise ZoneServiceException(await response.text())
             except ClientConnectionError:
-                raise Exception("PADSI user service connection failed")
-        except Exception as e:
-            return web.Response(text=f"Error: {str(e)}", status=400)
+                raise ZoneServiceException("PADSI user service connection failed")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Error: {e}", status=400)
 
     async def _api_launcher_post(self, request:web.Request):
         """Forward the request to the PADSI user service
         """
         try:
             self._check_request_from_user(request)
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             data=await request.json()
@@ -276,19 +284,19 @@ class PadsiZoneService():
                     if response.ok:
                         res=await response.json()
                         return json_response(res)
-                    raise Exception(await response.text())
+                    raise ZoneServiceException(await response.text())
             except ClientConnectionError:
-                raise Exception("PADSI user service connection failed")
-        except Exception as e:
-            return web.Response(text=f"Error: {str(e)}", status=400)
+                raise ZoneServiceException("PADSI user service connection failed")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Error: {e}", status=400)
 
     async def _api_launcher_delete(self, request:web.Request):
         """Forward the request to the PADSI user service
         """
         try:
             self._check_request_from_user(request)
-        except Exception as e:
-            return web.Response(text=f"Invalid input ({str(e)})", status=400)
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
             data=await request.json()
@@ -298,19 +306,19 @@ class PadsiZoneService():
                     if response.ok:
                         res=await response.json()
                         return json_response(res)
-                    raise Exception(await response.text())
+                    raise ZoneServiceException(await response.text())
             except ClientConnectionError:
-                raise Exception("PADSI user service connection failed")
-        except Exception as e:
-            return web.Response(text=f"Error: {str(e)}", status=400)
+                raise ZoneServiceException("PADSI user service connection failed")
+        except Exception as e: # noqa: BLE001
+            return web.Response(text=f"Error: {e}", status=400)
 
 async def main(config_dir:str, zone_name:str, zone_infra_run_dir:str):
     try:
         gconf=padsi.config.Configuration(config_dir)
         zoneservice=PadsiZoneService(gconf, zone_name, zone_infra_run_dir)
         await zoneservice.run()
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Failed to start: {e}")
 
 if __name__=="__main__":
     def usage():
