@@ -31,10 +31,12 @@ For now, packages building is only supported on the Debian 13 distribution.
   - using the system's NPM installation: `sudo apt install nodejs gettext npm just libglib2.0-bin zip`
   - using a Podman image (the NPM installation will be in the Podman image): `sudo apt install podman`
 - Rust (refer to [Rust's install documentation](https://rust-lang.org/tools/install/)):
-  - `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` 
+  - `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash`
   - follow the installation to set the environment to use the newly installed programs (cargo, etc)
-- eBPF's Rust bpf-linker tool: `cargo install bpf-linker`
-- the 'nightly-x86_64-unknown-linux-gnu' toolchain:
+- eBPF's Rust bpf-linker tool:
+  - install the `cargo binstall` tool (refer to [GitHub page](https://github.com/cargo-bins/cargo-binstall)): `curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash`
+  - install the bpf-linker tool: `cargo binstall bpf-linker`
+- the 'nightly-x86_64-unknown-linux-gnu' toolchain to compile eBPF code:
   - `rustup toolchain install nightly-x86_64-unknown-linux-gnu`
   - `rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu`
 - for the x86_64-pc-windows-gnu rust target (to cross compile the Windows VM agent):
