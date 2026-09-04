@@ -1527,8 +1527,10 @@ class PadsiUserService:
             raise
 
     async def _api_vm_post(self, request: web.Request):
-        """Start a new VM in the specified zone, for any usage (install, update or run),
-        actually always instanciate a new ZoneApps, OR import/load a VM from its HDD and VARS files
+        """Manipulates VMs:
+            - start a new VM in the specified zone, for any usage (install, update or run), actually always instanciate a new ZoneApps
+            - import/load a VM from its HDD and VARS files
+            - create directories for the VM's files location
         """
         # analyse arguments
         try:
@@ -1542,18 +1544,24 @@ class PadsiUserService:
             if zone_name is not None and not isinstance(zone_name, str):
                 raise UserServiceException(f"Invalid zone name '{zone_name}'")
             action=data.get("action")
+            if action is None:
+                raise UserServiceException("Invalid input: no action specified")
             match action:
+                case "create-dirs":
+                    usage = None
                 case "import" | "load":
                     usage = None
                     hdd_file = data.get("hdd-file")
                     vars_file = data.get("vars-file")
                     extract_id = data.get("extract-id")
-                case _:
+                case "install" | "update" | "run":
                     usage = padsi.config.VMUsage(action)
                     if usage == padsi.config.VMUsage.RUN and not zone_name:
                         raise UserServiceException("Missing or empty zone name")
                     if nickname is not None and usage != padsi.config.VMUsage.RUN:
                         raise UserServiceException(f"VM usage {usage.value} does not allow specifying a nickname")
+                case _:
+                    raise UserServiceException(f"Unhandled action '{action}'")
 
             boot_iso = data.get("boot-iso")
             if boot_iso is not None and not isinstance(boot_iso, str):
@@ -1562,11 +1570,9 @@ class PadsiUserService:
             if extra_isos is not None:
                 if isinstance(extra_isos, list):
                     for path in extra_isos:
-                        if (
-                            path is None
-                            or not isinstance(path, str)
-                            or not padsi.misc.is_iso_image(path)
-                        ):
+                        if path is None \
+                            or not isinstance(path, str) \
+                            or not padsi.misc.is_iso_image(path):
                             raise UserServiceException(f"Invalid path {path} extra ISOs argument")
                 else:
                     raise UserServiceException("Invalid extra ISOs argument")
@@ -1579,6 +1585,9 @@ class PadsiUserService:
         # do the job
         try:
             match action:
+                case "create-dirs":
+                    await vm_proxy.create_vm_dirs(self._call_system_service, vm_id, padsi.config.VMUsage.INSTALL)
+                    return json_response(None)
                 case "import":
                     return await self._vm_post_import(vm_id, hdd_file, vars_file, message)
                 case "load":
@@ -1594,7 +1603,7 @@ class PadsiUserService:
                         raise UserServiceException(f"Unnown '{usage}' VM usage")
         except Exception as e: # noqa: BLE001
             if usage is None:
-                if data.get("action") == "import":
+                if action == "import":
                     return web.Response(text=f"Could not import the VM: {e}", status=400)
                 else:
                     return web.Response(text=f"Could not load the VM: {e}", status=400)

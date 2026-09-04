@@ -791,7 +791,7 @@ class UserServer(Server):
             except KeyError as e:
                 raise SystemServiceException(f"CODEBUG: no '{e}' key present")
 
-            vm_conf=self._gconf.get_vm(VMUsage.UPDATE, vm_id)
+            vm_conf=self._gconf.get_vm(VMUsage.INSTALL, vm_id)
             if vm_conf is None:
                 raise SystemServiceException(f"No declared virtual machine with '{vm_id}' ID")
             if not vm_conf.is_user_allowed(self._uid):

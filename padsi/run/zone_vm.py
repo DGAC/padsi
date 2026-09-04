@@ -165,83 +165,84 @@ class ZoneVM(ZoneFoundations):
     def _prepare_components(self):
         log_only = self.zone_conf.get_option(padsi.config.ZoneOptionType.NET_LOG_ONLY).enabled
 
-        # Web infra (Web proxy or Web redirection option)
-        if len(self.zone_conf.web_proxies)>0:
-            proxy=_create_proxy(self.zone_conf, self._vm_conf, self._z_infra.bridge_ip if self._z_infra is not None else None)
-            direct_rules=self.zone_conf.fw_rules
-            if self.zone_conf.resolv_rules is not None:
-                direct_rules=direct_rules+self.zone_conf.resolv_rules if direct_rules is not None else self.zone_conf.resolv_rules
-            comp = web_infra.WebInfra(ipaddress.IPv4Interface(padsi.config.tap_ip),
-                [proxy] if proxy is not None else None,
-                False, # always disable web redirection (useless feature in a VM)
-                direct_rules # pyright: ignore
+        if self._vm_conf.specs.net_type is not None:
+            # Web infra (Web proxy or Web redirection option)
+            if len(self.zone_conf.web_proxies)>0:
+                proxy=_create_proxy(self.zone_conf, self._vm_conf, self._z_infra.bridge_ip if self._z_infra is not None else None)
+                direct_rules=self.zone_conf.fw_rules
+                if self.zone_conf.resolv_rules is not None:
+                    direct_rules=direct_rules+self.zone_conf.resolv_rules if direct_rules is not None else self.zone_conf.resolv_rules
+                comp = web_infra.WebInfra(ipaddress.IPv4Interface(padsi.config.tap_ip),
+                    [proxy] if proxy is not None else None,
+                    False, # always disable web redirection (useless feature in a VM)
+                    direct_rules # pyright: ignore
+                )
+
+                if _debug and len(self.zone_conf.web_proxies)>0:
+                    syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created web infra with with proxy '{self.zone_conf.web_proxies}'")
+
+                self.add_component(comp)
+                self._web_infra_c=comp
+
+            # DNS service (only if enabled in the zone the VM is running in)
+            if self._z_infra is not None and self._vm_conf.network is not None:
+                if self._z_infra.resolv_rules is None:
+                    resolv_rules=None
+                else:
+                    resolv_rules=self._vm_conf.network.resolv_rules.copy() if self._vm_conf.network.resolv_rules is not None else []
+                    resolv_rules+=self._z_infra.resolv_rules
+                resolver = padsi.config.network.DNSEndpoint.from_spec(str(self._z_infra.bridge_ip.ip)) # the resolver is the DNS server of the associated infra
+                comp = dns.DNSServer(resolv_rules, [resolver], log_denied_spec=self._firewall_denied_spec, log_only=log_only)
+                self.add_component(comp)
+                self._dns_c=comp
+
+                if self._web_infra_c is not None:
+                    rules=[]
+                    for name in ("wpad.", "proxy."):
+                        rule=padsi.config.ResolvRule(action="allow", descr=f"Allow VM to {name}",
+                            endpoint=firewall.Endpoint.from_repr(name), resolv=[f"A/3600/{padsi.config.tap_ip}"])
+                        rules.append(rule)
+                    comp.add_extra_rules("web-proxy", rules)
+
+            # DHCP server
+            comp = dhcp.DHCPServer(
+                interfaces=["tapvm"],
+                server_ip=ipaddress.IPv4Interface(f"{padsi.config.tap_ip}/24"),
+                pool_start=padsi.config.vm_ip,
+                pool_end=padsi.config.vm_ip,
+                resolver_ips=[padsi.config.tap_ip],
+                router_ips=[padsi.config.tap_ip],
+                mtu=self.net_mtu
             )
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: ZoneVM's MTU: {self.net_mtu}")
+            self.add_component(comp, False)
+            self._dhcp_c=comp
 
-            if _debug and len(self.zone_conf.web_proxies)>0:
-                syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created web infra with with proxy '{self.zone_conf.web_proxies}'")
-
-            self.add_component(comp)
-            self._web_infra_c=comp
-
-        # DNS service (only if enabled in the zone the VM is running in)
-        if self._z_infra is not None and self._vm_conf.network is not None:
-            if self._z_infra.resolv_rules is None:
-                resolv_rules=None
-            else:
-                resolv_rules=self._vm_conf.network.resolv_rules.copy() if self._vm_conf.network.resolv_rules is not None else []
-                resolv_rules+=self._z_infra.resolv_rules
-            resolver = padsi.config.network.DNSEndpoint.from_spec(str(self._z_infra.bridge_ip.ip)) # the resolver is the DNS server of the associated infra
-            comp = dns.DNSServer(resolv_rules, [resolver], log_denied_spec=self._firewall_denied_spec, log_only=log_only)
-            self.add_component(comp)
-            self._dns_c=comp
-
-            if self._web_infra_c is not None:
-                rules=[]
-                for name in ("wpad.", "proxy."):
-                    rule=padsi.config.ResolvRule(action="allow", descr=f"Allow VM to {name}",
-                        endpoint=firewall.Endpoint.from_repr(name), resolv=[f"A/3600/{padsi.config.tap_ip}"])
-                    rules.append(rule)
-                comp.add_extra_rules("web-proxy", rules)
-
-        # DHCP server
-        comp = dhcp.DHCPServer(
-            interfaces=["tapvm"],
-            server_ip=ipaddress.IPv4Interface(f"{padsi.config.tap_ip}/24"),
-            pool_start=padsi.config.vm_ip,
-            pool_end=padsi.config.vm_ip,
-            resolver_ips=[padsi.config.tap_ip],
-            router_ips=[padsi.config.tap_ip],
-            mtu=self.net_mtu
-        )
-        if _debug:
-            syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: ZoneVM's MTU: {self.net_mtu}")
-        self.add_component(comp, False)
-        self._dhcp_c=comp
-
-        # static FW
-        if self._z_infra is not None: # zone has some networking capabilities
-            fw_rules=[] if self._z_infra.fw_rules is None else self._z_infra.fw_rules
-            fw_rules.append(padsi.config.FWRule(
-                "allow",
-                "Web proxy access",
-                firewall.Endpoint.from_repr(f"{self._z_infra.bridge_ip.ip} ^ tcp ^ 3128"),
-                padsi.config.FWRuleChain.OUTPUT,
-            ))
-            if self.zone_conf.get_option(padsi.config.ZoneOptionType.INTER_VM_NET).enabled:
+            # static FW
+            if self._z_infra is not None: # zone has some networking capabilities
+                fw_rules=[] if self._z_infra.fw_rules is None else self._z_infra.fw_rules
                 fw_rules.append(padsi.config.FWRule(
                     "allow",
-                    "Inter VM communications",
-                    firewall.Endpoint.from_repr(f"{self._z_infra.bridge_ip.network}"),
-                    padsi.config.FWRuleChain.FORWARD,
+                    "Web proxy access",
+                    firewall.Endpoint.from_repr(f"{self._z_infra.bridge_ip.ip} ^ tcp ^ 3128"),
+                    padsi.config.FWRuleChain.OUTPUT,
                 ))
-            if _debug:
-                syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created static FW component for VM, {fw_rules=}")
-            comp = stfw.StaticFirewall(
-                fw_rules,
-                log_denied_spec=self._firewall_denied_spec,
-                log_only=log_only,
-            )
-            self.add_component(comp)
+                if self.zone_conf.get_option(padsi.config.ZoneOptionType.INTER_VM_NET).enabled:
+                    fw_rules.append(padsi.config.FWRule(
+                        "allow",
+                        "Inter VM communications",
+                        firewall.Endpoint.from_repr(f"{self._z_infra.bridge_ip.network}"),
+                        padsi.config.FWRuleChain.FORWARD,
+                    ))
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created static FW component for VM, {fw_rules=}")
+                comp = stfw.StaticFirewall(
+                    fw_rules,
+                    log_denied_spec=self._firewall_denied_spec,
+                    log_only=log_only,
+                )
+                self.add_component(comp)
 
         # virtiofs component for the VM management's shared directory
         mp=padsi.config.MountPoint(self._vmm.management_files_dir, "padsi-agent", True,

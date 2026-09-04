@@ -87,7 +87,7 @@ class ClientAdmin(BaseClient):
         (_userid, vtype, vnum, staged, _nickname)=padsi.run.parse_vm_version(vm_name)
         vmf=padsi.run.VMFiles(vm_conf.directory)
         if staged:
-            raise Exception("Can't save staged VM version")
+            vm_version=vmf.get_staged(padsi.run.VMVersionType.BASE)
         else:
             if vtype==padsi.run.VMVersionType.BASE:
                 if vnum is None:
@@ -126,7 +126,17 @@ class ClientAdmin(BaseClient):
         if vm_conf is None:
             raise Exception(f"No VM with ID '{vm_ar.vm_id}'")
 
+        # ensure directories are properly created
+        import syslog
+        syslog.syslog(syslog.LOG_INFO, f"creating VM dirs if necessary for VM {vm_ar.vm_id}")
+        data={
+            "action": "create-dirs",
+            "vm-id": vm_ar.vm_id
+        }
+        self.post("/vm", data)
+
         # extract the archive (the directory which contains the extracted files will be destroyed by the PADSI service)
+        syslog.syslog(syslog.LOG_INFO, "extracting VM files before loading")
         extract_id=vm_ar.extract(vm_conf)
         data={
             "action": "load",

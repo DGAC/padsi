@@ -96,10 +96,9 @@ class Firewall(firewall.Firewall):
         self._socket_file=socket_file
         try:
             os.remove(self._socket_file)
-        except OSError as e:
+        except OSError:
             if os.path.exists(self._socket_file):
-                raise e
-        self._out_iface=_get_default_route_interface()
+                raise
 
         # Unix socket interface
         server=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -126,6 +125,9 @@ class Firewall(firewall.Firewall):
 
         # localy resolved IP addresses which are always allowed
         self._local_resolved:list[firewall.NetFlow]=[]
+
+        # determine output interface
+        self._out_iface=_get_default_route_interface()
 
     def _load_resolv_rules(self, resolv_rules_file:str):
         """Load allowed netflow specification from the resolv-rules.json file

@@ -7058,6 +7058,17 @@ The following diagram illustrates this:
 The PADSI agent is provided as a package which must be installed in the VM (in the installation or in a update phase) and is implemented as an OS level service.
 \end_layout
 
+\begin_layout Standard
+
+\bar under
+Note
+\bar default
+:
+ if the virtual machine does not have any networking capabilities,
+ then the agent's capabilities will be reduced (mounting shared directories will still work,
+ though)
+\end_layout
+
 \begin_layout Paragraph
 Other SSH keys
 \end_layout
