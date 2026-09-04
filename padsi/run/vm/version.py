@@ -41,6 +41,9 @@ import nsbubble
 from .vmdb import VMDB, Event, EventType
 
 
+class VMException(Exception):
+    pass
+
 def _copy_reflink(src:str, dest:str) :
     """Make a shallow (COW) copy of a file
     """
@@ -48,13 +51,13 @@ def _copy_reflink(src:str, dest:str) :
         return
     cenv=os.environ.copy()
     cenv["LANG"]="C"
-    proc=subprocess.run(["cp", "--reflink==always", src, dest], env=cenv, capture_output=True, text=True)
+    proc=subprocess.run(["cp", "--reflink==always", src, dest], env=cenv, capture_output=True, text=True, check=False)
     if proc.returncode==0:
         return
 
     if "Operation not supported" in proc.stderr:
-        raise Exception(f"Can't COW file '{src}' to '{dest}', operation not supported by the filesystem")
-    raise Exception(proc.stderr)
+        raise VMException(f"Can't COW file '{src}' to '{dest}', operation not supported by the filesystem")
+    raise VMException(proc.stderr)
 
 class VMVersionType(str, enum.Enum):
     BASE="base"
@@ -85,7 +88,7 @@ class VMVersion:
             self._files[2]=os.path.join(directory, f"{vtype.value}.infos")
         else:
             if not isinstance(version, int):
-                raise Exception(f"CODEBUG: VMVersion's version in constructor is a {type(version)}")
+                raise VMException(f"CODEBUG: VMVersion's version in constructor is a {type(version)}")
             self._files[0]=os.path.join(directory, f"{vtype.value}.{version}.img")
             self._files[1]=os.path.join(directory, f"{vtype.value}.{version}.vars")
             self._files[2]=os.path.join(directory, f"{vtype.value}.{version}.infos")
@@ -154,25 +157,25 @@ class VMVersion:
                 vtype=VMVersionType(parts[0])
                 version=int(parts[1]) if len(parts)==3 else None
                 return (vtype, version, parts[-1])
-            except Exception:
-                raise Exception(f"Invalid VM version file name '{fname}'")
+            except Exception: # noqa: BLE001
+                raise VMException(f"Invalid VM version file name '{fname}'")
 
         _img_file=os.path.realpath(img_file)
         _vars_file=os.path.realpath(vars_file)
         _infos_file=os.path.realpath(infos_file)
         dir=os.path.dirname(_img_file)
         if os.path.dirname(_vars_file)!=dir or os.path.dirname(_infos_file)!=dir:
-            raise Exception("All files for the VM version should be in the same directory")
+            raise VMException("All files for the VM version should be in the same directory")
 
         (vtype, version, ext)=_parse_filename(os.path.basename(_img_file))
         (vvtype, vversion, vext)=_parse_filename(os.path.basename(_vars_file))
         (ivtype, iversion, iext)=_parse_filename(os.path.basename(_infos_file))
         if (vtype, version)!=(vvtype, vversion) or \
            (vtype, version)!=(ivtype, iversion):
-           raise Exception("All files for the VM version should respect the same convention")
+           raise VMException("All files for the VM version should respect the same convention")
 
         if ext!="img" or vext!="vars" or iext!="infos":
-            raise Exception("Some files' extension is not correct")
+            raise VMException("Some files' extension is not correct")
 
         return cls(vtype, dir, version)
 
@@ -184,7 +187,7 @@ class VMVersion:
     def is_complete(self) -> bool:
         """True if all the files for this VM version are present
         """
-        for index in range(0, 3):
+        for index in range(3):
             if not os.path.isfile(self._files[index]):
                 return False
         return True
@@ -193,7 +196,7 @@ class VMVersion:
     def is_nonexisting(self) -> bool:
         """True of none of the files exist for this VM version
         """
-        for index in range(0, 3):
+        for index in range(3):
             if os.path.isfile(self._files[index]):
                 return False
         return True
@@ -205,7 +208,7 @@ class VMVersion:
     @property
     def version_number(self) -> int|None:
         if self._version is not None and not isinstance(self._version, int):
-            raise Exception(f"CODEBUG: VMVersion's version_number is {type(self._version)}")
+            raise VMException(f"CODEBUG: VMVersion's version_number is {type(self._version)}")
         return self._version
 
     @property
@@ -258,8 +261,8 @@ class VMVersion:
                     if state==VMState.RUNNING and self._update_running_state():
                         state=VMState(db.state)
                     return state
-        except Exception as e:
-            syslog.syslog(syslog.LOG_WARNING, f"Failed to get the state of VM {self}: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_WARNING, f"Failed to get the state of VM {self}: {e}")
         return None
 
     def set_state(self, state:VMState, context:str|None=None):
@@ -269,8 +272,8 @@ class VMVersion:
             with VMDB(self.infos_file) as db:
                 db.set_state(state.value, context)
                 #syslog.syslog(syslog.LOG_ERR, f"Set state to {state.value}, db: {self.infos_file}, inode: {os.stat(self.infos_file).st_ino}")
-        except Exception as e:
-            raise Exception(f"Could not change VM version state to '{state}' (context '{context}'): {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise VMException(f"Could not change VM version state to '{state}' (context '{context}'): {e}")
 
     def _update_running_state(self) -> bool:
         """If the VM version's state is defined as running, make sure it's actually still running.
@@ -287,7 +290,7 @@ class VMVersion:
             path=os.readlink("/proc/1/exe")
             if "systemd" not in path:
                 return False
-        except Exception:
+        except Exception: # noqa: BLE001,S110
             pass
 
         # get the QEMU's PID
@@ -312,7 +315,7 @@ class VMVersion:
                     for openedfile in proc.open_files():
                         if openedfile.path==self.image_file:
                             return pid
-            except Exception:
+            except Exception: # noqa: BLE001,S110
                 pass
         return None
 
@@ -334,14 +337,14 @@ class VMVersion:
     @nickname.setter
     def nickname(self, nickname:str):
         if self.version_type!=VMVersionType.SNAP:
-            raise Exception(f"{self.version_type.value} VM versions don't have nicknames")
+            raise VMException(f"{self.version_type.value} VM versions don't have nicknames")
         try:
             if not self.__class__.nickname_is_valid(nickname):
-                raise Exception(f"Invalid VM version's nickname '{nickname}'")
+                raise VMException(f"Invalid VM version's nickname '{nickname}'")
             with VMDB(self.infos_file) as db:
                 db.nickname=nickname
-        except Exception as e:
-            raise Exception(f"Could not change VM version nickname to '{nickname}': {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise VMException(f"Could not change VM version nickname to '{nickname}': {e}")
 
     def discard_files(self):
         """Remove all the files, if any"""
@@ -356,7 +359,7 @@ class VMVersion:
         If this VM version is complete, an exception is raised, otherwise any existing file is first removed
         """
         if self.is_complete:
-            raise Exception("A VM version already exists")
+            raise VMException("A VM version already exists")
         self.discard_files()
 
         try:
@@ -379,21 +382,21 @@ class VMVersion:
                 for fname in self._files:
                     os.chown(fname, duid, dgid)
 
-        except Exception as e:
+        except Exception:
             for fname in self._files:
                 try:
                     os.remove(fname)
-                except Exception:
+                except Exception: # noqa: BLE001,S110
                     pass
-            raise e
+            raise
 
     def import_files(self, hdd_file:str, vars_file:str, message:str|None=None):
         """Copy the specified files, and initialize a new infos. file
         """
         if self.is_complete:
             if self.staged:
-                raise Exception("A staged VM version already exists")
-            raise Exception(f"VM version {str(self)} already exists")
+                raise VMException("A staged VM version already exists")
+            raise VMException(f"VM version {self} already exists")
         try:
             os.makedirs(os.path.dirname(self.image_file), exist_ok=True)
             shutil.copyfile(hdd_file, self.image_file)
@@ -403,9 +406,9 @@ class VMVersion:
                 if message:
                     db.add_event(EventType.INFORMATIONAL, message, forced_ts=ts)
                 db.set_state(VMState.STOPPED.value, "Imported external VM files")
-        except Exception as e:
+        except Exception:
             self.discard_files()
-            raise e
+            raise
 
     def copy(self, dest:VMVersion, dest_uid:int|None=None, dest_gid:int|None=None):
         """Copy (or reflink if possible) this VM version
@@ -414,13 +417,13 @@ class VMVersion:
         """
         if dest_uid is None and dest_gid is not None or \
             dest_uid is not None and dest_gid is None:
-            raise Exception("Destination UID and GID must either both be specified or not at all")
+            raise VMException("Destination UID and GID must either both be specified or not at all")
         if not self.is_complete:
-            raise Exception("VM version is not complete")
+            raise VMException("VM version is not complete")
         if self.image_file==dest.image_file:
-            raise Exception("Destination VM version is identical to the one to derive")
+            raise VMException("Destination VM version is identical to the one to derive")
         if dest.is_complete:
-            raise Exception("Destination VM version files must be discarded first")
+            raise VMException("Destination VM version files must be discarded first")
         dest.discard_files()
 
         try:
@@ -430,7 +433,7 @@ class VMVersion:
                 for i, fname in enumerate(self._files):
                     _copy_reflink(fname, dest._files[i])
                 cloned=True
-            except Exception:
+            except Exception: # noqa: BLE001,S110
                 pass
 
             # fall back
@@ -445,24 +448,24 @@ class VMVersion:
             with VMDB(dest.infos_file) as db:
                 db.add_event(EventType.INFORMATIONAL, f"Copied from '{self}'")
 
-        except Exception as e:
+        except Exception:
             for fname in dest._files:
                 try:
                     os.remove(fname)
-                except Exception:
+                except Exception: # noqa: BLE001,S110
                     pass
-            raise e
+            raise
 
     def _check_manipulations_arguments(self, dest:VMVersion, dest_uid:int|None=None, dest_gid:int|None=None):
         if dest_uid is None and dest_gid is not None or \
             dest_uid is not None and dest_gid is None:
-            raise Exception("Destination UID and GID must either both be specified or not at all")
+            raise VMException("Destination UID and GID must either both be specified or not at all")
         if not self.is_complete:
-            raise Exception("VM version is not complete")
+            raise VMException("VM version is not complete")
         if self.image_file==dest.image_file:
-            raise Exception("Destination VM version is identical to the source one")
+            raise VMException("Destination VM version is identical to the source one")
         if dest.is_complete:
-            raise Exception("Destination VM version files must be discarded first")
+            raise VMException("Destination VM version files must be discarded first")
 
     def derive(self, dest:VMVersion, dest_uid:int|None=None, dest_gid:int|None=None):
         """Derive this VM version (create a snapshot of the image file)
@@ -484,13 +487,13 @@ class VMVersion:
             with VMDB(dest.infos_file) as db:
                 db.add_event(EventType.INFORMATIONAL, f"Derived from '{self}'")
 
-        except Exception as e:
+        except Exception:
             for fname in dest._files:
                 try:
                     os.remove(fname)
-                except Exception:
+                except Exception: # noqa: BLE001,S110
                     pass
-            raise e
+            raise
 
     def move(self, dest:VMVersion, dest_uid:int|None=None, dest_gid:int|None=None, message:str|None=None):
         """Move the files of this VM version to another VM version
@@ -512,13 +515,13 @@ class VMVersion:
 
             with VMDB(dest.infos_file) as db:
                 db.add_event(EventType.INFORMATIONAL, message if message else f"Moved from '{self}'")
-        except Exception as e:
-            for i in range(0, index):
+        except Exception:
+            for i in range(index):
                 try:
                     shutil.move(dest._files[index], self._files[index])
-                except Exception:
+                except Exception: # noqa: BLE001,S110
                     pass
-            raise e
+            raise
 
     def commit(self, backing:VMVersion, dest:VMVersion|None, dest_uid:int|None=None, dest_gid:int|None=None, message:str|None=None):
         """'commit' the current VM version to the specified VM version (the changes in this VM version will be committed to that new backing file)
@@ -534,10 +537,10 @@ class VMVersion:
         image=nsbubble.QEMUImageFile(self.image_file)
         backing_bimage=image.backing
         if backing_bimage is None:
-            raise Exception("VM version's image file does not have any backing file (not a QEMU snapshot)")
+            raise VMException("VM version's image file does not have any backing file (not a QEMU snapshot)")
 
         if backing.image_file!=backing_bimage.image_file_name:
-            raise Exception(f"Specified backing VM version {backing} has backing image file '{backing.image_file}' which is incoherent with the backing QEMU image file '{backing_bimage.image_file_name}'")
+            raise VMException(f"Specified backing VM version {backing} has backing image file '{backing.image_file}' which is incoherent with the backing QEMU image file '{backing_bimage.image_file_name}'")
 
         if dest is None:
             # actual commit
@@ -546,8 +549,8 @@ class VMVersion:
             # backing file renaming
             try:
                 os.rename(backing_bimage.image_file_name, self.image_file)
-            except Exception as e:
-                raise Exception(f"Can't rename backing file '{backing_bimage.image_file_name}' to '{self.image_file}': {str(e)}")
+            except Exception as e: # noqa: BLE001
+                raise VMException(f"Can't rename backing file '{backing_bimage.image_file_name}' to '{self.image_file}': {e}")
 
             with VMDB(self.infos_file) as db:
                 if message:
@@ -557,29 +560,28 @@ class VMVersion:
                 ts=db.add_event(EventType.INFORMATIONAL, evmsg)
         else:
             self._check_manipulations_arguments(dest, dest_uid, dest_gid)
-            if self.version_type==VMVersionType.BASE:
-                if dest.version_type!=VMVersionType.BASE:
-                    raise Exception(f"VM version types mismatch for commit: {self.version_type.value} / {dest.version_type.value}")
+            if self.version_type==VMVersionType.BASE and dest.version_type!=VMVersionType.BASE:
+                    raise VMException(f"VM version types mismatch for commit: {self.version_type.value} / {dest.version_type.value}")
             dest.discard_files()
 
             # move the VARS and INFOS files
             shutil.move(self.vars_file, dest.vars_file)
             try:
                 shutil.move(self.infos_file, dest.infos_file)
-            except Exception as e:
+            except Exception:
                 try:
                     shutil.move(dest.vars_file, self.vars_file)
-                except Exception:
+                except Exception: # noqa: BLE001,S110
                     pass
-                raise e
+                raise
             with VMDB(dest.infos_file) as db:
                 db.add_event(EventType.INFORMATIONAL, f"Moved from '{self}'")
 
             # backing file renaming
             try:
                 os.rename(backing_bimage.image_file_name, dest.image_file)
-            except Exception as e:
-                raise Exception(f"Can't rename backing file '{backing_bimage.image_file_name}' to '{dest.image_file}': {str(e)}")
+            except Exception as e: # noqa: BLE001
+                raise VMException(f"Can't rename backing file '{backing_bimage.image_file_name}' to '{dest.image_file}': {e}")
 
             # change the backing file name and do the commit
             backing_bimage=image.rename_backing_file(dest.image_file)
@@ -597,13 +599,13 @@ class VMVersion:
         """Force the modification of the QEMU backing file
         """
         if not self.is_complete:
-            raise Exception("VM version is not complete")
+            raise VMException("VM version is not complete")
         if self.image_file==new_backing.image_file:
-            raise Exception("Destination VM version is identical to the source one")
+            raise VMException("Destination VM version is identical to the source one")
 
         image=nsbubble.QEMUImageFile(self.image_file)
         if image.backing_image_file_name is None:
-            raise Exception("VM version has no backing VM version")
+            raise VMException("VM version has no backing VM version")
         image.rename_backing_file(new_backing.image_file)
         self._backing_image_file_name=None
 
@@ -611,7 +613,7 @@ class VMVersion:
         """Tell if this VM version derives from another VM version
         """
         if not self.is_complete or not other.is_complete:
-            raise Exception("VM version is not complete")
+            raise VMException("VM version is not complete")
 
         if self.image_file==other.image_file:
             return False
@@ -626,7 +628,7 @@ class VMVersion:
             with VMDB(self.infos_file) as db:
                 db.add_event(evtype=evtype, descr=descr)
         else:
-            raise Exception(f"VM version '{self}' does not have any associated infos file")
+            raise VMException(f"VM version '{self}' does not have any associated infos file")
 
     def get_history(self, parent:VMVersion|None=None) -> list[Event]:
         """Get the history of the VM version (limiting it to what's not in its parent
@@ -641,8 +643,8 @@ class VMVersion:
                         events=db.get_events(evtypes, count_limit=1)
                         if len(events)>0:
                             last_event=events[0]
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Could not get history of VM version {parent}: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Could not get history of VM version {parent}: {e}")
         events:list[Event]=[]
         if os.path.exists(self.infos_file):
             with VMDB(self.infos_file) as db:
@@ -706,7 +708,7 @@ def parse_vm_version(vm_version:str) -> tuple[int|None, VMVersionType, int|None,
             userid=int(parts[0])
             remain=parts[1]
         elif len(parts)!=1:
-            raise Exception()
+            raise VMException()
         else:
             userid=None
             remain=vm_version
@@ -714,7 +716,7 @@ def parse_vm_version(vm_version:str) -> tuple[int|None, VMVersionType, int|None,
         # other part
         parts=remain.split(".")
         if len(parts) not in (1,2):
-            raise Exception()
+            raise VMException()
         num=None
         nickname=None
         if parts[0]=="staged":
@@ -725,13 +727,13 @@ def parse_vm_version(vm_version:str) -> tuple[int|None, VMVersionType, int|None,
                 if len(parts)>1:
                     num=int(parts[1])
                     if num<0:
-                        raise Exception()
-            except Exception:
+                        raise VMException()
+            except Exception: # noqa: BLE001
                 vtype=VMVersionType.SNAP
                 nickname=remain
                 if not VMVersion.nickname_is_valid(nickname):
-                    raise Exception()
+                    raise VMException()
 
         return (userid, vtype, num, num is None and nickname is None, nickname)
-    except Exception:
-        raise Exception("invalid VM version format")
+    except Exception: # noqa: BLE001
+        raise VMException("invalid VM version format")

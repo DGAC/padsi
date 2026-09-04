@@ -23,14 +23,16 @@ import secrets
 import string
 import tempfile
 
-import cryptography.x509 as x509
+from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives.serialization import (
-    BestAvailableEncryption, pkcs12)
+from cryptography.hazmat.primitives.serialization import BestAvailableEncryption, pkcs12
 from cryptography.x509.oid import NameOID
 
+
+class CAException(Exception):
+    pass
 
 class RedirectCA:
     def __init__(self, ca_dir:str|None=None):
@@ -116,14 +118,14 @@ class RedirectCA:
                 self._ca_key=serialization.load_pem_private_key( # pyright: ignore
                     data, password=None, backend=default_backend()
                 )
-        except Exception as e:
+        except Exception:
             self._ca_cert=None
             self._ca_key=None
-            raise e
+            raise
 
     def generate_cert_for_domain(self, domain:str) -> tuple[str,str]:
         if self._ca_cert is None or self._ca_key is None:
-            raise Exception("CODEBUG: CA is not yet operational")
+            raise CAException("CODEBUG: CA is not yet operational")
         cert_file=os.path.join(self._certs_dir, f"{domain}.crt")
         key_file=os.path.join(self._certs_dir, f"{domain}.key")
         if os.path.exists(cert_file) and os.path.exists(key_file):

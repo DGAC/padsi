@@ -48,6 +48,8 @@ class VMScript(str, enum.Enum):
     RUN = "run"
     SHUTDOWN = "shutdown"
 
+class VirtualMachineException(Exception):
+    pass
 
 class VirtualMachine:
     """Represent a VM configuration (not a running VM instance)"""
@@ -56,7 +58,7 @@ class VirtualMachine:
         show_ui: bool, read_only: bool, mounts: list[MountPoint], network: NetworkSpec|None, allowed_users: list[str]|None, scripts: dict[VMScript, str]):
         """NB: the zone argument is used to copy the resolution and firewall rules from the zone itself"""
         if vm_dir is None:
-            raise Exception(f"Invalid VM directory{vm_dir}")
+            raise VirtualMachineException(f"Invalid VM directory{vm_dir}")
         self._vm_dir: str = vm_dir
         self._os_variant: str = os_variant
         self._os_version: str|None = os_version
@@ -73,7 +75,7 @@ class VirtualMachine:
         if allowed_users is not None:
             for allowed in allowed_users:
                 if not isinstance(allowed, str) or not re.match(r'^%?[_a-z][-0-9_a-z\.]*\$?$', allowed):
-                    raise Exception(f"Invalid allowed user '{allowed}'")
+                    raise VirtualMachineException(f"Invalid allowed user '{allowed}'")
 
     def __repr__(self):
         return f"VirtualMachine {self._id}/{self._usage}"
@@ -228,16 +230,16 @@ class VirtualMachine:
         try:
             if pwd.getpwnam("padsi").pw_uid==uid:
                 return True
-        except Exception:
-            syslog.syslog(syslog.LOG_WARNING, "It seems the 'padsi' user is not present in the system")
+        except KeyError:
+            syslog.syslog(syslog.LOG_WARNING, "It seems the 'padsi' user is not defined in the system")
 
         # get username and quick check
         try:
             username = pwd.getpwuid(uid).pw_name
-        except Exception as e:
-            raise e
-        if self._allowed_users is None or username in self._allowed_users:
-            return True
+            if self._allowed_users is None or username in self._allowed_users:
+                return True
+        except KeyError:
+            raise VirtualMachineException(f"It seems the user with UID {uid} is not defined in the system")
 
         # use groups
         for allowed in self._allowed_users:
@@ -247,8 +249,9 @@ class VirtualMachine:
                     if username in group.gr_mem:
                         return True
                 except KeyError:
-                    syslog.syslog(syslog.LOG_WARNING, f"Referenced group '{allowed[1:]}' does not exist")
+                    syslog.syslog(syslog.LOG_WARNING, f"Users group '{allowed[1:]}' referenced in VM '{self._id}' for usage '{self._usage.value}' does not exist, ignored")
 
+        syslog.syslog(syslog.LOG_ERR, f"User '{username}' ({uid}) is not allowed the '{self._usage.value}' usage of VM '{self._id}'")
         return False
 
     def check_user_allowed(self, uid: int):
@@ -256,7 +259,7 @@ class VirtualMachine:
         and raise an exception if not
         """
         if not self.is_user_allowed(uid):
-            raise Exception(f"User with UID {uid} is not allowed to {self.usage.value.lower()} VM '{self._id}'")
+            raise VirtualMachineException(f"User with UID {uid} is not allowed to {self.usage.value.lower()} VM '{self._id}'")
 
     def get_script(self, script_usage: VMScript) -> str | None:
         """Get the name of the script to be executed by the PADSI agent"""
@@ -278,14 +281,14 @@ def load_vm_file(path: str, root_path: str, named_netres: dict[str, NetworkResso
             else:
                 os_version = None
             if os_variant is None:
-                raise Exception("OS variant is not specified")
+                raise VirtualMachineException("OS variant is not specified")
             if os_variant not in ("linux", "windows"):
-                raise Exception(f"Unhandled '{os_variant}' OS variant")
+                raise VirtualMachineException(f"Unhandled '{os_variant}' OS variant")
 
             vm_dir = os.path.basename(path)
             (vm_dir, *_) = vm_dir.split(".", maxsplit=1)  # remove any file extension (normally ".vm")
             if not re.match("^[a-zA-Z0-9-_]", vm_dir):
-                raise Exception(f"Invalid VM name '{vm_dir}'")
+                raise VirtualMachineException(f"Invalid VM name '{vm_dir}'")
 
             if not os.path.isabs(vm_dir):
                 # VM files are by default in /var/padsi/VM
@@ -298,23 +301,23 @@ def load_vm_file(path: str, root_path: str, named_netres: dict[str, NetworkResso
             # admin section
             admindata = data.get("admin")
             if admindata is None:
-                raise Exception("No 'admin' section")
+                raise VirtualMachineException("No 'admin' section")
 
             scripts: dict[VMScript, str] = {}
             for su in VMScript:
                 script = admindata.get(f"{su.value}-script")
                 if script is not None:
                     if not isinstance(script, str):
-                        raise Exception(f"Invalid script path '{script}'")
+                        raise VirtualMachineException(f"Invalid script path '{script}'")
                     scripts[su] = script
 
-        except Exception as e:
-            raise Exception(f"Invalid definition for VM '{path}': {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise VirtualMachineException(f"Invalid definition for VM '{path}': {e}")
 
         # compute and validate vm_id
         vm_id = os.path.basename(path)[:-3]  # file name less the ".vm" extension
         if not re.match(r"^[a-z][a-z0-9]+", vm_id):
-            raise Exception(f"invalid VM name '{vm_id}'")
+            raise VirtualMachineException(f"invalid VM name '{vm_id}'")
 
         res = {}
         for usage in VMUsage:
@@ -336,7 +339,7 @@ def load_vm_file(path: str, root_path: str, named_netres: dict[str, NetworkResso
                         mounts=[]
                 else:
                     if usagedata.get("mounts"):
-                        raise Exception(f"Mount points are not allowed for the {usage.value} usage")
+                        raise VirtualMachineException(f"Mount points are not allowed for the {usage.value} usage")
                     mounts = []
 
                 # network
@@ -364,8 +367,8 @@ def load_vm_file(path: str, root_path: str, named_netres: dict[str, NetworkResso
 
 def strip_vm_id(vm_id: str) -> str:
     if vm_id is None:
-        raise Exception("virtual machine not specified")
+        raise VirtualMachineException("virtual machine not specified")
     vm_id = vm_id.strip()
     if vm_id == "":
-        raise Exception("invalid empty VM ID")
+        raise VirtualMachineException("invalid empty VM ID")
     return vm_id

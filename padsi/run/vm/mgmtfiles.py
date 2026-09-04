@@ -33,8 +33,7 @@ import syslog
 import uuid
 
 import padsi.misc
-from padsi.config import (MountPoint, VirtualMachine, VMScript, VMUsage, Zone,
-                          tap_ip)
+from padsi.config import MountPoint, VirtualMachine, VMScript, VMUsage, Zone, tap_ip
 from padsi.simple_comm import Client, Message, MessageType
 
 from ..zone_userfiles import ZoneUserFiles
@@ -45,6 +44,9 @@ def _get_top_source_dir() -> str:
     """Get the actual directory where all PADSI's source code is
     """
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+
+class VMManagementFilesException(Exception):
+    pass
 
 class VMManagementFiles:
     """Object which sets up a directory containing all the management resources (bin/, etc/, lib/) for a VM configuration for a specified user
@@ -102,8 +104,8 @@ class VMManagementFiles:
             try:
                 os.makedirs(path, exist_ok=True)
             except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to create directoy '{path}': {str(e)}")
-                raise e
+                syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to create directoy '{path}': {e}")
+                raise
         top_src_dir=_get_top_source_dir()
 
         script:str|None=None
@@ -123,9 +125,9 @@ class VMManagementFiles:
                         case VMVersionType.SNAP:
                             script=self._vm_conf.get_script(VMScript.RUN)
                         case _:
-                            raise Exception("CODEBUG: situation should not happen")
+                            raise VMManagementFilesException("CODEBUG: situation should not happen")
                 case _:
-                    raise Exception(f"Unhandled VMUsage {self._vm_conf.usage}")
+                    raise VMManagementFilesException(f"Unhandled VMUsage {self._vm_conf.usage}")
 
             if script:
                 ext=os.path.splitext(script)[1]
@@ -146,19 +148,19 @@ class VMManagementFiles:
                     shutil.copymode(src, dst)
 
         except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to copy script '{script}' to VM' management files: {str(e)}")
-            raise e
+            syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to copy script '{script}' to VM' management files: {e}")
+            raise
 
         # create attributes config files
         try:
             userdata=pwd.getpwuid(self._uid)
             try:
                 (fname, *_)=userdata.pw_gecos.split(",")
-            except Exception:
+            except Exception: # noqa: BLE001
                 fname=userdata.pw_name
             try:
                 grname=grp.getgrgid(self._gid).gr_name
-            except Exception:
+            except Exception: # noqa: BLE001
                 grname=userdata.pw_name
             attributes:dict[str,str]={
                 "PADSI_VM_CONFIG": self._vm_conf.id,
@@ -193,8 +195,8 @@ class VMManagementFiles:
             if os.path.exists(ssh_pubkey_file):
                 shutil.copyfile(ssh_pubkey_file, os.path.join(etc_dir, os.path.basename(ZoneUserFiles.get_ssh_pubkey_file())))
         except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to create VM attributes: {str(e)}")
-            raise e
+            syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to create VM attributes: {e}")
+            raise
 
         # create mountpoint config files
         try:
@@ -224,8 +226,8 @@ class VMManagementFiles:
             with open(os.path.join(etc_dir, "mountpoints.json"), "wt") as fd:
                 json.dump(mountpoints, fd)
         except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to create VM's mountpoint file: {str(e)}")
-            raise e
+            syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to create VM's mountpoint file: {e}")
+            raise
 
     def _get_mount_points(self, check_user_dir_exists:bool) -> list[MountPoint]:
         """Get the actual mount points set up for the VM
@@ -266,7 +268,7 @@ class VMManagementFiles:
         """Set up the VM management files, including using the privileged interface
         for the privileged operations"""
         if self._client is None:
-            raise Exception(f"Invalid {self.__class__.__name__} usage")
+            raise VMManagementFilesException(f"Invalid {self.__class__.__name__} usage")
         self._setup_files()
         self._get_mount_points(True) # force creation of required directories as this user and not later as root
 
@@ -276,8 +278,8 @@ class VMManagementFiles:
             msg=Message(MessageType.REQUEST, _msgc)
             await self._client.call_server(msg)
         except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to setup files: {str(e)}")
-            raise e
+            syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to setup files: {e}")
+            raise
 
     @staticmethod
     def priv_setup(zone_conf:Zone, vm_conf:VirtualMachine, vm_version:VMVersion,
@@ -294,20 +296,20 @@ class VMManagementFiles:
                 if mp.mount():
                     mounted.append(mp)
             syslog.syslog(syslog.LOG_DEBUG, f"{vmm._syslog_prefix}: setup done")
-        except Exception as e:
+        except Exception as e: # noqa: BLE001
             for mp in mounted[::-1]:
                 syslog.syslog(syslog.LOG_INFO, f"{vmm._syslog_prefix}: unmounting {mp.mount_path} from {mp.source_path}")
                 try:
                     mp.umount()
-                except Exception as se:
-                    syslog.syslog(syslog.LOG_WARNING, f"{vmm._syslog_prefix}: {str(se)}")
-            syslog.syslog(syslog.LOG_ERR, f"{vmm._syslog_prefix}: setup failed: {str(e)}")
+                except Exception as se: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_WARNING, f"{vmm._syslog_prefix}: {se}")
+            syslog.syslog(syslog.LOG_ERR, f"{vmm._syslog_prefix}: setup failed: {e}")
         return [mp.mount_path for mp in mounted[::-1]]
 
     async def cleanup(self):
         """Cleanup"""
         if self._client is None:
-            raise Exception(f"Invalid {self.__class__.__name__} usage")
+            raise VMManagementFilesException(f"Invalid {self.__class__.__name__} usage")
 
         try:
             _msgc={"cmde": "vm-management-files-cleanup"}
@@ -318,10 +320,10 @@ class VMManagementFiles:
             # we only use rmtree() when we are sure all the user's mounted directories have been unmounted to avoid data loss
             try:
                 shutil.rmtree(self._mgmt_dir)
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to cleanup VM's management files in {self._mgmt_dir}: {str(e)}")
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to cleanup files: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to cleanup VM's management files in {self._mgmt_dir}: {e}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"{self._syslog_prefix}: failed to cleanup files: {e}")
 
     @staticmethod
     def priv_cleanup(zone_conf:Zone, vm_conf:VirtualMachine, vm_version:VMVersion,
@@ -337,6 +339,6 @@ class VMManagementFiles:
                 if mp.is_mounted():
                     mp.umount()
             except Exception as e:
-                syslog.syslog(syslog.LOG_WARNING, f"{vmm._syslog_prefix}: {str(e)}")
-                raise e
+                syslog.syslog(syslog.LOG_WARNING, f"{vmm._syslog_prefix}: {e}")
+                raise
         syslog.syslog(syslog.LOG_DEBUG, f"{vmm._syslog_prefix}: cleanup done")

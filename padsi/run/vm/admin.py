@@ -31,16 +31,19 @@ from .version import VMVersion, VMVersionType
 from .vmfiles import VMFiles, VMVersionInfo
 
 
+class AdminVMException(Exception):
+    pass
+
 class AdminVMFiles:
     def __init__(self, vm_dir:str, uid:int, analyse:bool=True):
         """Create a global view of all the VM versions in a VM's directory, from the default point of view of the user which UID
         is passed as argument (this user does not have any otherwise specific privilege).
         """
         if not os.path.isabs(vm_dir):
-            raise Exception(f"Expected vm_dir '{vm_dir}' to be an absolute directory")
+            raise AdminVMException(f"Expected vm_dir '{vm_dir}' to be an absolute directory")
         self._vm_dir=vm_dir
         if not isinstance(uid, int) or uid<0:
-            raise Exception(f"Invalid UID '{uid}'")
+            raise AdminVMException(f"Invalid UID '{uid}'")
         self._uid=uid
 
         self._users:set[int]=set()
@@ -74,19 +77,19 @@ class AdminVMFiles:
                 return self.get_base_version(version)
             case VMVersionType.USER:
                 if zone_name is None:
-                    raise Exception("no zone specified (user VM versions are bound to zones)")
+                    raise AdminVMException("no zone specified (user VM versions are bound to zones)")
                 return self.get_user_version(version, zone_name, uid)
             case VMVersionType.SNAP:
                 if zone_name is None:
-                    raise Exception("no zone specified (snapshot VM versions are bound to zones)")
+                    raise AdminVMException("no zone specified (snapshot VM versions are bound to zones)")
                 return self.get_snapshot_version(version, zone_name, uid)
             case _:
-                raise Exception(f"CODEBUG: unknown VMVersionType {version_type}") # pyright: ignore
+                raise AdminVMException(f"CODEBUG: unknown VMVersionType {version_type}") # pyright: ignore
 
     @property
     def base_versions(self) -> list[VMVersion]:
         res:set[VMVersion]=set()
-        for (_, vmf) in self._vmfs.items():
+        for vmf in self._vmfs.values():
             for vmversion in vmf.base_versions:
                 res.add(vmversion)
         return list(res)
@@ -157,7 +160,7 @@ class AdminVMFiles:
         """
         vmf=self._vmfs.get(self._uid if vmversion.uid is None else vmversion.uid)
         if vmf is None:
-            raise Exception(f"No VM version '{vmversion}' found")
+            raise AdminVMException(f"No VM version '{vmversion}' found")
 
         return vmf.get_parent_version(vmversion)
 
@@ -165,7 +168,7 @@ class AdminVMFiles:
         """Go through all directories and identify which user has any VM artefact
         """
         if not os.path.exists(self._vm_dir):
-            raise Exception(f"VM directory '{self._vm_dir}' does not exist")
+            raise AdminVMException(f"VM directory '{self._vm_dir}' does not exist")
         all_users:set[int]=set()
         for fname in os.listdir(self._vm_dir):
             if fname in ("staging", "zones"):
@@ -177,7 +180,7 @@ class AdminVMFiles:
                             uid=int(f2name)
                             if uid>=0:
                                 all_users.add(uid)
-                        except Exception:
+                        except Exception: # noqa: BLE001,S110
                             pass
                     else:
                         # expecting f2name to be zone name
@@ -188,7 +191,7 @@ class AdminVMFiles:
                                 uid=int(f3name)
                                 if uid>=0:
                                     all_users.add(uid)
-                            except Exception:
+                            except Exception: # noqa: BLE001,S110
                                 pass
         return all_users
 
@@ -248,23 +251,23 @@ class AdminVMFiles:
             if len(false_obso)>0:
                 self._obsolete_versions=self._obsolete_versions.difference(false_obso)
 
-        except Exception as e:
+        except Exception:
             _reinit()
-            raise e
+            raise
 
     def get_version_info(self, vmversion:VMVersion) -> VMVersionInfo:
         vmf=None
-        for (uid, vmfiles) in self._vmfs.items():
+        for vmfiles in self._vmfs.values():
             if vmfiles.get_vm_version_by_id(vmversion.id) is not None:
                 vmf=vmfiles
                 break
         if vmf is None:
-            raise Exception(f"Could not determine the VMFiles containing '{vmversion}'")
+            raise AdminVMException(f"Could not determine the VMFiles containing '{vmversion}'")
 
         parent_vmversion=vmf.get_parent_version(vmversion)
 
         children_vmversions:set[VMVersion]=set()
-        for (_, vmf) in self._vmfs.items():
+        for vmf in self._vmfs.values():
             children_vmversions=children_vmversions.union(vmf.get_children_versions(vmversion))
 
         children_descr=None
@@ -276,9 +279,9 @@ class AdminVMFiles:
             depinfos=None if children_descr is None else children_descr
         else:
             if children_descr is None:
-                depinfos=f"references {str(parent_vmversion)}"
+                depinfos=f"references {parent_vmversion}"
             else:
-                depinfos=f"references {str(parent_vmversion)}, {children_descr}"
+                depinfos=f"references {parent_vmversion}, {children_descr}"
         return VMVersionInfo(depinfos, parent_vmversion, list(children_vmversions))
 
     def serialize(self) -> dict[str,Any]:
@@ -303,7 +306,7 @@ class AdminVMFiles:
                 vmversion=vmf.get_vm_version_by_id(vmvid)
                 if vmversion is not None:
                     return vmversion
-            raise Exception(f"VMVersion with id '{vmvid}' not found")
+            raise AdminVMException(f"VMVersion with id '{vmvid}' not found")
         obj=cls(data["vm-dir"], data["uid"], analyse=False)
         obj._users={uid for uid in data["users"]}
         obj._vmfs={int(uid): VMFiles.deserialize(ser) for (uid, ser) in data["vmf-objects"].items()}

@@ -26,10 +26,13 @@ import sys
 
 socket_path="/bubble/run/padsi-fuse.sock"
 
+class ProgException(Exception):
+    pass
+
 def main():
     # args. to send to server
     if len(sys.argv)==0:
-        raise Exception("Invalid invocation")
+        raise ProgException("Invalid invocation")
     mp=None
     if len(sys.argv)>1:
         mp=sys.argv[-1]
@@ -57,7 +60,7 @@ def main():
         print(resp_json.get("stdout", ""), end="")
         print(resp_json.get("stderr", ""), end="", file=sys.stderr)
         sys.exit(resp_json.get("returncode", 1))
-    except Exception:
+    except Exception: # noqa: BLE001
         print("Unexpected response from daemon:", response.decode(), file=sys.stderr)
         sys.exit(1)
 

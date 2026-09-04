@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 #
 # Copyright (c) 2025-2026 DGAC/DSNA
 #

@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 #
 # Copyright (c) 2025-2026 DGAC/DSNA
 #
@@ -40,6 +38,9 @@ from .. import Component
 
 _debug = False
 
+
+class DNSComponentException(Exception):
+    pass
 
 class DNSServer(Component):
     """DNS server"""
@@ -89,7 +90,7 @@ class DNSServer(Component):
             self._resolv_rules_file = os.path.join(self._tmpdir.name, "resolv-rules.json")
 
         extra_rules = []
-        for _, erules in self._resolv_rules_extra.items():
+        for erules in self._resolv_rules_extra.values():
             if erules is not None and len(erules) > 0:
                 extra_rules += erules
         if _debug:
@@ -301,11 +302,11 @@ def _is_ipv4_element(addr: str) -> bool:
     try:
         ipaddress.IPv4Address(addr)
         return True
-    except Exception:
+    except Exception: # noqa: BLE001
         try:
             ipaddress.IPv4Network(addr)
             return True
-        except Exception:
+        except Exception: # noqa: BLE001
             return False
 
 
@@ -329,7 +330,7 @@ def _is_domain_name(domain: str, allow_wildcards: bool = False) -> bool:
 
 def validate_resolv_rules(rules: list):
     if not isinstance(rules, list):
-        raise Exception(f"Resolv rules must be a dict, not a {type(rules)}")
+        raise TypeError(f"Resolv rules must be a dict, not a {type(rules)}")
     try:
         for rule in rules:
             action = rule.get("action")
@@ -338,12 +339,12 @@ def validate_resolv_rules(rules: list):
             spec = rule.get("spec")
 
             if action not in ("allow", "deny"):
-                raise Exception(f"Rule's action must be 'allow' or 'deny', not '{action}'")
+                raise DNSComponentException(f"Rule's action must be 'allow' or 'deny', not '{action}'")
 
             if not isinstance(query, str):
-                raise Exception(f"Rule's query must be a str, not {type(query)}")
+                raise DNSComponentException(f"Rule's query must be a str, not {type(query)}")
             if not _is_domain_name(query, allow_wildcards=True):
-                raise Exception(f"Invalid query '{query}'")
+                raise DNSComponentException(f"Invalid query '{query}'")
 
             if reply is not None:
                 for entry in reply:
@@ -351,17 +352,17 @@ def validate_resolv_rules(rules: list):
                         (typ, *resp) = entry.split("/")
                         if typ == "A":
                             if len(resp) != 2:
-                                raise Exception("expected <response-validity>/<response as IPv4>")
+                                raise DNSComponentException("expected <response-validity>/<response as IPv4>")
                             ipaddress.IPv4Address(resp[1])
                         else:
-                            raise Exception(f"unknown reply type '{typ}'")
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_ERR, f"Rule reply '{reply}' is invalid: {str(e)}")
+                            raise DNSComponentException(f"unknown reply type '{typ}'")
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_ERR, f"Rule reply '{reply}' is invalid: {e}")
 
             if spec is not None:
                 try:
                     firewall.Endpoint.from_repr(f"* ^ {spec}")
-                except Exception:
-                    raise Exception(f"Rule spec '{spec}' is invalid")
-    except Exception as e:
-        raise Exception(f"Invalid resolv. rules: {str(e)}")
+                except Exception: # noqa: BLE001
+                    raise DNSComponentException(f"Rule spec '{spec}' is invalid")
+    except Exception as e: # noqa: BLE001
+        raise DNSComponentException(f"Invalid resolv. rules: {e}")

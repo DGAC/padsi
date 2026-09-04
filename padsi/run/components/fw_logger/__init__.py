@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 #
 # Copyright (c) 2025-2026 DGAC/DSNA
 #
@@ -34,6 +32,9 @@ import nsbubble
 from .. import Component
 
 _debug=False
+
+class FWLoggerComponentException(Exception):
+    pass
 
 class FWLogger(Component):
     """Web server which can act as a Web proxy (and directly connect to the requested Web server or forward requests to some others Web proxies), and
@@ -84,7 +85,7 @@ class FWLogger(Component):
     def deserialize(cls, data:dict) -> FWLogger:
         ldata = data.get("data")
         if ldata is None:
-            raise Exception("CODEBUG: no 'data' found in deserialized data")
+            raise FWLoggerComponentException("CODEBUG: no 'data' found in deserialized data")
         obj=cls(ldata["group"])
         obj._pid=ldata["pid"]
         return obj

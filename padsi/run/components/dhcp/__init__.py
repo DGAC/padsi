@@ -36,6 +36,9 @@ import nsbubble
 from .. import Component
 
 
+class DHCPComponentException(Exception):
+    pass
+
 class DHCPServer(Component):
     """DNS server in a bubble"""
 
@@ -49,11 +52,11 @@ class DHCPServer(Component):
         self._subnet=server_ip.network
         self._server_ip=server_ip
         if pool_start not in self._subnet:
-            raise Exception(f"Invalid pool start address {pool_start}: not in subnet")
+            raise DHCPComponentException(f"Invalid pool start address {pool_start}: not in subnet")
         if pool_end not in self._subnet:
-            raise Exception(f"Invalid pool end address {pool_end}: not in subnet")
+            raise DHCPComponentException(f"Invalid pool end address {pool_end}: not in subnet")
         if pool_start>pool_end:
-            raise Exception("Invalid pool extrmity addresses: wrong order")
+            raise DHCPComponentException("Invalid pool extrmity addresses: wrong order")
         self._pool_start=pool_start
         self._pool_end=pool_end
         self._resolver_ips=resolver_ips
@@ -85,7 +88,7 @@ class DHCPServer(Component):
             conf["Dhcp4"]["option-data"][0]["data"]=",".join([str(ip) for ip in self._resolver_ips])
             subnet=conf["Dhcp4"]["subnet4"][0]
             subnet["subnet"]=str(self._subnet)
-            subnet["pools"][0]["pool"]=f"{str(self._pool_start)} - {str(self._pool_end)}"
+            subnet["pools"][0]["pool"]=f"{self._pool_start} - {self._pool_end}"
             subnet["option-data"][0]["data"]=",".join([str(ip) for ip in self._router_ips])
 
             self._config_file=f"{self._sandbox_dir_name}/kea-dhcp.conf"
@@ -138,13 +141,13 @@ class DHCPServer(Component):
                 pid=api.start_process(args, ignore_status=False, capabilities="net_admin")
                 st=api.get_process_exit_status(pid, wait=15)
                 if st!=0:
-                    raise Exception(f"Failed to configure network interface '{iface}' with IP address '{str(self._server_ip)}' (/tmp/tapvm-setup.sh exits status is {st})")
+                    raise DHCPComponentException(f"Failed to configure network interface '{iface}' with IP address '{self._server_ip}' (/tmp/tapvm-setup.sh exits status is {st})")
             self._tapvm_configured=True
         if self._pid is None:
             pid=api.start_process(["/tmp/dirs-setup.sh"], ignore_status=False)
             st=api.get_process_exit_status(pid, wait=15)
             if st!=0:
-                raise Exception(f"Failed to configure Kea directories (/tmp/dirs-setup.sh exits status is {st})")
+                raise DHCPComponentException(f"Failed to configure Kea directories (/tmp/dirs-setup.sh exits status is {st})")
             self._pid=api.start_process(["/tmp/kea-dhcp4", "-c", "/etc/kea-dhcp.conf"], ignore_status=False,
                 capabilities="net_bind_service,net_raw", restart=True)
 
@@ -180,7 +183,7 @@ class DHCPServer(Component):
     def deserialize(cls, data:dict) -> DHCPServer:
         ldata=data.get("data")
         if ldata is None:
-            raise Exception("CODEBUG: no 'data' found in deserialized data")
+            raise DHCPComponentException("CODEBUG: no 'data' found in deserialized data")
         obj=cls(ldata["interfaces"], ipaddress.IPv4Interface(ldata["server-ip"]), ipaddress.IPv4Address(ldata["pool-start"]),
                 ipaddress.IPv4Address(ldata["pool-end"]), [ipaddress.IPv4Address(r) for r in ldata["resolver-ips"]],
                 [ipaddress.IPv4Address(r) for r in ldata["router-ips"]], ldata["mtu"])

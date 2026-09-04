@@ -40,6 +40,9 @@ import pyinotify
 fw_socket_file="/tmp/dns-fw.sock"
 _debug=False
 
+class ProgException(Exception):
+    pass
+
 @dataclass
 class DNSEndpoint:
     ip_address: ipaddress.IPv4Address
@@ -47,7 +50,7 @@ class DNSEndpoint:
     protocol: str
 
     def __str__(self) -> str:
-        return f"{str(self.ip_address)}@{self.port}@{self.protocol}"
+        return f"{self.ip_address}@{self.port}@{self.protocol}"
 
     def __hash__(self) -> int:
         return hash(str(self))
@@ -60,17 +63,17 @@ def get_nameservers() -> set[DNSEndpoint]:
                 data=json.load(fd)
             for item in data:
                 res.add(DNSEndpoint(ip_address=ipaddress.IPv4Address(item["ip"]), port=item["port"], protocol=item["proto"]))
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Invalid '/etc/resolv-conf.json' file: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Invalid '/etc/resolv-conf.json' file: {e}")
     elif os.path.exists("/etc/resolv.conf"):
         # load the /etc/resolv.conf file if any
         with open("/etc/resolv.conf", "r") as fd:
-            for line in fd.readlines():
+            for line in fd:
                 if line.startswith("nameserver "):
                     (_, ipstr)=line.split()
                     try:
                         res.add(DNSEndpoint(ip_address=ipaddress.IPv4Address(ipstr), port=53, protocol="DEFAULT"))
-                    except Exception:
+                    except Exception: # noqa: BLE001,S110
                         # ignore IPv6 for now
                         pass
     return res
@@ -102,28 +105,28 @@ class ListenEventHandler(pyinotify.ProcessEvent):
             # from the old (unused anymore) nameservers
             for dnsep in ns_list-self._current_ns:
                 data={
-                    "del-resolver": f"{str(dnsep.ip_address)}:{dnsep.port}"
+                    "del-resolver": f"{dnsep.ip_address}:{dnsep.port}"
                 }
-                syslog.syslog(syslog.LOG_INFO, f"Asking the FW to de-authorize communications to DNS server {str(dnsep)}")
+                syslog.syslog(syslog.LOG_INFO, f"Asking the FW to de-authorize communications to DNS server {dnsep}")
                 try:
                     self._fw_socket.sendall(json.dumps(data).encode())
                     resp=self._fw_socket.recv(1024)
                     if resp!=b"Ok":
-                        raise Exception(resp)
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Error asking the FW to de-authorize {str(dnsep)}: {str(e)}")
+                        raise ProgException(resp)
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Error asking the FW to de-authorize {dnsep}: {e}")
             for dnsep in self._current_ns-ns_list:
                 data={
-                    "add-resolver": f"{str(dnsep.ip_address)}:{dnsep.port}"
+                    "add-resolver": f"{dnsep.ip_address}:{dnsep.port}"
                 }
-                syslog.syslog(syslog.LOG_INFO, f"Asking the FW to authorize communications to DNS server {str(dnsep)}")
+                syslog.syslog(syslog.LOG_INFO, f"Asking the FW to authorize communications to DNS server {dnsep}")
                 try:
                     self._fw_socket.sendall(json.dumps(data).encode())
                     resp=self._fw_socket.recv(1024)
                     if resp!=b"Ok":
-                        raise Exception(resp)
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"Error asking the FW to authorize {str(dnsep)}: {str(e)}")
+                        raise ProgException(resp)
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"Error asking the FW to authorize {dnsep}: {e}")
             self._declared_ns=self._current_ns
 
             # NB: to have unbound use DOT, see for example https://www.dsfc.net/infra/reseau/des-requetes-dns-chiffrees-en-tls-avec-unbound/
@@ -131,7 +134,7 @@ class ListenEventHandler(pyinotify.ProcessEvent):
             # Basically: add the "forward-tls-upstream: yes" option and add the "@853" to the NS's IP, like forward-addr: 80.67.188.188@853
             # Cf. also: https://diyisp.org/dokuwiki/doku.php?id=technical:dnsresolver
             # The "forward-first: no" is more like belt and suspenders as it is the default value
-            conf_filename="%s/forward.conf"%self.unbound_confdir
+            conf_filename=os.path.join(self.unbound_confdir, "forward.conf")
             if os.path.exists(conf_filename):
                 os.remove(conf_filename)
             config="""server:
@@ -144,15 +147,14 @@ forward-zone:
                     config+="    forward-tls-upstream: yes\n"
                     break
             for dnsep in self._current_ns:
-                config+=f"    forward-addr: {str(dnsep.ip_address)}@{dnsep.port}\n"
+                config+=f"    forward-addr: {dnsep.ip_address}@{dnsep.port}\n"
 
             # write file
-            f=open(conf_filename, "w")
-            f.write(config)
-            f.close()
+            with open(conf_filename, "w") as f:
+                f.write(config)
 
         # (re)create the local.conf file
-        conf_filename="%s/local.conf"%self.unbound_confdir
+        conf_filename=os.path.join(self.unbound_confdir, "local.conf")
         if os.path.exists(conf_filename):
             os.remove(conf_filename)
         local_zones:dict[str,list]={} # key: zone name, value: list of [name, response. type, response. parts which may depend on resp. type]
@@ -175,7 +177,7 @@ forward-zone:
                                     (typ, *resp)=entry.split("/")
                                     if typ=="A":
                                         if len(resp)!=2:
-                                            raise Exception("expected <response-validity>/<response as IPv4>")
+                                            raise ProgException("expected <response-validity>/<response as IPv4>")
                                         dnsep=ipaddress.IPv4Address(resp[1])
                                         if zone not in local_zones:
                                             local_zones[zone]=[]
@@ -186,11 +188,11 @@ forward-zone:
                                         if spec_repr is not None:
                                             local_resolv[sdnsep].append(spec_repr)
                                     else:
-                                        raise Exception(f"unknown reply type '{typ}'")
-                                except Exception as e:
-                                    syslog.syslog(syslog.LOG_ERR, f"Invalid configured reply '{entry}' for query '{rule['query']}': {str(e)}")
-            except Exception as e:
-                syslog.syslog(syslog.LOG_WARNING, f"Could not load {ListenEventHandler.resolv_rules} file, skipping: {str(e)}")
+                                        raise ProgException(f"unknown reply type '{typ}'")
+                                except Exception as e: # noqa: BLE001
+                                    syslog.syslog(syslog.LOG_ERR, f"Invalid configured reply '{entry}' for query '{rule['query']}': {e}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_WARNING, f"Could not load {ListenEventHandler.resolv_rules} file, skipping: {e}")
 
         # write new config file if necessary
         if len(local_zones)>0:
@@ -214,9 +216,9 @@ forward-zone:
                 self._fw_socket.sendall(json.dumps(data).encode())
                 resp=self._fw_socket.recv(1024)
                 if resp!=b"Ok":
-                    raise Exception(resp)
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Failed ro send local resolv. IPs to FW server: {str(e)}")
+                    raise ProgException(resp)
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Failed ro send local resolv. IPs to FW server: {e}")
 
         # start the service or make it reload its configuration
         if self._process is None:
@@ -238,27 +240,27 @@ forward-zone:
                 syslog.syslog(syslog.LOG_ERR, f"unbound process has died, retcode={self._process.returncode}")
 
     def process_IN_MOVED_TO(self, event):
-        print("MOVE_TO event for %s"% event.pathname)
+        print(f"MOVE_TO event for {event.pathname}")
         if event.pathname in ("/etc/resolv.conf", self.resolv_rules):
             try:
                 self.reconfigure_server()
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Error reconfiguring server: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Error reconfiguring server: {e}")
 
     def process_IN_CLOSE_WRITE(self, event):
-        print("CLOSE_WRITE event for %s"% event.pathname)
+        print(f"CLOSE_WRITE event for {event.pathname}")
         if event.pathname in ("/etc/resolv.conf", self.resolv_rules):
             try:
                 self.reconfigure_server()
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Error reconfiguring server: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Error reconfiguring server: {e}")
 
 if __name__=="__main__":
     # open the socket to talk to the FW management component (fw_socket_file)
     try:
         fw_socket=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Could not create Unix socket: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Could not create Unix socket: {e}")
         sys.exit(2)
 
     counter=0
@@ -274,8 +276,8 @@ if __name__=="__main__":
             if counter>=10:
                 sys.exit(2)
             time.sleep(1)
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Could not connect the Unix socket to '{fw_socket_file}': {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Could not connect the Unix socket to '{fw_socket_file}': {e}")
             sys.exit(3)
 
     # set up notifications
@@ -290,5 +292,5 @@ if __name__=="__main__":
     try:
         handler.reconfigure_server()
         notifier.loop()
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Error on initial server configuration: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Error on initial server configuration: {e}")

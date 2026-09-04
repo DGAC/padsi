@@ -53,8 +53,8 @@ def main():
                 sys.exit(status)
             else:
                 sys.exit(127)
-        except Exception as e:
-            print(f".... {str(e)}")
+        except Exception as e: # noqa: BLE001
+            print(f".... {e}")
             sys.exit(128)
 
 if __name__ == "__main__":

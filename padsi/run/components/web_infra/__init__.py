@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 #
 # Copyright (c) 2025-2026 DGAC/DSNA
 #
@@ -41,6 +39,9 @@ from .ca import RedirectCA
 
 _debug=False
 
+class WebInfraException(Exception):
+    pass
+
 class WebInfra(Component):
     """Web server which can act as a Web proxy (and directly connect to the requested Web server or forward requests to some others Web proxies), and
     a Web "catch all" server which is able to reply as any web server which is not allowed in a specified zone:
@@ -80,7 +81,7 @@ class WebInfra(Component):
         else:
             fname=os.path.join(self._sandbox_dir_name, "resolv.conf")
             with open(fname, "wt") as fd:
-                fd.write(f"nameserver    {str(self._listening_ip.ip)}\n")
+                fd.write(f"nameserver    {self._listening_ip.ip}\n")
             mounts[fname]={
                 "mount-point": "/etc/resolv.conf",
                 "read-only": True,
@@ -110,24 +111,23 @@ class WebInfra(Component):
                 FWRuleChain.OUTPUT,
             ))
 
-        if len(self._proxies)>0:
+        if len(self._proxies)>0 and self._direct_access_rules is not None:
             # allow access to the proxy's own DNS server and web-infra (redirection purposes)
-            if self._direct_access_rules is not None:
-                if self._listening_ip is None:
-                    syslog.syslog(syslog.LOG_ERR, "CODEBUG: self._listening_ip should not be None")
-                else:
-                    fw_rules.append(FWRule(
-                        "allow",
-                        "Dedicated DNS",
-                        Endpoint.from_repr(f"{str(self._listening_ip.ip)} ^ udp ^ 53"),
-                        FWRuleChain.OUTPUT,
-                    ))
-                    fw_rules.append(FWRule(
-                        "allow",
-                        "Web proxy with web redirection",
-                        Endpoint.from_repr(f"{str(self._listening_ip.ip)} ^ tcp ^ 443,8443"),
-                        FWRuleChain.OUTPUT,
-                    ))
+            if self._listening_ip is None:
+                syslog.syslog(syslog.LOG_ERR, "CODEBUG: self._listening_ip should not be None")
+            else:
+                fw_rules.append(FWRule(
+                    "allow",
+                    "Dedicated DNS",
+                    Endpoint.from_repr(f"{self._listening_ip.ip} ^ udp ^ 53"),
+                    FWRuleChain.OUTPUT,
+                ))
+                fw_rules.append(FWRule(
+                    "allow",
+                    "Web proxy with web redirection",
+                    Endpoint.from_repr(f"{self._listening_ip.ip} ^ tcp ^ 443,8443"),
+                    FWRuleChain.OUTPUT,
+                ))
 
         return (fw_rules, resolv_rules)
 
@@ -201,7 +201,7 @@ class WebInfra(Component):
         if self._pid is None:
             config_file=self._generate_config_file()
             if self._sandbox_dir_name is None:
-                raise Exception("CODEBUG: self._sandbox_dir_name should not be None")
+                raise WebInfraException("CODEBUG: self._sandbox_dir_name should not be None")
 
             script_dir=os.path.dirname(__file__)
             args=[os.path.join(script_dir, "web-infra"), os.path.join("/etc/web-infra", config_file)]
@@ -244,7 +244,7 @@ class WebInfra(Component):
     def deserialize(cls, data:dict) -> WebInfra:
         ldata = data.get("data")
         if ldata is None:
-            raise Exception("CODEBUG: no 'data' found in deserialized data")
+            raise WebInfraException("CODEBUG: no 'data' found in deserialized data")
         obj=cls(None, [], False, direct_access_rules=None)
         obj._sandbox_dir_name=ldata["dir"]
         obj._pid=ldata["pid"]

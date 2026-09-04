@@ -46,6 +46,9 @@ from gi.repository import GLib  # pyright: ignore
 import padsi.config
 
 
+class ProgException(Exception):
+    pass
+
 @dataclass
 class Notification:
     nid: int        # notification ID
@@ -133,7 +136,7 @@ class NotificationsServer:
 
                 purl=urllib.parse.urlparse(url)
                 if purl.scheme not in ("http", "https"):
-                    raise Exception(f"Unsuported scheme '{purl.scheme}'")
+                    raise ProgException(f"Unsuported scheme '{purl.scheme}'")
 
                 port=purl.port
                 if port is None:
@@ -141,7 +144,7 @@ class NotificationsServer:
 
                 # get the PID and the zone of the connected process
                 ucred=conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
-                (pid,uid,gid)=struct.unpack("3i", ucred)
+                (pid, _, _)=struct.unpack("3i", ucred)
                 zones=self._get_usable_zones(pid, purl.hostname, port)
 
                 furl=purl.netloc.replace(".", "\u200B.") # insert invisible spaces so GNOME Shell does not make it clickable
@@ -157,7 +160,7 @@ class NotificationsServer:
                     # display notification
                     # refer to https://specifications.freedesktop.org/notification-spec/1.3/protocol.html
                     if self._notify_iface is None:
-                        raise Exception("CODEBUG: self._notify_iface should not be None")
+                        raise ProgException("CODEBUG: self._notify_iface should not be None")
                     nid=self._notify_iface.Notify(
                         "PADSI", # app_name
                         0, # replaces_id
@@ -181,9 +184,9 @@ class NotificationsServer:
             except json.JSONDecodeError:
                 return True # wait for more data
 
-        except Exception as e:
+        except Exception as e: # noqa: BLE001
             print()
-            conn.sendall(f"ERROR: {str(e)}".encode())
+            conn.sendall(f"ERROR: {e}".encode())
             conn.close()
             del self._buffers[fd]
             return False
@@ -212,7 +215,7 @@ class NotificationsServer:
             else:
                 syslog.syslog(syslog.LOG_ERR, f"User service error for GET /web-redir: {resp.text}")
         except requests.exceptions.ConnectionError as e:
-            syslog.syslog(syslog.LOG_ERR, f"User service connection refused: {str(e)}")
+            syslog.syslog(syslog.LOG_ERR, f"User service connection refused: {e}")
         return res
 
     def _open_url_in_zone(self, zone:str, url:str, browser:str):
@@ -235,7 +238,7 @@ class NotificationsServer:
             else:
                 syslog.syslog(syslog.LOG_ERR, f"User service error for GET /web-redir: {resp.text}")
         except requests.exceptions.ConnectionError as e:
-            syslog.syslog(syslog.LOG_ERR, f"User service connection refused: {str(e)}")
+            syslog.syslog(syslog.LOG_ERR, f"User service connection refused: {e}")
 
     def run(self):
         if os.path.exists(self._socket_path):
@@ -255,7 +258,7 @@ class NotificationsServer:
 if __name__=="__main__":
     try:
         if len(sys.argv)!=3:
-            raise Exception(f"Usage: {sys.argv[0]} <user session directory> <configuration directory>")
+            raise ProgException(f"Usage: {sys.argv[0]} <user session directory> <configuration directory>")
         user_session_dir=sys.argv[1]
         config_dir=sys.argv[2]
 
@@ -266,7 +269,7 @@ if __name__=="__main__":
         server=NotificationsServer(gconf, user_session_dir)
         server.setup()
         server.run()
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Error: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Error: {e}")
         print(str(e), file=sys.stderr)
         sys.exit(1)

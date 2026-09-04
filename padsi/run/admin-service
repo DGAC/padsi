@@ -159,13 +159,15 @@ class AdminService:
 
             message = data.get("message")
             action=data.get("action")
-            match data.get("action"):
+            if action is None:
+                raise AdminServiceException("Invalid input: no action specified")
+            match action:
                 case "import" | "load":
                     hdd_file = data.get("hdd-file")
                     vars_file = data.get("vars-file")
                     extract_id = data.get("extract-id")
                 case _:
-                    raise AdminServiceException(f"Invalid action {data.get('action')}")
+                    raise AdminServiceException(f"Invalid action {action}")
 
             zone_name = data.get("zone")
             if zone_name is not None and not isinstance(zone_name, str):
@@ -174,27 +176,30 @@ class AdminService:
             return web.Response(text=f"Invalid input ({e})", status=400)
 
         # do the job
-        if action == "import":
-            try:
-                vm_version=await vm_proxy.stage_imported_files(self._gconf, self._call_system_service, vm_id,
-                        self._uid, self._gid, hdd_file, vars_file, message)
-                return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": None})
-            except PermissionError:
-                user=os.getuid()
+        match action:
+            case"import":
                 try:
-                    user=pwd.getpwuid(user).pw_name
-                except KeyError:
-                    syslog.syslog(syslog.LOG_ERR, f"User with ID {user} is not declared")
-                return web.Response(text=f"Could not import the VM: permission denied (check permissions of user '{user}')", status=400)
-            except Exception as e: # noqa: BLE001
-                return web.Response(text=f"Could not import the VM: {e}", status=400)
-        else:
-            try:
-                vm_version=await vm_proxy.vm_load(self._gconf, self._call_system_service, vm_id,
-                    self._uid, self._gid, extract_id, message)
-                return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": None})
-            except Exception as e: # noqa: BLE001
-                return web.Response(text=f"Could not load the VM: {e}", status=400)
+                    vm_version=await vm_proxy.stage_imported_files(self._gconf, self._call_system_service, vm_id,
+                            self._uid, self._gid, hdd_file, vars_file, message)
+                    return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": None})
+                except PermissionError:
+                    user=os.getuid()
+                    try:
+                        user=pwd.getpwuid(user).pw_name
+                    except KeyError:
+                        syslog.syslog(syslog.LOG_ERR, f"User with ID {user} is not declared")
+                    return web.Response(text=f"Could not import the VM: permission denied (check permissions of user '{user}')", status=400)
+                except Exception as e: # noqa: BLE001
+                    return web.Response(text=f"Could not import the VM: {e}", status=400)
+            case "load":
+                try:
+                    vm_version=await vm_proxy.vm_load(self._gconf, self._call_system_service, vm_id,
+                        self._uid, self._gid, extract_id, message)
+                    return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": None})
+                except Exception as e: # noqa: BLE001
+                    return web.Response(text=f"Could not load the VM: {e}", status=400)
+            case _:
+                return web.Response(text=f"Invalid input (action '{action}')", status=400)
 
     async def _api_vm_modify(self, request: web.Request):
         """Publish a staged VM version or merge a VM version with its backing VM version

@@ -54,13 +54,13 @@ def _lsof_list(filename:str, only_write_processes:bool=True) -> list[psutil.Proc
         try:
             proc=psutil.Process(pid)
             for (of_path, _of_fd) in proc.open_files():
-                if (not only_write_processes or only_write_processes) and os.path.samefile(filename, of_path):
+                if os.path.samefile(filename, of_path):
                     res.append(proc)
         except (PermissionError, psutil.AccessDenied):
             pass
         except Exception as e:
-            print(f"LSOF for PID error: {str(e)}", file=sys.stderr)
-            raise e
+            print(f"LSOF for PID error: {e}", file=sys.stderr)
+            raise
     return res
 
 def _lsof_any(filename: str, only_write_processes:bool=True) -> bool:
@@ -72,17 +72,20 @@ def _lsof_any(filename: str, only_write_processes:bool=True) -> bool:
         try:
             proc=psutil.Process(pid)
             for (of_path, _of_fd) in proc.open_files():
-                if (not only_write_processes or only_write_processes) and os.path.samefile(filename, of_path):
+                if os.path.samefile(filename, of_path):
                     return True
         except (PermissionError, psutil.AccessDenied):
             pass
         except Exception as e:
-            print(f"LSOF for PID error: {str(e)}", file=sys.stderr)
-            raise e
+            print(f"LSOF for PID error: {e}", file=sys.stderr)
+            raise
     return False
 
 def regexp(y, x, search=re.search):
     return 1 if search(y, x) else 0
+
+class Sqlite3DBException(Exception):
+    pass
 
 class Sqlite3DB:
     """Database access"""
@@ -116,7 +119,7 @@ class Sqlite3DB:
             }
         """
         if schema_definition and (not isinstance(schema_definition, dict) or 0 in schema_definition):
-            raise Exception(f"Invalid schema definition argument '{schema_definition}'")
+            raise Sqlite3DBException(f"Invalid schema definition argument '{schema_definition}'")
         self._db_file=os.path.realpath(db_file)
         db_dir=os.path.dirname(self._db_file)
         self._conn=None # actual database connection
@@ -128,14 +131,14 @@ class Sqlite3DB:
                 if not os.access(self._db_file, os.W_OK, effective_ids=True):
                     ro_mode=True
             else:
-                raise Exception(f"Access denied to DB file '{self._db_file}'")
+                raise Sqlite3DBException(f"Access denied to DB file '{self._db_file}'")
             if not os.access(db_dir, os.W_OK, effective_ids=True):
                 ro_mode=True
         else:
             if read_only:
-                raise Exception("Can't open a non existant database in rean-only mode")
+                raise Sqlite3DBException("Can't open a non existant database in rean-only mode")
             if not os.access(db_dir, os.W_OK, effective_ids=True):
-                raise Exception(f"Write access denied to DB directory '{db_dir}'")
+                raise Sqlite3DBException(f"Write access denied to DB directory '{db_dir}'")
         self._ro_mode=read_only or ro_mode
 
         # actually open connection
@@ -145,8 +148,8 @@ class Sqlite3DB:
             conn.create_function("regexp", 2, regexp)
             conn.isolation_level=None
             self._conn=conn
-        except Exception as e:
-            raise Exception(f"Could not open DB conection to '{self._db_file}': {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise Sqlite3DBException(f"Could not open DB conection to '{self._db_file}': {e}")
 
         # Misc. init
         self._transaction_level:int=0 # 0 if no transaction started, incremented by 1 each time transaction_begin() is called,
@@ -176,16 +179,16 @@ class Sqlite3DB:
                     if self._transaction_level>0:
                         self.transaction_rollback()
                     if str(e)=="database is locked":
-                        logging.log(logging.ERROR, f"Database '{self._db_file}' is locked, opened by programs {self._locker_processes_as_string()}")
+                        logging.log(logging.ERROR, f"Database '{self._db_file}' is locked, opened by programs {self._locker_processes_as_string()}") # noqa: LOG015
                         counter-=1
                         time.sleep(0.005) # yield control to something else if possible
                     else:
-                        raise e
+                        raise
 
         try:
             self.execute("PRAGMA busy_timeout=1000") # 1 second
-        except Exception as e:
-            logging.log(logging.WARNING, f"Failed to execute PRAGMA busy_timeout: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            logging.log(logging.WARNING, f"Failed to execute PRAGMA busy_timeout: {e}") # noqa: LOG015
 
     # context manager
     def __enter__(self):
@@ -205,18 +208,17 @@ class Sqlite3DB:
             self.transaction_begin()
             self.execute(f"CREATE TABLE IF NOT EXISTS {dbinfo_table_name} (key TEXT NOT NULL, value TEXT NOT NULL)")
             version=None
-            for version in schema_definition:
+            for (version, schema) in schema_definition.items():
                 assert isinstance(version, int)
                 if version>current_version:
-                    schema=schema_definition[version]
                     for sql in schema:
                         self.execute(sql)
             self.execute(f"DELETE FROM {dbinfo_table_name} WHERE key='version'")
             self.execute(f"INSERT INTO {dbinfo_table_name} (key, value) VALUES ('version', :version)", {"version": version})
             self.transaction_commit()
-        except Exception as e:
+        except Exception:
             self.transaction_rollback()
-            raise e
+            raise
 
     def _get_schema_version(self) -> int:
         """Get the current database schema version, will always return 0 if the DB's schema has not yet been created.
@@ -224,7 +226,7 @@ class Sqlite3DB:
         """
         try:
             return int(self.select_1st_row(f"SELECT value FROM {dbinfo_table_name} WHERE key='version'")[0]) # pyright: ignore
-        except Exception:
+        except Exception: # noqa: BLE001
             return 0
 
     def get_write_processes(self) -> list[psutil.Process]:
@@ -251,7 +253,7 @@ class Sqlite3DB:
     def schema_version(self) -> int:
         """Get the database schema version, which is incremented with each revision, Returns 0 if the database has not yet been initialized"""
         if self._conn is None:
-            raise Exception("Database could not be opened")
+            raise Sqlite3DBException("Database could not be opened")
         return self._get_schema_version()
 
     @property
@@ -308,9 +310,9 @@ class Sqlite3DB:
     def transaction_commit(self):
         """Commit (write any changes) to a transaction"""
         if self._ro_mode:
-            raise Exception("Database is read-only")
+            raise Sqlite3DBException("Database is read-only")
         if not self._transaction_cursor:
-            raise Exception("No transaction is started, can't commit")
+            raise Sqlite3DBException("No transaction is started, can't commit")
         if self._transaction_level==1:
             # last outer transaction level, perform a real commit
             self._transaction_cursor.execute("COMMIT")
@@ -325,15 +327,15 @@ class Sqlite3DB:
     def transaction_rollback(self):
         """Rolls back (cancels any changes) a transaction"""
         if not self._transaction_cursor:
-            raise Exception("No transaction is started, can't roll back")
+            raise Sqlite3DBException("No transaction is started, can't roll back")
 
         if self._transaction_level==1:
             # last outer transaction level, perform a real rollback
             try:
                 self._transaction_cursor.execute("ROLLBACK")
                 self._transaction_cursor.close()
-            except Exception as e:
-                logging.log(logging.ERROR, f"{str(e)} (while Rolling back transaction)")
+            except Exception as e: # noqa: BLE001
+                logging.log(logging.ERROR, f"{e} (while Rolling back transaction)") # noqa: LOG015
             finally:
                 self._transaction_cursor=None
                 self._transaction_level=0
@@ -345,7 +347,7 @@ class Sqlite3DB:
     def _get_cursor(self, force=False) -> sqlite3.Cursor:
         # create or use a transaction's cursor. If @force is True, a new cursor is always created
         if self._conn is None:
-            raise Exception("Dabase is closed")
+            raise Sqlite3DBException("Dabase is closed")
         counter=database_locked_timeout
         last_e=None
         while counter>0:
@@ -358,12 +360,12 @@ class Sqlite3DB:
                     return self._conn.cursor() # may fail if the object is being accessed from a thread different than the one it was created in
             except sqlite3.OperationalError as e:
                     if str(e)=="database is locked":
-                        logging.log(logging.ERROR, f"Database '{self._db_file}' is locked, opened by programs {self._locker_processes_as_string()}")
+                        logging.log(logging.ERROR, f"Database '{self._db_file}' is locked, opened by programs {self._locker_processes_as_string()}") # noqa: LOG015
                         counter-=1
                         last_e=e
                         time.sleep(0) # yield control to something else
                     else:
-                        raise e
+                        raise
         raise last_e # pyright: ignore
 
     def select_with_func(self, sql:str, parameters:dict|None, cb_function, *args):
@@ -390,7 +392,7 @@ class Sqlite3DB:
         """
         cf=sql[0:7].casefold()
         if cf!="select ":
-            raise Exception("Not an SQL SELECT command")
+            raise Sqlite3DBException("Not an SQL SELECT command")
         c=None
         last_e=None
         try:
@@ -404,12 +406,12 @@ class Sqlite3DB:
                     return cb_function(data, *args)
                 except sqlite3.OperationalError as e:
                     if str(e)=="database is locked":
-                        logging.log(logging.ERROR, f"Database '{self._db_file}' is locked, opened by programs {self._locker_processes_as_string()}")
+                        logging.log(logging.ERROR, f"Database '{self._db_file}' is locked, opened by programs {self._locker_processes_as_string()}") # noqa: LOG015
                         counter-=1
                         last_e=e
                         time.sleep(0) # yield control to something else
                     else:
-                        raise e
+                        raise
         finally:
             if not self._transaction_cursor and c is not None:
                 c.close()
@@ -426,7 +428,7 @@ class Sqlite3DB:
                 therow=None
                 for row in rows:
                     if therow:
-                        raise Exception("More than one DB row returned when at most one was expected")
+                        raise Sqlite3DBException("More than one DB row returned when at most one was expected")
                     therow=row
                 return therow
             else:
@@ -449,7 +451,7 @@ class Sqlite3DB:
     def execute(self, sql:str, parameters:dict|None=None):
         """Execute any non SELECT kind of command, for SELECT commands, use select_*() instead."""
         if self._ro_mode and sql[:7].casefold()!="pragma ":
-            raise Exception("Database is read-only")
+            raise Sqlite3DBException("Database is read-only")
         c=None
         try:
             last_e=None
@@ -463,12 +465,12 @@ class Sqlite3DB:
                     return
                 except sqlite3.OperationalError as e:
                     if str(e)=="database is locked":
-                        logging.log(logging.ERROR, f"Database '{self._db_file}' is locked, opened by programs {self._locker_processes_as_string()}")
+                        logging.log(logging.ERROR, f"Database '{self._db_file}' is locked, opened by programs {self._locker_processes_as_string()}") # noqa: LOG015
                         counter-=1
                         last_e=e
                         time.sleep(0) # yield control to something else
                     else:
-                        raise e
+                        raise
         finally:
             if not self._transaction_cursor and c is not None:
                 c.close()

@@ -410,7 +410,7 @@ class ZoneVM(ZoneFoundations):
 
         with open(os.path.join(host_tmp.name, "out"), "rt") as fd:
             keys: list[str] = []
-            for line in fd.readlines():
+            for line in fd:
                 line = line.strip()
                 if not line or line[0] == "#":
                     continue  # ignore comments
@@ -432,7 +432,7 @@ class ZoneVM(ZoneFoundations):
                             # copy other data from known_hosts file if it exists
                             try:
                                 with open(known_hosts_file, "rt") as fd:
-                                    for line in fd.readlines():
+                                    for line in fd:
                                         to_keep=True
                                         for dname in vm_domain_names:
                                             if line.startswith(f"{dname} "):
@@ -460,7 +460,7 @@ class ZoneVM(ZoneFoundations):
                             try:
                                 with open(config_file, "rt") as fd:
                                     do_copy = True
-                                    for line in fd.readlines():
+                                    for line in fd:
                                         if line.startswith("Host "):
                                             (_, targets) = line.split(maxsplit=1)
                                             targets = targets.strip()
@@ -487,8 +487,8 @@ class ZoneVM(ZoneFoundations):
                         lockfd.close()
 
                 return True
-            except Exception as e:
-                syslog.syslog(syslog.LOG_WARNING, f"Failed to create SSH's known hosts file {known_hosts_file if known_hosts_file is not None else '_undefined_'}: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_WARNING, f"Failed to create SSH's known hosts file {known_hosts_file if known_hosts_file is not None else '_undefined_'}: {e}")
         else:
             syslog.syslog(syslog.LOG_WARNING, "VM's SSH server did not provide any public key???")
         return False
@@ -531,8 +531,8 @@ class ZoneVM(ZoneFoundations):
                 syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: started VM, QEMU PID: {vm_pid}")
 
             # start the DHCP server now
-            assert(self._dhcp_c is not None)
-            self._dhcp_c.start(self.api)
+            if self._dhcp_c is not None:
+                self._dhcp_c.start(self.api)
 
             # try to get the VM's SSH server public key to set up everything for the user
             self._server_ssh_key_task = asyncio.create_task(self._propagate_ssh_server_pubkey())

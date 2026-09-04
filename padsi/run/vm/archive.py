@@ -38,15 +38,18 @@ from .version import VMVersion
 from .vmfiles import VMFiles
 
 
+class VMArchiveException(Exception):
+    pass
+
 def _get_archive_element(tar:tarfile.TarFile, path:str) -> tarfile.TarInfo:
         """Find an element in the tar archive"""
         try:
             ti=tar.getmember(path)
             if not ti.isfile():
-                raise Exception()
+                raise VMArchiveException()
             return ti
         except KeyError:
-            raise Exception(f"Invalid archive: missing or invalid file '{path}'")
+            raise VMArchiveException(f"Invalid archive: missing or invalid file '{path}'")
 
 class VMArchive:
     """Class to manipulate saved and to load VM versions packaged as a single TAR archive
@@ -85,25 +88,25 @@ class VMArchive:
             try:
                 data=tar.extractfile(ti)
                 if data is None:
-                    raise Exception
+                    raise VMArchiveException()
                 manifest=json.load(data)
                 self._when=manifest.get("saved-UTC")
                 if not isinstance(self._when, str):
-                    raise Exception()
+                    raise VMArchiveException()
                 self._vm_id=manifest.get("vm-id")
                 if not isinstance(self._vm_id, str):
-                    raise Exception()
+                    raise VMArchiveException()
                 self._dependency_size=manifest.get("dependency-size")
                 self._dependency_hash=manifest.get("dependency-hash")
                 if self._dependency_hash is None and self._dependency_size is not None or \
                    self._dependency_hash is not None and self._dependency_size is None:
-                   raise Exception()
+                   raise VMArchiveException()
                 if self._dependency_size is not None and (not isinstance(self._dependency_size, int) or self._dependency_size<=0):
-                    raise Exception()
+                    raise VMArchiveException()
                 if self._dependency_hash is not None and not isinstance(self._dependency_hash, str):
-                    raise Exception()
-            except Exception:
-                raise Exception("Could not open archive, or nvalid archive: missing or invalid manifest")
+                    raise VMArchiveException()
+            except Exception: # noqa: BLE001
+                raise VMArchiveException("Could not open archive, or nvalid archive: missing or invalid manifest")
 
     def extract(self, vm_conf:VirtualMachine) -> str:
         """Extract the VM version's files in the <staged_dir>/<extract-id> directory.
@@ -122,7 +125,7 @@ class VMArchive:
                     vm_version=vm_v
                     break
             if vm_version is None:
-                raise Exception("Could not find any base VM version for this partial archive")
+                raise VMArchiveException("Could not find any base VM version for this partial archive")
 
         # extract the archive's contents
         if vm_files is None:
@@ -160,7 +163,7 @@ class VMArchive:
         parent=vmf.get_parent_version(vm_version)
         while parent is not None:
             if not parent.is_complete:
-                raise Exception(f"VM version {parent} is not complete")
+                raise VMArchiveException(f"VM version {parent} is not complete")
             dependencies.append(parent)
             parent=vmf.get_parent_version(parent)
 

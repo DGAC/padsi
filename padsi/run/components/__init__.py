@@ -25,6 +25,9 @@ from abc import ABC
 import nsbubble
 
 
+class ComponentException(Exception):
+    pass
+
 class Component(ABC):
     """Abstract class for all the components
     """
@@ -58,12 +61,10 @@ class Component(ABC):
     def start(self, api:nsbubble.BubbleAPI):
         """Actually start the component's processes in a bubble using the api object
         """
-        pass
 
     def stop(self, api:nsbubble.BubbleAPI):
         """Actually stop the component's processes and remove any artefacts left
         """
-        pass
 
     def serialize(self) -> dict:
         """Serialize the component for the purpose of calling the stop() method,
@@ -107,4 +108,4 @@ class Component(ABC):
             case _:
                 msg=f"Unhandled deserialization of component class '{data.get('class')}'"
                 syslog.syslog(syslog.LOG_ERR, msg)
-                raise Exception(msg)
+                raise ComponentException(msg)

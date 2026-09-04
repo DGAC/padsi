@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 #
 # Copyright (c) 2025-2026 DGAC/DSNA
 #
@@ -36,6 +34,9 @@ import nsbubble
 from .. import Component
 
 _debug=False
+
+class FuseComponentException(Exception):
+    pass
 
 class Fuse(Component):
     """Fuse component to proxy the usage of "fusermount" and "umount" via a dedicated "mount-server.py" process
@@ -88,7 +89,7 @@ class Fuse(Component):
         if self._pid is not None:
             try:
                 os.kill(self._pid, signal.SIGKILL)
-            except Exception:
+            except Exception: # noqa: BLE001,S110
                 pass # process may already have been killed
             if self._proc is not None:
                 self._proc.wait()
@@ -108,7 +109,7 @@ class Fuse(Component):
     def deserialize(cls, data:dict) -> Fuse:
         ldata=data.get("data")
         if ldata is None:
-            raise Exception("CODEBUG: no 'data' found in deserialized data")
+            raise FuseComponentException("CODEBUG: no 'data' found in deserialized data")
         obj=cls("dummy", logs_dir=ldata["logs-dir"])
         obj._pid=ldata["pid"]
         return obj

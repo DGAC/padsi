@@ -42,6 +42,9 @@ class VMVersionInfo:
     parent:VMVersion|None
     children:list[VMVersion]
 
+class VMFilesException(Exception):
+    pass
+
 class VMFiles:
     """Object to manage all the files associated to a specific VM (declared in the configuration)
 
@@ -54,7 +57,7 @@ class VMFiles:
     """
     def __init__(self, vm_dir:str, uid:int|None=None, gid:int|None=None, analyse:bool=True):
         if not os.path.isabs(vm_dir):
-            raise Exception(f"Expected vm_dir '{vm_dir}' to be an absolute directory")
+            raise VMFilesException(f"Expected vm_dir '{vm_dir}' to be an absolute directory")
         self._vm_dir=vm_dir
         self._uid=uid if uid is not None else os.geteuid()
         try:
@@ -121,14 +124,14 @@ class VMFiles:
                 return self.get_base_version(version)
             case VMVersionType.USER:
                 if zone_name is None:
-                    raise Exception("no zone specified (user VM versions are bound to zones)")
+                    raise VMFilesException("no zone specified (user VM versions are bound to zones)")
                 return self.get_user_version(version, zone_name)
             case VMVersionType.SNAP:
                 if zone_name is None:
-                    raise Exception("no zone specified (snapshot VM versions are bound to zones)")
+                    raise VMFilesException("no zone specified (snapshot VM versions are bound to zones)")
                 return self.get_snapshot_version(version, zone_name)
             case _:
-                raise Exception(f"CODEBUG: unknown VMVersionType {version_type}") # pyright: ignore
+                raise VMFilesException(f"CODEBUG: unknown VMVersionType {version_type}") # pyright: ignore
 
     def get_vm_version_by_id(self, vmversion_id:str) -> VMVersion|None:
         return self._all_versions_by_id.get(vmversion_id)
@@ -306,7 +309,7 @@ class VMFiles:
                     if vmv is None:
                         vmv=vmversion
                     else:
-                        raise Exception(f"VM versions '{str(vmv)}' and '{str(vmversion)}' have the same nickname")
+                        raise VMFilesException(f"VM versions '{vmv}' and '{vmversion}' have the same nickname")
         return vmv
 
     #
@@ -343,15 +346,15 @@ class VMFiles:
         """
         self._check_version_directory(vmversion)
         if vmversion.version_number is None:
-            raise Exception("VM version is already a staged VM version")
+            raise VMFilesException("VM version is already a staged VM version")
 
         if not vmversion.is_complete or vmversion.state!=VMState.STOPPED:
-            raise Exception(f"VM version {vmversion.id} is not complete or in the finished state ({vmversion.state})")
+            raise VMFilesException(f"VM version {vmversion.id} is not complete or in the finished state ({vmversion.state})")
 
         target=VMVersion(vmversion.version_type, self.staging_directory)
         target=self._all_versions_by_id.get(target.id, target)
         if target.is_complete and target.state==VMState.STOPPED:
-            raise Exception("There is already a staged VM version")
+            raise VMFilesException("There is already a staged VM version")
         if target.state==VMState.DISCARDED:
             target.discard_files()
 
@@ -364,10 +367,10 @@ class VMFiles:
         """Make a staged VM version available to the user"""
         self._check_version_directory(vmversion)
         if vmversion.version_number is not None:
-            raise Exception("VM version is not a staged VM version")
+            raise VMFilesException("VM version is not a staged VM version")
 
         if not vmversion.is_complete or vmversion.state!=VMState.STOPPED:
-            raise Exception(f"VM version {vmversion.id} is not complete or in the finished state")
+            raise VMFilesException(f"VM version {vmversion.id} is not complete or in the finished state")
 
         if vmversion.version_type==VMVersionType.BASE:
             nv=self.next_base_version_number
@@ -379,7 +382,7 @@ class VMFiles:
             self._analyse()
             return target
 
-        raise Exception("Only BASE versions can be published")
+        raise VMFilesException("Only BASE versions can be published")
 
     def create_user_version(self, zone_name:str, base_vmversion:VMVersion|None=None) -> VMVersion:
         """Create a VM version which will be customized for the user
@@ -388,7 +391,7 @@ class VMFiles:
         if vmversion is None:
             vmversion=self.last_base_version
             if vmversion is None:
-                raise Exception("No base VM version exists yet")
+                raise VMFilesException("No base VM version exists yet")
         else:
             self._check_version_directory(vmversion)
 
@@ -410,7 +413,7 @@ class VMFiles:
         if vmversion is None:
             vmversion=self.get_last_user_version(zone_name)
             if vmversion is None:
-                raise Exception("No user VM version exists yet")
+                raise VMFilesException("No user VM version exists yet")
         else:
             self._check_version_directory(vmversion)
 
@@ -437,13 +440,13 @@ class VMFiles:
         self._check_version_directory(vmversion)
         vmv=self._all_versions_by_id.get(vmversion.id, vmversion)
         if vmv not in self._committable_versions:
-            raise Exception("VM version is not committable")
+            raise VMFilesException("VM version is not committable")
 
         if vmversion.backing_image_file is None:
-            raise Exception(f"CODEBUG: VM version {vmversion} is committable but has not backend image file")
+            raise VMFilesException(f"CODEBUG: VM version {vmversion} is committable but has not backend image file")
         backing_version=self._all_versions_by_image.get(vmversion.backing_image_file)
         if backing_version is None:
-            raise Exception(f"CODEBUG: committable VM version {vmversion} has no backing VM version")
+            raise VMFilesException(f"CODEBUG: committable VM version {vmversion} has no backing VM version")
 
         # actually commit
         vmversion.commit(backing_version, to_version, dest_uid, dest_gid, message=message)
@@ -502,9 +505,9 @@ class VMFiles:
                     all_used_files.append(vmversion.vars_file)
                     all_used_files.append(vmversion.infos_file)
                     self._all_versions_by_image[vmversion.image_file]=vmversion
-            except Exception as e:
+            except Exception as e: # noqa: BLE001
                 if vmversion is not None and vmversion.is_complete:
-                    syslog.syslog(syslog.LOG_WARNING, f"VMVersion {vmversion} has problems, ignoring it: {str(e)}")
+                    syslog.syslog(syslog.LOG_WARNING, f"VMVersion {vmversion} has problems, ignoring it: {e}")
 
         # list VM versions
         for fname in os.listdir(self._vm_dir):
@@ -528,10 +531,10 @@ class VMFiles:
                                 all_used_files.append(vmversion.vars_file)
                                 all_used_files.append(vmversion.infos_file)
                                 self._all_versions_by_image[vmversion.image_file]=vmversion
-                        except Exception as e:
+                        except Exception as e: # noqa: BLE001
                             if vmversion is not None and vmversion.is_complete:
-                                syslog.syslog(syslog.LOG_WARNING, f"VMVersion {vmversion} has problems, ignoring it: {str(e)}")
-                except Exception:
+                                syslog.syslog(syslog.LOG_WARNING, f"VMVersion {vmversion} has problems, ignoring it: {e}")
+                except Exception: # noqa: BLE001,S110
                     # ignore that file
                     pass
             else:
@@ -571,10 +574,10 @@ class VMFiles:
                                                 all_used_files.append(vmversion.vars_file)
                                                 all_used_files.append(vmversion.infos_file)
                                                 self._all_versions_by_image[vmversion.image_file]=vmversion
-                                        except Exception as e:
+                                        except Exception as e: # noqa: BLE001
                                             if vmversion is not None and vmversion.is_complete:
-                                                syslog.syslog(syslog.LOG_WARNING, f"VMVersion {vmversion} has problems, ignoring it: {str(e)}")
-                                except Exception:
+                                                syslog.syslog(syslog.LOG_WARNING, f"VMVersion {vmversion} has problems, ignoring it: {e}")
+                                except Exception: # noqa: BLE001,S110
                                     # ignore that file
                                     pass
 
@@ -586,7 +589,7 @@ class VMFiles:
                 ruid=int(parts[-1])
                 if ruid!=self._uid:
                     continue
-            except Exception:
+            except Exception: # noqa: BLE001,S110
                 pass
 
             for fname in files:
@@ -600,7 +603,7 @@ class VMFiles:
             if backing_image is not None:
                 bvmv=self._all_versions_by_image.get(backing_image)
                 if bvmv is None:
-                    raise Exception(f"CODEBUG: no backing version for VM version {vmv} with backing file '{backing_image}'")
+                    raise VMFilesException(f"CODEBUG: no backing version for VM version {vmv} with backing file '{backing_image}'")
                 else:
                     if bvmv not in self._reverse_dependencies:
                         self._reverse_dependencies[bvmv]=set()
@@ -645,7 +648,7 @@ class VMFiles:
                 if backing_image is not None:
                     bvmv=self._all_versions_by_image.get(backing_image)
                     if bvmv is None:
-                        raise Exception(f"CODEBUG: no backing version for committable VM version {vmv}")
+                        raise VMFilesException(f"CODEBUG: no backing version for committable VM version {vmv}")
                     else:
                         if len(self.get_children_versions(bvmv))==1:
                             self._committable_versions.append(vmv)
@@ -667,7 +670,7 @@ class VMFiles:
         """Ensure that the VM version is in the directory managed by this object
         """
         if vmversion.directory!=self.directory and not vmversion.directory.startswith(self.directory+"/"):
-            raise Exception(f"VM version is not in the '{self.directory}' directory")
+            raise VMFilesException(f"VM version is not in the '{self.directory}' directory")
 
     def declare_version_object(self, vmversion: VMVersion):
         """Make sure we use the specified vmversion when this object
@@ -676,7 +679,7 @@ class VMFiles:
         self._check_version_directory(vmversion)
         ev=self._all_versions_by_id.get(vmversion.id)
         if ev is not None and ev is not vmversion:
-            raise Exception(f"There is already an object for this VM version '{vmversion.id}'")
+            raise VMFilesException(f"There is already an object for this VM version '{vmversion.id}'")
         self._all_versions_by_id[vmversion.id]=vmversion
 
     def get_children_versions(self, vmversion:VMVersion) -> set[VMVersion]:
@@ -755,9 +758,9 @@ class VMFiles:
             depinfos=None if children_descr is None else children_descr
         else:
             if children_descr is None:
-                depinfos=f"references {str(parent_vmversion)}"
+                depinfos=f"references {parent_vmversion}"
             else:
-                depinfos=f"references {str(parent_vmversion)}, {children_descr}"
+                depinfos=f"references {parent_vmversion}, {children_descr}"
         return VMVersionInfo(depinfos, parent_vmversion, list(children_vmversions))
 
     def serialize(self) -> dict[str,Any]:

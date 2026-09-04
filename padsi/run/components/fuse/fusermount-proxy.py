@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 
 #
 # Copyright (c) 2025-2026 DGAC/DSNA
@@ -86,8 +86,8 @@ def main():
         print(resp_json.get("stdout", ""), end="")
         print(resp_json.get("stderr", ""), end="", file=sys.stderr)
         sys.exit(resp_json.get("returncode", 1))
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Unexpected response from mount-server: '{response.decode()}' ({str(e)})")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Unexpected response from mount-server: '{response.decode()}' ({e})")
         sys.exit(1)
 
 if __name__ == "__main__":

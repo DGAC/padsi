@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 #
 # Copyright (c) 2025-2026 DGAC/DSNA
 #
@@ -37,6 +35,9 @@ import padsi.config
 
 from .. import Component
 
+
+class StaticFirewallException(Exception):
+    pass
 
 class StaticFirewall(Component):
     """Configure a bubble's netfilter firewall"""
@@ -127,7 +128,7 @@ class StaticFirewall(Component):
     def deserialize(cls, data:dict) -> StaticFirewall:
         ldata=data.get("data")
         if ldata is None:
-            raise Exception("CODEBUG: no 'data' found in deserialized data")
+            raise StaticFirewallException("CODEBUG: no 'data' found in deserialized data")
         obj=cls([])
         obj._sandbox_dir_name=ldata["sandbox-dir"]
         obj._pid=ldata["pid"]

@@ -34,12 +34,26 @@ import syslog
 import time
 from dataclasses import dataclass
 
-from unboundmodule import (MODULE_ERROR, MODULE_EVENT_MODDONE,
-                           MODULE_EVENT_NEW, MODULE_EVENT_PASS,
-                           MODULE_FINISHED, MODULE_WAIT_MODULE, PKT_AA, PKT_QR,
-                           PKT_RA, RCODE_NOERROR, RCODE_NXDOMAIN, RR_CLASS_IN,
-                           RR_TYPE_A, RR_TYPE_ANY, DNSMessage, log_err,
-                           log_info, strmodulevent)
+from unboundmodule import (
+    MODULE_ERROR,
+    MODULE_EVENT_MODDONE,
+    MODULE_EVENT_NEW,
+    MODULE_EVENT_PASS,
+    MODULE_FINISHED,
+    MODULE_WAIT_MODULE,
+    PKT_AA,
+    PKT_QR,
+    PKT_RA,
+    RCODE_NOERROR,
+    RCODE_NXDOMAIN,
+    RR_CLASS_IN,
+    RR_TYPE_A,
+    RR_TYPE_ANY,
+    DNSMessage,
+    log_err,
+    log_info,
+    strmodulevent,
+)
 
 _debug=False
 
@@ -49,8 +63,8 @@ fw_socket_file="/tmp/dns-fw.sock"
 plogger=logging.getLogger(__name__+".mod")
 try:
     file_handler=logging.FileHandler("/var/log/resolv.log")
-except Exception as e:
-    syslog.syslog(syslog.LOG_ERR, f"Could not start logging to /var/log/resolv.log: {str(e)}")
+except Exception as e: # noqa: BLE001
+    syslog.syslog(syslog.LOG_ERR, f"Could not start logging to /var/log/resolv.log: {e}")
     sys.exit(1)
 
 logging.Formatter.converter=time.gmtime # set the converter to use UTC
@@ -106,28 +120,29 @@ def domain_to_regex(domain:str) -> str:
 
 def init(id, cfg):
     #log_info("pythonmod: init called, module id is %d port: %d script: %s" % (id, cfg.port, cfg.python_script))
-    global resolv_basic_allow_domains
-    global resolv_basic_deny_domains
-    global resolv_pattern_rules
+    global resolv_basic_allow_domains # noqa: PLW0602
+    global resolv_basic_deny_domains # noqa: PLW0602
+    global resolv_pattern_rules # noqa: PLW0602
     global socket_client
 
     if _debug:
         log_info(f"Python (version {platform.python_version()}) module init")
 
     # load all the resolv. rules
-    for entry in json.loads(open(resolv_rules_file, "r").read()):
-        query=None
-        try:
-            query=entry["query"]
-            if "*" in query:
-                expr=re.compile(domain_to_regex(query))
-                resolv_pattern_rules.append(ResolvPatternRule(entry["action"]=="allow", expr))
-            elif entry["action"]=="allow":
-                resolv_basic_allow_domains.append(query)
-            else:
-                resolv_basic_deny_domains.append(query)
-        except Exception:
-            syslog.syslog(syslog.LOG_WARNING, f"Invalid rule's query '{query}'")
+    with open(resolv_rules_file, "r") as fd:
+        for entry in json.loads(fd.read()):
+            query=None
+            try:
+                query=entry["query"]
+                if "*" in query:
+                    expr=re.compile(domain_to_regex(query))
+                    resolv_pattern_rules.append(ResolvPatternRule(entry["action"]=="allow", expr))
+                elif entry["action"]=="allow":
+                    resolv_basic_allow_domains.append(query)
+                else:
+                    resolv_basic_deny_domains.append(query)
+            except Exception: # noqa: BLE001
+                syslog.syslog(syslog.LOG_WARNING, f"Invalid rule's query '{query}'")
 
     # open the socket to talk to the FW management component (fw_socket_file)
     socket_client=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -160,8 +175,8 @@ def get_requester_ip(qstate):
             return q.addr
         return None
     except NameError as e:
-        log_err(f"[ERR: {str(e)}]")
-        raise e
+        log_err(f"[ERR: {e}]")
+        raise
 
 def get_A_record(data):
     (rdlength, rdata) = (data[:2], data[2:])
@@ -170,7 +185,7 @@ def get_A_record(data):
         assert len(rdata)==4
         addr_str=[str(c) for c in rdata]
         return ".".join(addr_str)
-    except Exception:
+    except Exception: # noqa: BLE001
         txt=f"Unhandled A record data {base64.b64encode(data).decode()}"
         log_err(txt)
         plogger.warning(json.dumps({
@@ -186,14 +201,14 @@ def get_AAAA_record(data):
         #assert len(rdata)==16
         addr_bytes = [c for c in rdata]
         addr_str=[]
-        for index in range(0,8):
+        for index in range(8):
             if addr_bytes[index]==0:
-                sdata="%x"%addr_bytes[index+1]
+                sdata=f"{addr_bytes[index+1]:x}"
             else:
-                sdata="%x%02x"%(addr_bytes[index],addr_bytes[index+1])
+                sdata=f"{addr_bytes[index]:x}{addr_bytes[index+1]:02x}"
             addr_str+=[sdata]
         return ":".join(addr_str)
-    except Exception:
+    except Exception: # noqa: BLE001
         txt=f"Unhandled AAAA record data: {base64.b64encode(data).decode()}"
         log_err(txt)
         plogger.warning(json.dumps({
@@ -214,7 +229,7 @@ def get_CNAME_record(data):
                 parts.append(part)
             i+=partlen+1
         return '.'.join(parts)
-    except Exception:
+    except Exception: # noqa: BLE001
         txt=f"Unhandled CNAME record data: {base64.b64encode(data).decode()}"
         log_err(txt)
         plogger.warning(json.dumps({
@@ -224,9 +239,9 @@ def get_CNAME_record(data):
         return None
 
 def operate(id, event, qstate, qdata):
-    global resolv_basic_allow_domains
-    global resolv_basic_deny_domains
-    global resolv_pattern_rules
+    global resolv_basic_allow_domains # noqa: PLW0602
+    global resolv_basic_deny_domains # noqa: PLW0602
+    global resolv_pattern_rules # noqa: PLW0602
     #log_info("pythonmod: operate called, id: %d, event:%s" % (id, strmodulevent(event)))
 
     if event in (MODULE_EVENT_NEW, MODULE_EVENT_PASS): # query was passed from the previous module or new query
@@ -287,8 +302,8 @@ def operate(id, event, qstate, qdata):
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"requested {qname}, type {qstate.qinfo.qtype_str} from {req_addr}: allowed")
                 return True
-            except Exception as e:
-                log_err(f"ERROR while handling event {strmodulevent(event)}: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                log_err(f"ERROR while handling event {strmodulevent(event)}: {e}")
                 qstate.ext_state[id]=MODULE_ERROR
                 return True
         else:
@@ -307,14 +322,14 @@ def operate(id, event, qstate, qdata):
                 # build list of resolved IPs
                 rep=qstate.return_msg.rep
                 resolved_ips=[]
-                for i in range(0, rep.rrset_count):
+                for i in range(rep.rrset_count):
                     rr=rep.rrsets[i]
                     rk=rr.rk
 
                     if rk.rrset_class_str=="IN":
                         if rk.type_str=="A":
                             d=rr.entry.data
-                            for j in range(0,d.count+d.rrsig_count):
+                            for j in range(d.count+d.rrsig_count):
                                 ttl=d.rr_ttl[j]
                                 rec=get_A_record(d.rr_data[j])
                                 if rec:
@@ -324,7 +339,7 @@ def operate(id, event, qstate, qdata):
                                 # TODO: report on the d.security and d.trust values
                         elif rk.type_str=="AAAA":
                             d=rr.entry.data
-                            for j in range(0, d.count+d.rrsig_count):
+                            for j in range(d.count+d.rrsig_count):
                                 ttl=d.rr_ttl[j]
                                 rec=get_AAAA_record(d.rr_data[j])
                                 if rec:
@@ -334,7 +349,7 @@ def operate(id, event, qstate, qdata):
                         elif rk.type_str=="CNAME":
                             d=rr.entry.data
                             cnames=[]
-                            for j in range(0, d.count+d.rrsig_count):
+                            for j in range(d.count+d.rrsig_count):
                                 cname=get_CNAME_record(d.rr_data[j])
                                 if cname:
                                     # add this CNAME in the allow list
@@ -355,15 +370,15 @@ def operate(id, event, qstate, qdata):
                             # logged only for now
                             d=rr.entry.data
                             try:
-                                data=[d.rr_data[j] for j in range(0, d.count+d.rrsig_count)]
+                                data=[d.rr_data[j] for j in range(d.count+d.rrsig_count)]
                                 plogger.info(json.dumps({
                                     "action": "result",
                                     "req": qstate.qinfo.qname_str,
                                     rk.type_str: data,
                                     "from": req_addr
                                 }))
-                            except Exception:
-                                data=[base64.b64encode(d.rr_data[j]).decode() for j in range(0, d.count+d.rrsig_count)]
+                            except Exception: # noqa: BLE001
+                                data=[base64.b64encode(d.rr_data[j]).decode() for j in range(d.count+d.rrsig_count)]
                                 plogger.info(json.dumps({
                                     "action": "result",
                                     "req": qstate.qinfo.qname_str,
@@ -393,12 +408,12 @@ def operate(id, event, qstate, qdata):
                         resp=socket_client.recv(1024)
                         if resp!=b"Ok":
                             syslog.syslog(syslog.LOG_ERR, f"Failed ro send resolv. IPs to FW server: {resp}")
-            except Exception as e:
-                log_err(f"ERROR while handling response: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                log_err(f"ERROR while handling response: {e}")
 
         qstate.ext_state[id]=MODULE_FINISHED
         return True
     else:
-        log_err("Unhandled event %s"%event)
+        log_err(f"Unhandled event {event}")
         qstate.ext_state[id]=MODULE_ERROR
         return True

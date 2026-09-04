@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 #
 # Copyright (c) 2025-2026 DGAC/DSNA
 #
@@ -35,8 +33,11 @@ from .. import Component
 
 _debug=True
 
+class WaylandProxyException(Exception):
+    pass
+
 class WaylandProxy(Component):
-    """
+    """Wayland proxy
     """
     def __init__(self, socket_dir:str, zone_name:str, allowed_zones:set[str]):
         self._socket_dir=socket_dir
@@ -108,7 +109,7 @@ class WaylandProxy(Component):
     def deserialize(cls, data:dict) -> WaylandProxy:
         ldata = data.get("data")
         if ldata is None:
-            raise Exception("CODEBUG: no 'data' found in deserialized data")
+            raise WaylandProxyException("CODEBUG: no 'data' found in deserialized data")
         obj=cls(ldata["socket-dir"], "dummy", set())
         obj._pid=ldata["pid"]
         return obj

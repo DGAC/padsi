@@ -33,6 +33,9 @@ import time
 import firewall
 
 
+class FirewallException(Exception):
+    pass
+
 def _get_default_route_interface():
     counter=0
     data="---"
@@ -40,14 +43,14 @@ def _get_default_route_interface():
         counter+=1
         time.sleep(0.2)
 
-        p=subprocess.run(["ip", "-j", "route", "show", "default"], capture_output=True)
+        p=subprocess.run(["ip", "-j", "route", "show", "default"], capture_output=True, check=False)
         if p.returncode!=0:
-            raise Exception(f"Could not determine default route's interface: {p.stderr.decode()}")
+            raise FirewallException(f"Could not determine default route's interface: {p.stderr.decode()}")
         data=json.loads(p.stdout.decode())
         if len(data)==1:
             return data[0]["dev"]
 
-    raise Exception(f"Could not determine default route's interface: {len(data)} default route(s), exactly 1 needed")
+    raise FirewallException(f"Could not determine default route's interface: {len(data)} default route(s), exactly 1 needed")
 
 class Firewall(firewall.Firewall):
     """Object which modifies the netfilter based firewall to:
@@ -90,9 +93,9 @@ class Firewall(firewall.Firewall):
                                 fltype=None
                         if fltype is not None:
                             self.flow_set_policy(fltype, fl, policy)
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_WARNING, f"Could not set policy {policy.value} for rule '{rule}': {str(e)}, ignoring")
-                except Exception:
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_WARNING, f"Could not set policy {policy.value} for rule '{rule}': {e}, ignoring")
+                except Exception: # noqa: BLE001
                     syslog.syslog(syslog.LOG_ERR, f"Invalid firewall rule '{rule}'")
 
 if __name__=="__main__":
@@ -103,5 +106,5 @@ if __name__=="__main__":
             lspec=None
         f=Firewall(log_denied_spec=lspec)
         syslog.syslog(syslog.LOG_INFO, "Static firewall terminated normally")
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Fatal error: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Fatal error: {e}")

@@ -41,8 +41,8 @@ viewer_pid=int(viewer_pid_arg) if viewer_pid_arg!="NODISPLAY" else None
 vmversion=padsi.run.VMVersion.from_files(img_file, vars_file, infos_file)
 try:
     vmversion.set_state(padsi.run.VMState.RUNNING, "VM has been started")
-except Exception as e:
-    syslog.syslog(syslog.LOG_ERR, f"Could not change the VM state to RUNNING: {str(e)}")
+except Exception as e: # noqa: BLE001
+    syslog.syslog(syslog.LOG_ERR, f"Could not change the VM state to RUNNING: {e}")
     sys.exit(1)
 
 # "acquire" the process's infos
@@ -58,7 +58,7 @@ while True:
         if viewer_pid is not None:
             viewer_proc=psutil.Process(viewer_pid)
         break
-    except Exception:
+    except Exception: # noqa: BLE001
         syslog.syslog(syslog.LOG_ERR, f"Could not find either QEMU (PID {qemu_pid}) or the viewer (PID {viewer_pid}) process")
         if counter>10:
             break

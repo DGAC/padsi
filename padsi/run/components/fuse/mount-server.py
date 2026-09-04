@@ -31,6 +31,9 @@ from typing import Any
 
 _debug=False
 
+class ProgException(Exception):
+    pass
+
 def recv_fd(conn:socket.socket) -> tuple[int|None, Any]:
     """Receive a file descriptor and JSON metadata"""
     (msg, ancdata, *_)=conn.recvmsg(4096, socket.CMSG_LEN(4))
@@ -63,12 +66,12 @@ class Job:
             self._client_conn.sendall(json.dumps(resp).encode())
         except asyncio.CancelledError:
             syslog.syslog(syslog.LOG_ERR, "Job cancelled")
-            self._client_conn.sendall("ERROR: job cancelled".encode())
+            self._client_conn.sendall(b"ERROR: job cancelled")
         except BrokenPipeError:
             pass
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"ERROR: {str(e)} (run() exception type: {type(e)})")
-            self._client_conn.sendall(f"ERROR: {str(e)}".encode())
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"ERROR: {e} (run() exception type: {type(e)})")
+            self._client_conn.sendall(f"ERROR: {e}".encode())
         finally:
             self._client_conn.close()
 
@@ -82,16 +85,16 @@ class Server:
 
     def declare_dirs_map(self, b_dir:str, h_dir:str):
         if not os.path.isabs(b_dir):
-            raise Exception(f"Invalid non absolute path '{b_dir}' in bubble")
+            raise ProgException(f"Invalid non absolute path '{b_dir}' in bubble")
         if not os.path.isabs(h_dir):
-            raise Exception(f"Invalid non absolute path '{h_dir}' in host")
+            raise ProgException(f"Invalid non absolute path '{h_dir}' in host")
         self._dirs_map[b_dir]=h_dir
 
     def map_bubble_dir_to_host(self, mountpoint:str) -> str:
         for (b_dir, h_dir) in self._dirs_map.items():
             if mountpoint.startswith(b_dir):
                 return os.path.join(h_dir, mountpoint[len(b_dir)+1:])
-        raise Exception(f"Invalid mount point '{mountpoint}'")
+        raise ProgException(f"Invalid mount point '{mountpoint}'")
 
     async def _handle_fusermount(self, fd: int|None, data:Any) -> asyncio.subprocess.Process:
         mountpoint=data["mp"]
@@ -115,7 +118,7 @@ class Server:
 
     async def _handle_umount(self, fd: int|None, data:Any) -> asyncio.subprocess.Process:
         if fd is not None:
-            raise Exception(f"Unexpected passed file descriptor {fd}")
+            raise ProgException(f"Unexpected passed file descriptor {fd}")
         mountpoint=data["mp"]
         args=data["args"]
         if mountpoint is not None:
@@ -168,13 +171,13 @@ class Server:
                         case "umount":
                             proc=await self._handle_umount(fd, data)
                         case _:
-                            raise Exception(f"Unhandled proxied program '{data.get('prog')}'")
+                            raise ProgException(f"Unhandled proxied program '{data.get('prog')}'")
 
                     job=Job(proc, conn)
                     task=asyncio.create_task(job.run())
                     self._jobs[task]=job
                     task.add_done_callback(self._job_done)
-                except Exception as e:
+                except Exception as e: # noqa: BLE001
                     syslog.syslog(syslog.LOG_ERR, str(e))
                     resp={
                         "returncode": 1,
@@ -183,8 +186,8 @@ class Server:
                     }
                     conn.sendall(json.dumps(resp).encode())
                     conn.close()
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Really unexpected error: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Really unexpected error: {e}")
         finally:
             os.unlink(self._socket_path)
 
@@ -194,7 +197,7 @@ async def main(server:Server):
 if __name__=="__main__":
     # parse command line arguments
     if len(sys.argv)<4 or len(sys.argv)%2!=0:
-        raise Exception(f"Usage: {__file__} <socket path> <dir in bubble> <corresponding dir in host> [...]")
+        raise ProgException(f"Usage: {__file__} <socket path> <dir in bubble> <corresponding dir in host> [...]")
     server=Server(sys.argv[1])
 
     index=2

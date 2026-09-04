@@ -25,10 +25,9 @@ import os
 import socket
 import sys
 import syslog
-from typing import List, Tuple
 
 
-def recv_fds_once(sock: socket.socket, msglen: int, nfds: int) -> Tuple[bytes, List[int]]:
+def recv_fds_once(sock: socket.socket, msglen: int, nfds: int) -> tuple[bytes, list[int]]:
     """
     Receive exactly `nfds` file descriptors via SCM_RIGHTS on a Unix domain socket.
     Returns (payload_bytes, fds).
@@ -96,7 +95,7 @@ async def handle_client(_reader: asyncio.StreamReader, writer: asyncio.StreamWri
         try:
             writer.write(f"{returncode}".encode())
             await writer.drain()
-        except Exception:
+        except Exception: # noqa: BLE001,S110
             pass
 
     finally:
@@ -107,9 +106,9 @@ async def handle_client(_reader: asyncio.StreamReader, writer: asyncio.StreamWri
                 for fd in fds:
                     try:
                         os.close(fd)
-                    except Exception:
+                    except Exception: # noqa: BLE001,S110
                         pass
-            except Exception:
+            except Exception: # noqa: BLE001,S110
                 pass
 
         writer.close()
@@ -127,11 +126,14 @@ async def main(socket_path:str):
     async with server:
         await server.serve_forever()
 
+class ProgException(Exception):
+    pass
+
 if __name__ == "__main__":
     try:
         # parse command line arguments
         if len(sys.argv)!=2:
-            raise Exception(f"Usage: {__file__} <socket path>")
+            raise ProgException(f"Usage: {__file__} <socket path>")
         asyncio.run(main(sys.argv[1]))
     except KeyboardInterrupt:
         pass

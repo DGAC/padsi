@@ -37,6 +37,9 @@ _db_schema={
     ],
 }
 
+class VMDbException(Exception):
+    pass
+
 class EventType(int, enum.Enum):
     VM_CREATED = 0
     VM_STARTED = 1
@@ -63,7 +66,7 @@ def _evtype_to_str(evtype:EventType) -> str:
         case EventType.INFORMATIONAL:
             return "Information"
         case _:
-            raise Exception(f"Unhandled EventType '{evtype}'")
+            raise VMDbException(f"Unhandled EventType '{evtype}'")
 
 @dataclass
 class Event:
@@ -72,8 +75,8 @@ class Event:
     descr: str
 
     def __str__(self) -> str:
-        dt=datetime.datetime.fromtimestamp(self.ts)
-        return f"@{str(dt)} [{_evtype_to_str(self.type)}] {self.descr}"
+        dt=datetime.datetime.fromtimestamp(self.ts, datetime.timezone.utc)
+        return f"@{dt} [{_evtype_to_str(self.type)}] {self.descr}"
 
     def __eq__(self, other):
         return self.ts==other.ts and self.type==other.type and self.descr==other.descr
@@ -107,7 +110,7 @@ class VMDB:
         """
         events=self.get_events([EventType.VM_SHUTDOWN, EventType.VM_DISCARDED, EventType.VM_STARTED, EventType.VM_CREATED], count_limit=1)
         if len(events)==0:
-            raise Exception("No event recorded for the VM version")
+            raise VMDbException("No event recorded for the VM version")
 
         ev=events[0]
         from . import version
@@ -120,7 +123,7 @@ class VMDB:
                 return version.VMState.STOPPED.value
             case EventType.VM_DISCARDED:
                 return version.VMState.DISCARDED.value
-        raise Exception(f"CODEBUG, got event of type '{ev.type}'")
+        raise VMDbException(f"CODEBUG, got event of type '{ev.type}'")
 
     def set_state(self, state:str, context:str|None=None) -> int:
         """Define the state
@@ -137,7 +140,7 @@ class VMDB:
             case version.VMState.DISCARDED.value:
                 evtype=EventType.VM_DISCARDED
             case _:
-                raise Exception(f"CODEBUG, unhandled VM state '{state}'")
+                raise VMDbException(f"CODEBUG, unhandled VM state '{state}'")
         return self.add_event(evtype, f"Set to state to {state}" if not context else context)
 
     @property
@@ -150,16 +153,16 @@ class VMDB:
 
     def _set_attribute(self, name:str, value:str|int|None):
         if not isinstance(name, str) or not name:
-            raise Exception(f"Invalid attribute name '{name}'")
+            raise VMDbException(f"Invalid attribute name '{name}'")
         if not value:
             try:
                 self._db.transaction_begin()
                 self._db.execute("DELETE FROM attributes where name=:name", {"name": "name"})
                 self.add_event(EventType.ATTRIBUTE_UNSET, f"Unset attribute '{name}'")
                 self._db.transaction_commit()
-            except Exception as e:
+            except Exception:
                 self._db.transaction_rollback()
-                raise e
+                raise
         else:
             try:
                 self._db.transaction_begin()
@@ -169,9 +172,9 @@ class VMDB:
                 })
                 self.add_event(EventType.ATTRIBUTE_SET, f"Set attribute '{name}' to '{value}'")
                 self._db.transaction_commit()
-            except Exception as e:
+            except Exception:
                 self._db.transaction_rollback()
-                raise e
+                raise
 
     def _get_attribute(self, name:str):
         data=self._db.select_1st_row("SELECT value FROM attributes where name=:name", {"name": name})
@@ -191,7 +194,7 @@ class VMDB:
         now_ts=int(datetime.datetime.timestamp(now))
         if forced_ts is not None:
             if not isinstance(forced_ts, int) or abs(forced_ts-now_ts)>2:
-                raise Exception(f"Invalid forced timestamp '{forced_ts}'")
+                raise VMDbException(f"Invalid forced timestamp '{forced_ts}'")
             now=forced_ts
 
         self._db.execute("INSERT INTO events (ts, type, descr) VALUES (:now, :type, :descr)", {
@@ -213,7 +216,7 @@ class VMDB:
 
         if count_limit is not None:
             if not isinstance(count_limit, int) or count_limit<=0:
-                raise Exception(f"Invalid count limit '{count_limit}'")
+                raise VMDbException(f"Invalid count limit '{count_limit}'")
             sql=f"{sql} LIMIT {count_limit}"
 
         evdata=self._db.select_all(sql)
@@ -229,4 +232,4 @@ class VMDB:
         events=self.get_events([EventType.VM_SHUTDOWN, EventType.VM_STARTED], count_limit=1)
         if len(events)==1:
             return events[0]
-        raise Exception("No VM event recorded for the VM version")
+        raise VMDbException("No VM event recorded for the VM version")

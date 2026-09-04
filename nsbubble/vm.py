@@ -225,9 +225,7 @@ class NotEnoughMemory(Exception):
 
 @dataclass
 class VMSpecs:
-    """Represent some VM specifications
-    NB:
-    - the directory in which both of these files are does not need to be writable
+    """Represent some VM specifications like memory or disk size
     """
     disk_size_mb:int=30000  # HDD size in Mb
     mem_mb:int=1024         # RAM size in Mb

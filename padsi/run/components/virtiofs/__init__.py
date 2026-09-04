@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 #
 # Copyright (c) 2025-2026 DGAC/DSNA
 #
@@ -29,10 +27,13 @@ from padsi.config import MountPoint
 from .. import Component
 
 
+class VirtioFSException(Exception):
+    pass
+
 def _get_virtiofsd_binary_path() -> str:
     if os.path.exists("/usr/libexec/virtiofsd"):
         return "/usr/libexec/virtiofsd" # Debian >= 13 ('virtiofsd' package)
-    raise Exception("Could not find the virtiofsd binary")
+    raise VirtioFSException("Could not find the virtiofsd binary")
 
 class VirtioFSServer(Component):
     """Virtiofs daemon"""
@@ -48,14 +49,12 @@ class VirtioFSServer(Component):
             self._shared_dir_in_host=self._mountpoint.source_path
         else:
             if not isinstance(reference_dir, str) or not os.path.isabs(reference_dir):
-                raise Exception(f"Invalid reference_dir argument '{reference_dir}'")
+                raise VirtioFSException(f"Invalid reference_dir argument '{reference_dir}'")
             self._shared_dir_in_host=os.path.join(reference_dir, self._mountpoint.source_path)
         if not os.path.exists(self._shared_dir_in_host):
             os.makedirs(self._shared_dir_in_host)
 
-        fsname=self._mountpoint.mount_path
-        if fsname.endswith("/"):
-            fsname=fsname[:-1]
+        fsname=self._mountpoint.mount_path.removesuffix("/")
         self._fsname=fsname.replace("/", "_")
 
         self._shared_dir_in_bubble=f"/shared-{self._fsname}"
@@ -115,7 +114,7 @@ class VirtioFSServer(Component):
     def deserialize(cls, data:dict) -> VirtioFSServer:
         ldata=data.get("data")
         if ldata is None:
-            raise Exception("CODEBUG: no 'data' found in deserialized data")
+            raise VirtioFSException("CODEBUG: no 'data' found in deserialized data")
         mp=MountPoint(ldata["source-path"], ldata["mountpoint"], ldata["read-only"])
         obj=cls(mountpoint=mp)
         obj._pid=ldata["pid"]

@@ -40,18 +40,20 @@ import firewall
 
 _debug=True
 
+class ProgException(Exception):
+    pass
 
 def _get_default_route_interface():
     counter=0
     while True:
-        p=subprocess.run(["ip", "-j", "route", "show", "default"], capture_output=True)
+        p=subprocess.run(["ip", "-j", "route", "show", "default"], capture_output=True, check=False)
         if p.returncode!=0:
-            raise Exception(f"Could not determine default route's interface: {p.stderr.decode()}")
+            raise ProgException(f"Could not determine default route's interface: {p.stderr.decode()}")
         data=json.loads(p.stdout.decode())
         if len(data)!=1:
             counter+=1
             if counter>=100:
-                raise Exception(f"Could not determine default route's interface: {len(data)} default route(s), exactly 1 needed")
+                raise ProgException(f"Could not determine default route's interface: {len(data)} default route(s), exactly 1 needed")
             time.sleep(0.2)
         else:
             return data[0]["dev"]
@@ -144,14 +146,18 @@ class Firewall(firewall.Firewall):
                         try:
                             firewall.Endpoint.from_repr(f"* ^ {spec_repr}")
                             if query is None or query[-1]!=".":
-                                raise Exception(f"invalid query part '{query}'")
+                                raise ProgException(f"invalid query part '{query}'")
                             query_regex=re.compile(firewall.netflow.domain_to_regex(query))
                             if query_regex not in self._resolv_rules:
                                 self._resolv_rules[query_regex]=[spec_repr]
                             else:
                                 self._resolv_rules[query_regex].append(spec_repr)
-                        except Exception as e:
-                            syslog.syslog(syslog.LOG_WARNING, f"Could not load rule '{spec_repr}': {str(e)}")
+                        except Exception as e: # noqa: BLE001
+                            syslog.syslog(syslog.LOG_WARNING, f"Could not load rule '{spec_repr}': {e}")
+
+                    if query is None:
+                        syslog.syslog(syslog.LOG_ERR, "Resolv. rule 'query' field should not be None")
+                        continue
 
                     # if necessary, add a FW rule to allow OUTPUT flows to the specified resolved IP address
                     if reply is not None:
@@ -173,8 +179,8 @@ class Firewall(firewall.Firewall):
                                     nflow.dest.add_address(ip)
                                     self.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, nflow=nflow, policy=firewall.Policy.ALLOW)
                                     syslog.syslog(syslog.LOG_INFO, f"Allowed OUTPUT for {query} NetFlow '{nflow}'")
-                                except Exception as e:
-                                    syslog.syslog(syslog.LOG_WARNING, f"Could not allow infra's OUTPUT for '{query}' and reply part '{rspec}': {str(e)}")
+                                except Exception as e: # noqa: BLE001
+                                    syslog.syslog(syslog.LOG_WARNING, f"Could not allow infra's OUTPUT for '{query}' and reply part '{rspec}': {e}")
 
     def _handle_recv_data(self, data:str) -> str:
         # received data should be like:
@@ -225,9 +231,8 @@ class Firewall(firewall.Firewall):
                 for resolv in resolv_l:
                     ttl=int(resolv.get("TTL", 0))
                     if ttl<0:
-                        raise Exception(f"Invalid TTL of {ttl}")
-                    if ttl>86400:
-                        ttl=86400
+                        raise ProgException(f"Invalid TTL of {ttl}")
+                    ttl=min(ttl, 86400)
                     end_ttl=now+ttl+_grace_period
 
                     record=resolv.get("A")
@@ -278,7 +283,7 @@ class Firewall(firewall.Firewall):
                             flrepr=f"{ip} ^ {spec_repr}" if spec_repr is not None else str(ip)
                             nflow=firewall.NetFlow(firewall.Endpoint(), firewall.Endpoint.from_repr(flrepr))
                             new_resolv.append(nflow)
-                    except Exception:
+                    except Exception: # noqa: BLE001
                         syslog.syslog(syslog.LOG_WARNING, f"Invalid IP address received as localy resolved: '{ipstr}', ignored")
 
                 # add new allowed network flows
@@ -295,12 +300,12 @@ class Firewall(firewall.Firewall):
 
                 self._local_resolved=new_resolv
             else:
-                raise Exception("unknown command")
+                raise ProgException("unknown command")
 
             return "Ok"
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Failed to process command '{data}': {str(e)}")
-            return f"Error: {str(e)}"
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Failed to process command '{data}': {e}")
+            return f"Error: {e}"
 
     def _handle_expired(self):
         now=_get_timestamp()
@@ -315,8 +320,8 @@ class Firewall(firewall.Firewall):
                         if allowed_ip.output_allowed:
                             self.flow_delete_policy(firewall.FlowType.FILTER_OUTPUT, nflow)
                             syslog.syslog(syslog.LOG_INFO, f"Removed allowed OUTPUT for {allowed_ip}, NetFlow '{nflow}'")
-                    except Exception as e:
-                        syslog.syslog(syslog.LOG_INFO, f"Error deleting NetFlow {nflow} for IP {ip}: {str(e)}")
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_INFO, f"Error deleting NetFlow {nflow} for IP {ip}: {e}")
             else:
                 kept[ip]=allowed_ip
         self._allowed_ips=kept
@@ -346,8 +351,8 @@ class Firewall(firewall.Firewall):
                             s.sendall(resp.encode())
                         except json.decoder.JSONDecodeError:
                             prev_data=data
-                        except Exception as e:
-                            syslog.syslog(syslog.LOG_WARNING, f"Received invalid (ignored) data '{data}': {str(e)}")
+                        except Exception as e: # noqa: BLE001
+                            syslog.syslog(syslog.LOG_WARNING, f"Received invalid (ignored) data '{data}': {e}")
                     else:
                         # connection closed
                         s.close()
@@ -359,7 +364,7 @@ if __name__=="__main__":
     try:
         conf_file=sys.argv[1] if len(sys.argv)>1 else None
         if conf_file is None or not os.path.exists(conf_file):
-            raise Exception(f"Configuration file non specified or inexistant (argv: '{sys.argv}')")
+            raise ProgException(f"Configuration file non specified or inexistant (argv: '{sys.argv}')")
         with open(conf_file, "rt") as fd:
             conf=json.load(fd)
         if conf.get("log-denied-spec") is not None:
@@ -368,5 +373,5 @@ if __name__=="__main__":
             lspec=None
         f=Firewall("/tmp/dns-fw.sock", log_denied_spec=lspec, output_allowed_names=conf["output-allow"])
         f.run()
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Fatal error: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Fatal error: {e}")
