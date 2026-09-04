@@ -896,18 +896,17 @@ class UserServer(Server):
                 except Exception: # noqa: BLE001,S110
                     pass
 
-    async def _vm_launcher(self, args:dict) -> Message:
+    async def _vm_launcher(self, args:dict[str,str|None]) -> Message:
         def determine_vm_icon_file(top_dir:str, vm_conf:VirtualMachine) -> str:
             base_icon_path=os.path.join(top_dir, "vm-management", "viewer", "icons")
             icon_path=None
-            if vm_conf.os_variant is not None:
-                if vm_conf.os_version is not None:
-                    (v,*_)=vm_conf.os_version.split("/")
-                    path=os.path.join(base_icon_path, f"{vm_conf.os_variant}_{v}.png")
-                else:
-                    path=os.path.join(base_icon_path, f"{vm_conf.os_variant}.png")
-                if os.path.exists(path):
-                    icon_path=path
+            if vm_conf.os_version is not None:
+                (v,*_)=vm_conf.os_version.split("/")
+                path=os.path.join(base_icon_path, f"{vm_conf.os_variant}_{v}.png")
+            else:
+                path=os.path.join(base_icon_path, f"{vm_conf.os_variant}.png")
+            if os.path.exists(path):
+                icon_path=path
             if icon_path is None:
                 icon_path=os.path.join(base_icon_path, "generic.png")
             return icon_path
@@ -927,6 +926,10 @@ class UserServer(Server):
             nickname=args["nickname"]
         except KeyError as e:
             raise SystemServiceException(f"CODEBUG: no '{e}' key present")
+        if zone_name is None:
+            raise SystemServiceException("CODEBUG: no 'zone' key is None")
+        if vm_id is None:
+            raise SystemServiceException("CODEBUG: no 'vm-id' key is None")
 
         match action:
             case "create":
@@ -941,22 +944,43 @@ class UserServer(Server):
                 if not os.path.exists(template):
                     raise SystemServiceException(f"Template file '{template}' is missing")
 
-                if nickname in (None, "default"):
-                    if vm_conf.os_version is None:
-                        name=f"VM {vm_conf.os_variant}"
+                app_name=args.get("app-name")
+                if not isinstance(app_name, str):
+                    app_name=None
+                app_descr=args.get("app-descr")
+                if not isinstance(app_descr, str):
+                    app_descr=None
+                app_icon=args.get("app-icon")
+                if not isinstance(app_icon, str):
+                    app_icon=None
+
+                icon=None
+                if app_icon is not None:
+                    if os.path.isabs(app_icon):
+                        icon=app_icon
                     else:
-                        name=f"VM {vm_conf.os_variant} {vm_conf.os_version}"
-                else:
-                    if vm_conf.os_version is None:
-                        name=f"VM {vm_conf.os_variant} ({nickname})"
+                        icon=self._gconf.xdg_resources.get_icon_file(app_icon)
+                if icon is None:
+                    icon=determine_vm_icon_file(_padsi_install_dir, vm_conf)
+
+                if app_name is None:
+                    if nickname in (None, "default"):
+                        if vm_conf.os_version is None:
+                            app_name=f"VM {vm_conf.os_variant}"
+                        else:
+                            app_name=f"VM {vm_conf.os_variant} {vm_conf.os_version}"
                     else:
-                        name=f"VM {vm_conf.os_variant} {vm_conf.os_version} ({nickname})"
+                        if vm_conf.os_version is None:
+                            app_name=f"VM {vm_conf.os_variant} ({nickname})"
+                        else:
+                            app_name=f"VM {vm_conf.os_variant} {vm_conf.os_version} ({nickname})"
+
                 variables={
-                    "name": name,
+                    "name": app_name,
                     "genericname": "Virtual machine",
-                    "comments": vm_conf.description,
+                    "comments": vm_conf.description if app_descr is None else app_descr,
                     "nickname": nickname if nickname is not None else "default",
-                    "icon": determine_vm_icon_file(_padsi_install_dir, vm_conf),
+                    "icon": icon,
                     "cli": "/usr/bin/padsi-cli",
                     "zone": zone_name,
                     "vmid": vm_id
@@ -966,13 +990,13 @@ class UserServer(Server):
                     with tempfile.NamedTemporaryFile("wt") as tmp:
                         for line in await fd.readlines():
                             nline=padsi.misc.expand_variables_in_string(line, variables)
-                            tmp.write(nline)
+                            _=tmp.write(nline)
                         tmp.flush()
 
                         de_path=compute_de_path(self._uid, self._gid, self._gconf, vm_id, zone_name, nickname)
                         os.chown(tmp.name, self._uid, self._gid)
                         os.chmod(tmp.name, 0o644)
-                        shutil.copyfile(tmp.name, de_path)
+                        _=shutil.copyfile(tmp.name, de_path)
                         syslog.syslog(syslog.LOG_INFO, f"Created VM desktop entry {de_path}")
             case "delete":
                 de_path=compute_de_path(self._uid, self._gid, self._gconf, vm_id, zone_name, nickname)

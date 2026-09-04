@@ -210,13 +210,16 @@ class Client(ClientAdmin):
         }
         return self.post("/vm-display", data)
 
-    def vm_launcher_create(self, vm_id:str, zone_name:str, nickname:str|None=None):
+    def vm_launcher_create(self, vm_id:str, zone_name:str, nickname:str|None=None, app_name:str|None=None, app_descr:str|None=None, app_icon:str|None=None):
         """Create a desktop entry to launch/show a VM
         """
         data={
             "vm-id": vm_id,
             "zone": zone_name,
-            "nickname": nickname
+            "nickname": nickname,
+            "app-name": app_name,
+            "app-descr": app_descr,
+            "app-icon": app_icon
         }
         return self.post("/vm-launcher", data)
 

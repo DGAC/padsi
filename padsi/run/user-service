@@ -1818,7 +1818,6 @@ class PadsiUserService:
         try:
             data = await request.json()
             vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
-            nickname = data.get("nickname")
             zone_name = data.get("zone")
             if zone_name is not None and not isinstance(zone_name, str):
                 raise UserServiceException("Invalid zone name")
@@ -1834,7 +1833,10 @@ class PadsiUserService:
                         "action": "create",
                         "vm-id": vm_id,
                         "zone": zone_name,
-                        "nickname": nickname,
+                        "nickname": data.get("nickname"),
+                        "app-name": data.get("app-name"),
+                        "app-descr": data.get("app-descr"),
+                        "app-icon": data.get("app-icon")
                     }
                 )
             except Exception as e:

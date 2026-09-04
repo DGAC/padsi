@@ -184,7 +184,7 @@ subparser.add_argument("--message", "-m", type=str, help="Merge comment")
 
 subparser=subparsers.add_parser("vm-status", help="List the status of a VM (files, ...)")
 subparser.set_defaults(cmde="vm-status")
-subparser.add_argument("--zone", type=str, help="Zone to clean (defaults to all zones if not specified")
+subparser.add_argument("--zone", type=str, help="Zone to clean (defaults to all zones if not specified)")
 subparser.add_argument("vm-id", type=str, help="ID of the virtual machine to filter")
 
 subparser=subparsers.add_parser("vm-start", help="Run a new or existing virtual machine in a specific zone. If the VM is already running, it will be shown")
@@ -204,6 +204,9 @@ subparser.set_defaults(cmde="vm-create-launcher")
 subparser.add_argument("zone-name", type=str, help="Zone in which the virtual machine is to run")
 subparser.add_argument("vm-id", type=str, help="ID of the virtual machine")
 subparser.add_argument("vm-name", type=str, nargs="?", default="default", help="VM version in the form 'snapshot.[version]' or nickname")
+subparser.add_argument("--app-name", type=str, help="'Application name' for the desktop launcher")
+subparser.add_argument("--app-descr", type=str, help="'Application description' for the desktop launcher")
+subparser.add_argument("--app-icon", type=str, help="'Application icon' for the desktop launcher")
 
 subparser=subparsers.add_parser("vm-delete-launcher", help="Delete a desktop entry launcher for a virtual machine")
 subparser.set_defaults(cmde="vm-delete-launcher")
@@ -213,7 +216,8 @@ subparser.add_argument("vm-name", type=str, nargs="?", default="default", help="
 
 
 args=vars(parser.parse_args())
-#print("PARSED ARGS: %s"%args)
+#print(f"PARSED ARGS: {args}")
+
 if "cmde" not in args:
     parser.print_help()
     sys.exit(1) # pyright: ignore
@@ -1227,13 +1231,13 @@ try:
             if len(args)==0:
                 raise Exception("Invalid arguments")
             client=get_service_client()
-            client.vm_launcher_create(args["vm-id"], args["zone-name"], args.get("vm-name")) # pyright: ignore
+            client.vm_launcher_create(args.get("vm-id"), args.get("zone-name"), args.get("vm-name"), args.get("app_name"), args.get("app_descr"), args.get("app_icon")) # pyright: ignore
 
         case "vm-delete-launcher":
             if len(args)==0:
                 raise Exception("Invalid arguments")
             client=get_service_client()
-            client.vm_launcher_delete(args["vm-id"], args["zone-name"], args.get("vm-name")) # pyright: ignore
+            client.vm_launcher_delete(args.get("vm-id"), args.get("zone-name"), args.get("vm-name")) # pyright: ignore
 
 
         #

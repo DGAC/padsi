@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import filecmp
-import json
 import logging
 import os
 import re
@@ -34,9 +33,11 @@ import tempfile
 from PIL import Image, ImageDraw
 
 import padsi.config
-import padsi.misc
 
 _debug=False
+
+class XDGException(Exception):
+    pass
 
 #
 # misc. adaptations
@@ -65,7 +66,7 @@ app_id_corrections={
 #
 
 def _is_system_path(path) -> bool:
-    return path.startswith("/usr/") or path.startswith("/var/")
+    return path.startswith(("/usr/", "/var/"))
 
 class XDGResources:
     def __init__(self, padsi_root_path:str, xdg_data_dirs:list[str]|None=None):
@@ -123,7 +124,7 @@ class XDGResources:
             icons:dict[str,list[str]]={} # key=icon name, value=list of paths with that icon name
             for (dirpath, _dirnames, filenames) in os.walk(path):
                 for fname in filenames:
-                    if fname.endswith(".png") or fname.endswith(".svg"):
+                    if fname.endswith((".png", ".svg")):
                         icname=fname[:-4]
                         if icname not in icons:
                             icons[icname]=[os.path.join(dirpath, fname)]
@@ -145,11 +146,38 @@ class XDGResources:
                     res_default.append(ipath)
         return res_theme if len(res_theme)>0 else res_default
 
+    def get_icon_file(self, icon_name:str) -> str|None:
+        # get the current icon theme, like "Adwaita"
+        cproc=subprocess.run(["gsettings", "get", "org.gnome.desktop.interface", "icon-theme"], capture_output=True, check=False)
+        if cproc.returncode==0:
+            icon_theme=cproc.stdout.decode().replace("'", "").strip()
+        else:
+            icon_theme="highcolor"
+
+        # get the 'best' icon
+        for path in self.icons_dirs:
+            logging.debug(f"{icon_name} in {path} (icon theme {icon_theme})???") # noqa:LOG015
+            icon_files=self.find_icons_in_path(path, icon_theme, icon_name)
+            if len(icon_files)>0:
+                for icon in icon_files:
+                    if icon[-4:]==".svg":
+                        return icon
+
+                for px in (512, 256, 192, 128, 96, 72, 64, 48, 42, 36, 32, 24, 22, 16, 8):
+                    resol=f"/{px}x{px}/"
+                    for icon in icon_files:
+                        if resol in icon:
+                            return icon
+
+                # single size icon
+                return icon_files[0]
+        return None
+
 def clean_zone_name(zone_name:str) -> str:
     """Remove any non allowed character in the zone name"""
     zn=''.join(char for char in zone_name if char.isalnum())
     if not zn:
-        raise Exception(f"Invalid zone name {zone_name}")
+        raise XDGException(f"Invalid zone name {zone_name}")
     return zn
 
 def _add_round_border(image:Image.Image, border_color=(232, 232, 232)) -> Image.Image:
@@ -191,9 +219,9 @@ def _add_round_border(image:Image.Image, border_color=(232, 232, 232)) -> Image.
 class DesktopEntry:
     def __init__(self, desktop_entry_file:str, xdg_res:XDGResources):
         if not desktop_entry_file.endswith(".desktop"):
-            raise Exception(f"Desktop entry file name '{desktop_entry_file}' does not end with '.desktop'")
+            raise XDGException(f"Desktop entry file name '{desktop_entry_file}' does not end with '.desktop'")
         if not isinstance(xdg_res, XDGResources):
-            raise Exception(f"Invalid xdg_res argument '{xdg_res}'")
+            raise XDGException(f"Invalid xdg_res argument '{xdg_res}'")
         self._filename=desktop_entry_file
         self._dir=os.path.dirname(self._filename)
         self._app_id=os.path.basename(desktop_entry_file[:-8])
@@ -221,7 +249,7 @@ class DesktopEntry:
             index=0
             self._contents=[]
             with open(self._filename, "r") as fd:
-                for line in fd.readlines():
+                for line in fd:
                     line=line[:-1] # remove the final \n
                     sline=line.strip()
                     self._contents.append(line)
@@ -232,7 +260,7 @@ class DesktopEntry:
                         self._main_contents_end_line=index-1
                     index+=1
             if self._main_contents_start_line is None:
-                raise Exception("Section [Desktop Entry] not found")
+                raise XDGException("Section [Desktop Entry] not found")
             if self._main_contents_end_line is None:
                 self._main_contents_end_line=index
         return self._contents
@@ -240,8 +268,7 @@ class DesktopEntry:
     def _main_contents(self):
         """Contents in the [Desktop Entry] section as a generator
         """
-        for line in self.contents[self._main_contents_start_line:self._main_contents_end_line+1]: # pyright: ignore
-            yield line
+        yield from self.contents[self._main_contents_start_line:self._main_contents_end_line+1] # pyright: ignore
 
     @property
     def app_id(self):
@@ -266,39 +293,8 @@ class DesktopEntry:
     @property
     def icon_file(self) -> str|None:
         """Actual path to the icon file"""
-        if self._icon_file is None:
-            # get the current icon theme, like "Adwaita"
-            cproc=subprocess.run(["gsettings", "get", "org.gnome.desktop.interface", "icon-theme"], capture_output=True)
-            if cproc.returncode==0:
-                icon_theme=cproc.stdout.decode().replace("'", "").strip()
-            else:
-                icon_theme="highcolor"
-
-            # get the 'best' icon
-            if self.icon_name is not None:
-                for path in self._xdg_res.icons_dirs:
-                    if self._icon_file is not None:
-                        break
-                    logging.debug(f"{self.icon_name} in {path} (icon theme {icon_theme})???")
-                    icon_files=self._xdg_res.find_icons_in_path(path, icon_theme, self.icon_name)
-                    if len(icon_files)>0:
-                        for icon in icon_files:
-                            if icon[-4:]==".svg":
-                                return icon
-
-                        for px in (512, 256, 192, 128, 96, 72, 64, 48, 42, 36, 32, 24, 22, 16, 8):
-                            if self._icon_file is not None:
-                                break
-                            resol=f"/{px}x{px}/"
-                            for icon in icon_files:
-                                if resol in icon:
-                                    self._icon_file=icon
-                                    break
-
-                        # single size icon
-                        if self._icon_file is None:
-                            self._icon_file=icon_files[0]
-
+        if self._icon_file is None and self.icon_name is not None:
+            self._icon_file=self._xdg_res.get_icon_file(self.icon_name)
         return self._icon_file
 
     @property
@@ -355,12 +351,12 @@ class DesktopEntry:
         """
         icon_file=self.icon_file
         if icon_file is None:
-            logging.error(f"Could not create outlined icon for '{self.icon_name}' and color {color}: self.icon_file is None")
+            logging.error(f"Could not create outlined icon for '{self.icon_name}' and color {color}: self.icon_file is None") # noqa:LOG015
             return None
 
         if icon_file[-4:]==".svg":
             # convert to PNG first
-            tmp=tempfile.NamedTemporaryFile("w", suffix=".png")
+            tmp=tempfile.NamedTemporaryFile("w", suffix=".png") # noqa:SIM115
             import cairosvg
             cairosvg.svg2png(url=icon_file, write_to=tmp.name)
             icon_file=tmp.name
@@ -368,7 +364,7 @@ class DesktopEntry:
         if self._icon_image is None:
             self._icon_image=Image.open(icon_file)
         image_with_border=_add_round_border(self._icon_image, border_color=color)
-        tmp=tempfile.NamedTemporaryFile("w", suffix=".png")
+        tmp=tempfile.NamedTemporaryFile("w", suffix=".png") # noqa:SIM115
         image_with_border.save(tmp.name)
         return tmp
 
@@ -408,7 +404,7 @@ class DesktopEntry:
                 touched_icon_files.add(icon_path)
 
         if _debug:
-            logging.debug(f"Icon: {self.icon_name}, icon_path:{icon_path}, new_icon:{new_icon}")
+            logging.debug(f"Icon: {self.icon_name}, icon_path:{icon_path}, new_icon:{new_icon}") # noqa:LOG015
 
         # misc. preparations
         new_app_id=None
@@ -498,7 +494,7 @@ class DesktopEntry:
                     pass
                 else:
                     new_contents.append(line)
-            index+=1
+            index+=1 # noqa:SIM113
 
         # write resources
         if new_icon is not None:
@@ -510,20 +506,19 @@ class DesktopEntry:
                 fd.write("\n".join(new_contents)+"\n")
 
             # generate new file
-            res=subprocess.run(["desktop-file-install", "--dir", "/tmp", tmpde], capture_output=True, text=True)
+            res=subprocess.run(["desktop-file-install", "--dir", "/tmp", tmpde], capture_output=True, text=True, check=False)
             if res.returncode!=0:
                 msg=f"Invalid desktop entry for {self._app_id} (zone {zone.name}): {res.stderr}"
                 syslog.syslog(syslog.LOG_ERR, msg)
-                raise Exception(msg)
+                raise XDGException(msg)
 
             # reuse existing file if possible (needs to be made _after_ generation because some tags like "X-Desktop-File-Install-Version" may be added),
             # better to avoid giving too much work to the DE
             final_file=os.path.join(de_install_dir, f"{new_app_id}.desktop")
             tmp_file=os.path.join("/tmp", f"{new_app_id}.desktop")
             exists=False
-            if os.path.exists(final_file):
-                if filecmp.cmp(tmp_file, final_file):
-                    exists=True
+            if os.path.exists(final_file) and filecmp.cmp(tmp_file, final_file):
+                exists=True
 
             if exists:
                 os.remove(tmp_file)
@@ -532,61 +527,3 @@ class DesktopEntry:
             touched_de_files.add(final_file)
 
         return (touched_de_files, touched_icon_files)
-
-class AppFolter:
-    def __init__(self, zone_name:str, zone_friendly_name:str):
-        self._name=f"padsi-{zone_name}"
-        self._fname=zone_friendly_name
-
-    def _parse_list(self, data:str) -> list[str]:
-        """Parse something like "['Utilities', 'YaST']" to ["Utilities", "YaST"]
-        """
-        json_data=data.replace("'", '"')
-        return json.loads(json_data)
-
-    def _unparse_list(self, data:list[str]) -> str:
-        return str(data)
-
-    @property
-    def name(self):
-        return self._name
-
-    def _get_current_appfolders(self) -> list[str]:
-        cproc=subprocess.run(["gsettings", "get", "org.gnome.desktop.app-folders", "folder-children"], capture_output=True)
-        if cproc.returncode!=0:
-            raise Exception(f"Could not get list of AppFolders: {cproc.stderr.decode()}")
-        return self._parse_list(cproc.stdout.decode())
-
-    def remove(self):
-        """Remove the AppFolder and everything in it"""
-        appfolders=self._get_current_appfolders()
-        if self.name in appfolders:
-            appfolders.remove(self.name)
-            cproc=subprocess.run(["gsettings", "set", "org.gnome.desktop.app-folders", "folder-children", self._unparse_list(appfolders)], capture_output=True)
-            if cproc.returncode!=0:
-                raise Exception(f"Could change the list of AppFolders to {appfolders}: {cproc.stderr.decode()}")
-
-    def define(self, apps:list[DesktopEntry]):
-        """Create if necessary the AppFolder, and set its contents
-        """
-        self.remove()
-
-        # create AppFolder
-        appfolders=self._get_current_appfolders()
-        appfolders.append(self.name)
-        cproc=subprocess.run(["gsettings", "set", "org.gnome.desktop.app-folders", "folder-children", self._unparse_list(appfolders)], capture_output=True)
-        if cproc.returncode!=0:
-            raise Exception(f"Could change the list of AppFolders to {appfolders}: {cproc.stderr.decode()}")
-
-        # set AppFolder's name
-        cproc=subprocess.run(["gsettings", "set", f"org.gnome.desktop.app-folders.folder:/org/gnome/desktop/app-folders/folders/{self.name}/",
-                              "name", self._fname], capture_output=True)
-        if cproc.returncode!=0:
-            raise Exception(f"Could define AppFolder '{self.name}' name to '{self._fname}': {cproc.stderr.decode()}")
-
-        # set AppFolder's contents
-        appslist=[f"{de.app_id}.desktop" for de in apps]
-        cproc=subprocess.run(["gsettings", "set", f"org.gnome.desktop.app-folders.folder:/org/gnome/desktop/app-folders/folders/{self.name}/",
-                              "apps", self._unparse_list(appslist)], capture_output=True)
-        if cproc.returncode!=0:
-            raise Exception(f"Could define AppFolder '{self.name}' apps to '{appslist}': {cproc.stderr.decode()}")
