@@ -27,14 +27,25 @@ import syslog
 
 from . import network, vm
 from .mountpoint import MountPoint
-from .options import (BlockListOption, BoolOption, StrStrDictOption, FIDO2Option, PKCS11Option,
-                      PKIOption, VMOnlyOption, WebRedirectionOption, ZoneOption,
-                      ZoneOptionType)
+from .options import (
+    BlockListOption,
+    BoolOption,
+    FIDO2Option,
+    PKCS11Option,
+    PKIOption,
+    StrStrDictOption,
+    VMOnlyOption,
+    WebRedirectionOption,
+    ZoneOption,
+    ZoneOptionType,
+)
 from .proxy import Proxy
 from .trafficshaper import TrafficShaper
 
 _debug = False
 
+class ZoneConfException(Exception):
+    pass
 
 def _parse_color(color: str) -> list[float]:
     """Parse color specifications.
@@ -43,12 +54,12 @@ def _parse_color(color: str) -> list[float]:
     """
     try:
         if color[0] != "#" or len(color) != 7:
-            raise Exception()
+            raise ZoneConfException()
         r = int(color[1:3], 16)
         g = int(color[3:5], 16)
         b = int(color[5:7], 16)
         return [r / 255, g / 255, b / 255]
-    except Exception:
+    except Exception:  # noqa: BLE001 # noqa: BLE001
         syslog.syslog(syslog.LOG_WARNING, f"Invalid color specification '{color}', using RED")
         return [0.8, 0, 0]
 
@@ -102,44 +113,44 @@ class Zone:
     ) -> Zone:
         # zone's attributes
         if name == "XDG" or not re.match(r"^[a-z][a-z0-9]+", name):
-            raise Exception(f"invalid zone name '{name}'")
+            raise ZoneConfException(f"invalid zone name '{name}'")
 
         try:
             start_mode = StartMode(data["start-mode"].upper())
-        except Exception:
-            raise Exception(f"Invalid start-mode attribute '{data.get('start-mode')}")
+        except Exception:  # noqa: BLE001
+            raise ZoneConfException(f"Invalid start-mode attribute '{data.get('start-mode')}")
 
         friendly_name = data.get("friendly-name")
         if friendly_name is not None and not isinstance(friendly_name, str):
-            raise Exception(f"Invalid friendly-name attribute '{friendly_name}")
+            raise ZoneConfException(f"Invalid friendly-name attribute '{friendly_name}")
 
         color = data.get("color")
         if color is not None and not isinstance(color, str):
-            raise Exception(f"Invalid color attribute '{color}")
+            raise ZoneConfException(f"Invalid color attribute '{color}")
 
         # options
         options = {}
         opts = data.get("options", {})
         if not isinstance(opts, dict):
-            raise Exception("Invalid 'options' section")
+            raise ZoneConfException("Invalid 'options' section")
         for k, v in opts.items():
             try:
                 if not isinstance(k, str):
-                    raise Exception()
+                    raise ZoneConfException()
                 ok = ZoneOptionType(k)
-            except Exception:
-                raise Exception(f"Invalid option '{k}'")
+            except Exception:  # noqa: BLE001
+                raise ZoneConfException(f"Invalid option '{k}'")
             try:
                 options[ok] = ZoneOption.from_data(ok, v, config_dir=config_dir)
-            except Exception:
-                raise Exception(f"Invalid configuration for option '{k}'")
+            except Exception:  # noqa: BLE001
+                raise ZoneConfException(f"Invalid configuration for option '{k}'")
 
         # web proxies
         proxy_data=data.get("web-proxy")
         proxies:list[Proxy]=[]
         if proxy_data is not None:
             if not isinstance(proxy_data, list):
-                raise Exception("Invalid 'web-proxy' section")
+                raise ZoneConfException("Invalid 'web-proxy' section")
             for proxy_conf in proxy_data:
                 proxy = Proxy.from_data(proxy_conf, named_netres)
                 if proxy is not None:
@@ -151,7 +162,7 @@ class Zone:
         # mount points
         decl_mp = data.get("mounts")
         if not isinstance(decl_mp, dict):
-            raise Exception("Invalid 'mounts' section")
+            raise ZoneConfException("Invalid 'mounts' section")
         mounts = MountPoint.load_from_data(decl_mp, allow_absolute_destination_path=True)
 
         # apps
@@ -159,10 +170,10 @@ class Zone:
         if apps is None:
             apps=[]
         if not isinstance(apps, list):
-            raise Exception("Invalid 'apps' section")
+            raise ZoneConfException("Invalid 'apps' section")
         for app in apps:
             if not isinstance(app, str):
-                raise Exception(f"Invalid application '{app}' 'apps' section")
+                raise ZoneConfException(f"Invalid application '{app}' 'apps' section")
 
         # virtual machines
         vms = {}
@@ -171,7 +182,7 @@ class Zone:
             # build a VirtualMachine from the global configuration's VM with the same ID
             base_run_vm = run_vms.get(vmid)
             if base_run_vm is None:
-                raise Exception(f"Unknown VM '{vmid}'")
+                raise ZoneConfException(f"Unknown VM '{vmid}'")
             vms[vmid] = base_run_vm.specialize(vmddata, named_netres)
 
         # checks
@@ -179,7 +190,7 @@ class Zone:
         if opt is not None and opt.enabled:
             opt=VMOnlyOption.downcast(opt)
             if opt.default_vm not in vms:
-                raise Exception (f"VM-ONLY's default VM '{opt.default_vm}' is not available in zone")
+                raise ZoneConfException(f"VM-ONLY's default VM '{opt.default_vm}' is not available in zone")
             if start_mode==StartMode.ALWAYS:
                 start_mode=StartMode.ALWAYS_INFRA
 
@@ -320,7 +331,7 @@ class Zone:
             ZoneOptionType.INTER_VM_NET: BoolOption(ZoneOptionType.INTER_VM_NET, False),
         }
         if option not in _default:
-            raise Exception(f"CODEBUG: option '{option}' does not have any default value")
+            raise ZoneConfException(f"CODEBUG: option '{option}' does not have any default value")
         return self._options.get(option, _default[option])  # pyright: ignore
 
     def serialize(self) -> dict:

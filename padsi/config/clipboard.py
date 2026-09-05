@@ -22,6 +22,9 @@ from __future__ import annotations
 import enum
 
 
+class ClipboardConfException(Exception):
+    pass
+
 class Policy(str, enum.Enum):
     """Clipboard rule policy"""
     ALLOW = "ALLOW"
@@ -33,14 +36,14 @@ class Policy(str, enum.Enum):
             return cls.ALLOW
         elif keyword.lower()=="deny":
             return cls.DENY
-        raise Exception(f"Unknown keyword '{keyword}'")
+        raise ClipboardConfException(f"Unknown keyword '{keyword}'")
 
 class ClipboardRule:
     def __init__(self, descr:str|None, action:str, rule:str):
         """Represents a single copy/paste rule
         """
         if action not in ("allow", "deny"):
-            raise Exception(f"Invalid action '{action}'")
+            raise ClipboardConfException(f"Invalid action '{action}'")
         self._action=action
         try:
             (copy_zones, paste_zones)=rule.split(">")
@@ -49,13 +52,13 @@ class ClipboardRule:
             paste_zones=paste_zones.split(",")
             paste_zones=[v.strip() for v in paste_zones]
             if len(paste_zones)==0:
-                raise Exception
+                raise ClipboardConfException("No paste zone")
             self._policy=Policy.from_keyword(action)
             self._descr=descr
             self._copy_zones=copy_zones
             self._paste_zones=paste_zones
-        except Exception:
-            raise Exception(f"Invalid clipboard rule '{rule}'")
+        except Exception: # noqa: BLE001
+            raise ClipboardConfException(f"Invalid clipboard rule '{rule}'")
 
     def get_policy(self, copy_zone:str, paste_zone:str) -> Policy|None:
         """If the rule applies for a copy/paste, returns the associated policy, otherwise
@@ -71,17 +74,17 @@ class ClipboardRule:
         """
         for name in self._copy_zones:
             if name!="*" and name not in existing_zones:
-                raise Exception(f"Unknown referenced copy zone '{name}'")
+                raise ClipboardConfException(f"Unknown referenced copy zone '{name}'")
         for name in self._paste_zones:
             if name!="*" and name not in existing_zones:
-                raise Exception(f"Unknown referenced paste zone '{name}'")
+                raise ClipboardConfException(f"Unknown referenced paste zone '{name}'")
 
     @classmethod
     def from_data(cls, data:dict) -> ClipboardRule:
         action=data.get("action")
         if action is None:
-            raise Exception("Invalid null clipboard action")
+            raise ClipboardConfException("Invalid null clipboard action")
         rule=data.get("rule")
         if rule is None:
-            raise Exception("Invalid null clipboard rule")
+            raise ClipboardConfException("Invalid null clipboard rule")
         return cls(data.get("descr"), action, rule)

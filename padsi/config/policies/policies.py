@@ -21,6 +21,10 @@ from abc import ABC, abstractmethod
 
 import nsbubble
 
+
+class PoliciesException(Exception):
+    pass
+
 class ProgramPolicies(ABC):
     """Generic class representing policies which can be applied for a given program like Firefox or Chrome.
 

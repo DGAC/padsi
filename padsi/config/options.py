@@ -24,6 +24,9 @@ import os
 from dataclasses import dataclass
 
 
+class ZoneOptionsConfException(Exception):
+    pass
+
 class ZoneOptionType(str, enum.Enum):
     DESKTOP_NOTIFICATIONS = "DESKTOP-NOTIFICATIONS"  # allow to show notifications
     DRM = "DRM"  # allow access to DRM (/dev/dri)
@@ -87,18 +90,14 @@ class ZoneOption:
                     certs = {}
                     for name, fpath in data.items():
                         name = name.strip()
-                        if (
-                            not isinstance(name, str)
-                            or not name
-                            or not isinstance(fpath, str)
-                        ):
-                            raise Exception("expected <CA nickname>:<CA certificate path>")
+                        if not isinstance(name, str) or not name or not isinstance(fpath, str):
+                            raise ZoneOptionsConfException("expected <CA nickname>:<CA certificate path>")
                         if not os.path.isabs(fpath):
                             if config_dir is None:
-                                raise Exception("CA certificate path is not absolute and config_dir not set")
+                                raise ZoneOptionsConfException("CA certificate path is not absolute and config_dir not set")
                             fpath = os.path.join(config_dir, fpath)
                         if not os.path.isfile(fpath):
-                            raise Exception(f"CA certificate path '{fpath}' does not exist")
+                            raise ZoneOptionsConfException(f"CA certificate path '{fpath}' does not exist")
                         with open(fpath, "rt") as fd:
                             certs[name] = fd.read()
                     return PKIOption(option_type, True, certs)
@@ -111,7 +110,7 @@ class ZoneOption:
                         raise TypeError()
                     driver = data["driver-file"]
                     if not os.path.isfile(driver):
-                        raise Exception(f"PKCS#11 driver file '{driver}' does not exist")
+                        raise ZoneOptionsConfException(f"PKCS#11 driver file '{driver}' does not exist")
                     return PKCS11Option(option_type, True, driver_name=name, driver_path=driver)
 
                 case ZoneOptionType.DNS_BLOCKLIST:
@@ -120,7 +119,7 @@ class ZoneOption:
                     if not os.path.isabs(data) and config_dir is not None:
                         data=os.path.join(config_dir, data)
                     if not os.path.isfile(data):
-                        raise Exception(f"Block list file '{data}' does not exist")
+                        raise ZoneOptionsConfException(f"Block list file '{data}' does not exist")
                     return BlockListOption(option_type, enabled=True, blocklist_file=data)
 
                 case ZoneOptionType.MOUNT_POINTS:
@@ -131,22 +130,22 @@ class ZoneOption:
                         mp_zone=os.path.normpath(mp_zone)
                         mp_host=os.path.normpath(mp_host)
                         if not isinstance(mp_host, str) or not mp_host:
-                            raise Exception(f"Invalid host mount point '{mp_host}'")
+                            raise ZoneOptionsConfException(f"Invalid host mount point '{mp_host}'")
                         if not os.path.isabs(mp_host):
                             if config_dir is not None:
                                 mp_host=os.path.join(config_dir, mp_host)
                             else:
-                                raise Exception(f"Could not determine full path of '{mp_host}'")
+                                raise ZoneOptionsConfException(f"Could not determine full path of '{mp_host}'")
                         if not os.path.exists(mp_host):
-                            raise Exception(f"Path '{mp_host}' does not exist")
+                            raise ZoneOptionsConfException(f"Path '{mp_host}' does not exist")
 
                         if not isinstance(mp_zone, str) or not mp_zone or \
                             os.path.realpath(mp_zone) in ("/dev", "/etc", "/var", "/run", "/sys", "/tmp"):
-                            raise Exception(f"Invalid zone mount point '{mp_zone}'")
+                            raise ZoneOptionsConfException(f"Invalid zone mount point '{mp_zone}'")
 
                         (_, *mode)=mp_zone.split(",", maxsplit=1)
                         if len(mode)==1 and mode[0] not in ("ro", "rw"):
-                            raise Exception(f"Invalid '{mode[0]}' mode")
+                            raise ZoneOptionsConfException(f"Invalid '{mode[0]}' mode")
                         mpoints[mp_zone]=mp_host # mp_zone does not have to be a full path, as opposed to mp_host
                     return StrStrDictOption(option_type, True, mpoints)
 
@@ -156,9 +155,9 @@ class ZoneOption:
                     return VMOnlyOption(option_type, True, data)
 
                 case _:
-                    raise Exception(f"CODEBUG: unhandled ZoneOptionType '{option_type}'")
-        except Exception as e:
-            raise Exception(f"Invalid data for '{option_type.value}' option: {str(e)}")
+                    raise ZoneOptionsConfException(f"CODEBUG: unhandled ZoneOptionType '{option_type}'")
+        except Exception as e: # noqa: BLE001
+            raise ZoneOptionsConfException(f"Invalid data for '{option_type.value}' option: {e}")
 
 
 @dataclass

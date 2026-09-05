@@ -18,25 +18,58 @@
 #
 
 from .adminns import AdminNS
-from .main import (Configuration, admin_br_network, tap_ip, users_br_network,
-                   vm_ip)
+from .main import Configuration, admin_br_network, tap_ip, users_br_network, vm_ip
 from .mountpoint import MountPoint
 from .network import DNSEndpoint, FWRule, FWRuleChain, NetworkSpec, ResolvRule
-from .options import (BlockListOption, BoolOption, FIDO2Option, PKCS11Option,
-                      PKIOption, WebRedirectionOption, ZoneOption, StrStrDictOption, VMOnlyOption,
-                      ZoneOptionType)
+from .options import (
+    BlockListOption,
+    BoolOption,
+    FIDO2Option,
+    PKCS11Option,
+    PKIOption,
+    StrStrDictOption,
+    VMOnlyOption,
+    WebRedirectionOption,
+    ZoneOption,
+    ZoneOptionType,
+)
 from .policies import ProgramPoliciesFactory, initialize_home_policies
 from .proxy import Proxy
 from .trafficshaper import TrafficShaper
 from .vm import VirtualMachine, VMScript, VMUsage, strip_vm_id
 from .zone import StartMode, Zone
 
-__all__=["Configuration", "users_br_network", "admin_br_network", "tap_ip", "vm_ip",
-        "MountPoint", "FWRuleChain", "FWRule",
-         "ResolvRule", "DNSEndpoint", "NetworkSpec", "ProgramPoliciesFactory", "initialize_home_policies",
-         "Proxy", "TrafficShaper",
-         "VMScript", "VMUsage", "VirtualMachine", "strip_vm_id",
-         "Zone", "StartMode", "AdminNS",
-         "ZoneOption", "ZoneOptionType", "BoolOption", "WebRedirectionOption", "PKIOption", "PKCS11Option",
-         "FIDO2Option", "BlockListOption", "StrStrDictOption", "VMOnlyOption"
-        ]
+__all__ = [
+    "Configuration",
+    "users_br_network",
+    "admin_br_network",
+    "tap_ip",
+    "vm_ip",
+    "MountPoint",
+    "FWRuleChain",
+    "FWRule",
+    "ResolvRule",
+    "DNSEndpoint",
+    "NetworkSpec",
+    "ProgramPoliciesFactory",
+    "initialize_home_policies",
+    "Proxy",
+    "TrafficShaper",
+    "VMScript",
+    "VMUsage",
+    "VirtualMachine",
+    "strip_vm_id",
+    "Zone",
+    "StartMode",
+    "AdminNS",
+    "ZoneOption",
+    "ZoneOptionType",
+    "BoolOption",
+    "WebRedirectionOption",
+    "PKIOption",
+    "PKCS11Option",
+    "FIDO2Option",
+    "BlockListOption",
+    "StrStrDictOption",
+    "VMOnlyOption",
+]

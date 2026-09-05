@@ -23,6 +23,10 @@ import os
 
 from nsbubble import MountPoint as BubbleMountPoint
 
+
+class MountPointConfException(Exception):
+    pass
+
 class MountPoint(BubbleMountPoint):
     """Represent a mount point, a simple wrapper around nsbubble's MountPoint"""
     @staticmethod
@@ -34,22 +38,22 @@ class MountPoint(BubbleMountPoint):
 
         mounts=[]
         if not isinstance(mounts_data, dict):
-            raise Exception("Invalid 'mounts' section")
+            raise MountPointConfException("Invalid 'mounts' section")
         for mp, mdata in mounts_data.items():
             if not mp or not isinstance(mp, str):
-                raise Exception(f"Invalid mount point '{mp}' in 'mounts' section")
+                raise MountPointConfException(f"Invalid mount point '{mp}' in 'mounts' section")
 
             if os.path.isabs(mp) and not allow_absolute_destination_path:
-                raise Exception(f"Invalid mount point: destination path '{mp}' must be relative and not absolute")
+                raise MountPointConfException(f"Invalid mount point: destination path '{mp}' must be relative and not absolute")
 
             mode=mdata.get("mode", "rw")
             if not mode or not isinstance(mode, str):
-                raise Exception(f"Invalid mount point: invalid mode '{mode}'")
+                raise MountPointConfException(f"Invalid mount point: invalid mode '{mode}'")
             source=mdata.get("source")
             if not source or not isinstance(source, str):
-                raise Exception(f"Invalid source '{source}' in 'mounts' section")
+                raise MountPointConfException(f"Invalid source '{source}' in 'mounts' section")
             if os.path.isabs(source):
-                raise Exception(f"Invalid mount point: source path {source} must be relative and not absolute")
+                raise MountPointConfException(f"Invalid mount point: source path {source} must be relative and not absolute")
 
             mounts.append(MountPoint(source, mp, mode!="rw", require_abs_mount_path=False))
 

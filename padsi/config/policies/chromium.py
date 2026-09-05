@@ -20,8 +20,9 @@
 import os
 
 from nsbubble import MountPointSet
+
 from .nssdb import NSSDB
-from .policies import ProgramPolicies
+from .policies import PoliciesException, ProgramPolicies
 
 
 # Refer to:
@@ -34,7 +35,7 @@ class ChromiumPolicies(ProgramPolicies):
         self._gid=None
         if uid is not None and gid is None or \
             uid is None and gid is not None:
-            raise Exception("Both uid and gid must be None or not None at the same time")
+            raise PoliciesException("Both uid and gid must be None or not None at the same time")
         if uid is not None and uid!=os.geteuid():
             self._uid=uid
             self._gid=gid

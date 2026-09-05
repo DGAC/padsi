@@ -25,6 +25,9 @@ import time
 
 gc=0
 
+class NSSDBException(Exception):
+    pass
+
 class NSSDB:
     """Class to manipulate NSS DB files"""
     def __init__(self, path:str):
@@ -38,31 +41,31 @@ class NSSDB:
         while True:
             rargs=["certutil", "-d", self._dbarg]+args
             try:
-                proc=subprocess.run(rargs, capture_output=True, text=True)
+                proc=subprocess.run(rargs, capture_output=True, text=True, check=False)
             except FileNotFoundError:
                 msg="Could not find the 'certutil' program, no NSS database can be used by PADSI"
                 syslog.syslog(syslog.LOG_WARNING, msg)
-                raise Exception(msg)
+                raise NSSDBException(msg)
 
             if proc.returncode==255:
                 # may be a temporary error while the DB is being initialized
                 time.sleep(0.3)
                 counter+=1
                 if counter==5:
-                    raise Exception(f"{context if context is not None else ''}(DB in {self._dbarg}): always getting returncode 255 ({proc.stderr})")
+                    raise NSSDBException(f"{context if context is not None else ''}(DB in {self._dbarg}): always getting returncode 255 ({proc.stderr})")
             elif proc.returncode!=0:
                 if context is None:
                     return None
-                raise Exception(f"{context if context is not None else ''}(DB in {self._dbarg}): {proc.stderr}")
+                raise NSSDBException(f"{context if context is not None else ''}(DB in {self._dbarg}): {proc.stderr}")
             else:
                 return (proc.stdout)
 
     def chown(self, uid:int, gid:int):
         """Change the ownership of the files making up the NSS DB
         """
-        proc=subprocess.run(["chown", "-R", f"{uid}:{gid}", self._path], capture_output=True, text=True)
+        proc=subprocess.run(["chown", "-R", f"{uid}:{gid}", self._path], capture_output=True, text=True, check=False)
         if proc.returncode!=0:
-            raise Exception(f"Failed to change ownership of NSS DB to {uid}:{gid}: {proc.stderr}")
+            raise NSSDBException(f"Failed to change ownership of NSS DB to {uid}:{gid}: {proc.stderr}")
 
     @property
     def exists(self) -> bool:
@@ -77,14 +80,12 @@ class NSSDB:
                 return False
 
         try:
-            proc=subprocess.run(["certutil", "-d", self._dbarg, "-L"], capture_output=True, text=True)
+            proc=subprocess.run(["certutil", "-d", self._dbarg, "-L"], capture_output=True, text=True, check=False)
         except FileNotFoundError:
             syslog.syslog(syslog.LOG_WARNING, "Could not find the 'certutil' program, no NSS database can be used by PADSI")
             return False
 
-        if proc.returncode!=0:
-            return False
-        return True
+        return proc.returncode==0
 
     def clear_ca_certificates(self):
         """Remove all CA certificates
@@ -99,14 +100,14 @@ class NSSDB:
                         for attr in attrs:
                             for letter in attr:
                                 if letter not in "cCT":
-                                    raise Exception()
+                                    raise NSSDBException()
 
                         # get name
                         (_, rname)=line[::-1].split(maxsplit=1)
                         nickname=rname[::-1]
                         if nickname:
                             self._run_certutil(["-D", "-n", nickname], f"Failed to remove CA certificate '{nickname}'")
-                except Exception:
+                except Exception: # noqa: BLE001,S110
                     # line does not contain a certificate's info
                     pass
 
@@ -115,13 +116,13 @@ class NSSDB:
         """
 
         try:
-            proc=subprocess.run(["certutil", "-d", self._dbarg, "-L", "-n", cert_nickname], capture_output=True, text=True)
+            proc=subprocess.run(["certutil", "-d", self._dbarg, "-L", "-n", cert_nickname], capture_output=True, text=True, check=False)
             if proc.returncode==0:
                 # certificate already present, delete it
-                proc=subprocess.run(["certutil", "-d", self._dbarg, "-D", "-n", cert_nickname], capture_output=True, text=True)
-        except FileNotFoundError as e:
+                proc=subprocess.run(["certutil", "-d", self._dbarg, "-D", "-n", cert_nickname], capture_output=True, text=True, check=False)
+        except FileNotFoundError:
             syslog.syslog(syslog.LOG_ERR, "Could not find the 'certutil' program")
-            raise e
+            raise
 
         # import certificate as trusted CA for the Web
         with tempfile.NamedTemporaryFile("wt") as tmp:
@@ -134,17 +135,17 @@ class NSSDB:
         """
         try:
             args=["modutil", "-force", "-dbdir", self._dbarg, "-add", driver_name, "-libfile", driver_path]
-            proc=subprocess.run(args, capture_output=True, text=True)
+            proc=subprocess.run(args, capture_output=True, text=True, check=False)
             if proc.returncode!=0:
                 # keeping getting weird error "Probable cause: "Failure to load dynamic library""
                 # so check if module has been imported or not before syslog the error
                 args=["modutil", "-dbdir", self._dbarg, "-list", driver_name]
-                vproc=subprocess.run(args, capture_output=True, text=True)
+                vproc=subprocess.run(args, capture_output=True, text=True, check=False)
                 if vproc.returncode!=0:
-                    raise Exception(f"Failed to load PKCS#11 driver '{driver_path}' (DB in {self._dbarg}): {proc.stderr if proc.stderr else proc.stdout}")
-        except FileNotFoundError as e:
+                    raise NSSDBException(f"Failed to load PKCS#11 driver '{driver_path}' (DB in {self._dbarg}): {proc.stderr if proc.stderr else proc.stdout}")
+        except FileNotFoundError:
             syslog.syslog(syslog.LOG_ERR, "Could not find the 'modutil' program")
-            raise e
+            raise
 
     def ca_certificate_del(self, cert_nickname:str):
         """Delete if necessary a CA certificate

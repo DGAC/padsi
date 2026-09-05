@@ -25,11 +25,10 @@ import json
 import os
 import socket
 import syslog
-
 from dataclasses import dataclass
 
 import firewall
-import padsi.network as network
+from padsi import network
 
 _debug=False
 
@@ -40,7 +39,10 @@ class DNATRule:
     port_spec:str|None=None
 
     def __repr__(self) -> str:
-        return f"{str(self.dest_addr)}|{self.protocol_spec}|{self.port_spec}"
+        return f"{self.dest_addr}|{self.protocol_spec}|{self.port_spec}"
+
+class TrafficShaperConfException(Exception):
+    pass
 
 class TrafficShaper:
     """Represent a special routing for one or more zones, to be inherited by each actual implementation e.g. like:
@@ -137,8 +139,8 @@ class TrafficShaper:
                     syslog.syslog(syslog.LOG_INFO, f"Creating veth for traffic shaper '{self.name}'")
                     network.veth_add(veth_iface, None, veth_tsp, self.net_ns)
 
-                    addr_in_init_ns = ipaddress.IPv4Interface(f"{str(lower_net[1])}/{lower_net.prefixlen}")
-                    addr_in_tsp_ns = ipaddress.IPv4Interface(f"{str(lower_net[2])}/{lower_net.prefixlen}")
+                    addr_in_init_ns = ipaddress.IPv4Interface(f"{lower_net[1]}/{lower_net.prefixlen}")
+                    addr_in_tsp_ns = ipaddress.IPv4Interface(f"{lower_net[2]}/{lower_net.prefixlen}")
 
                     network.addr_add(veth_iface, addr_in_init_ns)
                     network.interface_set_up(veth_iface, True)
@@ -154,8 +156,8 @@ class TrafficShaper:
 
             syslog.syslog(syslog.LOG_DEBUG, f"Setting up network ns '{self._netns_name}' done")
         except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Failed to set up network ns '{self._netns_name}': {str(e)}")
-            raise e
+            syslog.syslog(syslog.LOG_ERR, f"Failed to set up network ns '{self._netns_name}': {e}")
+            raise
 
     def destroy(self, fw_init_ns:firewall.Firewall):
         """Destroy any resources which have been set up"""
@@ -178,13 +180,13 @@ class TrafficShaper:
                         if counter<30: # wait a bit for the "connection to the world" DNS resolution to work
                             await asyncio.sleep(0.5)
                         else:
-                            syslog.syslog(syslog.LOG_ERR, f"DNS resolution failed: {str(e)}")
+                            syslog.syslog(syslog.LOG_ERR, f"DNS resolution failed: {e}")
                             return None
                     else:
-                        syslog.syslog(syslog.LOG_ERR, f"DNS resolution failed: {str(e)}")
+                        syslog.syslog(syslog.LOG_ERR, f"DNS resolution failed: {e}")
                         return None
-                except Exception as e:
-                    syslog.syslog(syslog.LOG_ERR, f"DNS resolution failed: {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    syslog.syslog(syslog.LOG_ERR, f"DNS resolution failed: {e}")
                     return None
         finally:
             socket.setdefaulttimeout(to)
@@ -195,7 +197,7 @@ class TrafficShaper:
         if self._fw_prefix is None:
             self._fw_prefix=fw_objects_prefix
         elif self._fw_prefix!=fw_objects_prefix:
-            raise Exception(f"CODEBUG: FW prefix changes to '{fw_objects_prefix}' after set to {self._fw_prefix}")
+            raise TrafficShaperConfException(f"CODEBUG: FW prefix changes to '{fw_objects_prefix}' after set to {self._fw_prefix}")
 
         rule=DNATRule(dest_addr, protocol_spec, port_spec)
         rule_id=str(rule)
@@ -247,18 +249,17 @@ class TrafficShaper:
         """Function called whenever the /etc/resolv.conf file changes or the traffic shaper is not functional
         """
         # to be overridden by actual implementation
-        pass
 
 def load_from_file(path: str) -> TrafficShaper:
     """Load the contents of a .tsp file"""
     with open(path, "r") as fd:
         data = json.load(fd)
         if not isinstance(data, dict):
-            raise Exception(f"Invalid traffic shaper resources file '{path}'")
+            raise TrafficShaperConfException(f"Invalid traffic shaper resources file '{path}'")
 
         parts = os.path.basename(path).split(".")
         if len(parts) != 2:
-            raise Exception(f"Invalid traffic shaper file name '{path}'")
+            raise TrafficShaperConfException(f"Invalid traffic shaper file name '{path}'")
         name = parts[0]
         match data.get("type"):
             case "wireguard":
@@ -268,4 +269,4 @@ def load_from_file(path: str) -> TrafficShaper:
                 from .shappers import openvpn
                 return openvpn.OpenVPNTrafficShaper.from_data(name, data, os.path.dirname(path))
             case _:
-                raise Exception(f"Unknown traffic shaper type '{data.get('type')}'")
+                raise TrafficShaperConfException(f"Unknown traffic shaper type '{data.get('type')}'")

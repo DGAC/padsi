@@ -45,8 +45,8 @@ def initialize_home_policies(home_dir:str, uid:int, gid:int):
 module: opensc-pkcs11
 disable-in: firefox nss
 """)
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Failed to prevent p11-kit from injecting the OpenSC's PKCS#11 driver: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Failed to prevent p11-kit from injecting the OpenSC's PKCS#11 driver: {e}")
 
     # pre-configure GPG if ever needed
     try:
@@ -71,8 +71,8 @@ pcsc-shared
                 fpath=os.path.join(gpg_path, fname)
                 if stat.S_ISSOCK(os.stat(fpath).st_mode):
                     os.remove(fpath)
-    except Exception as e:
-        syslog.syslog(syslog.LOG_ERR, f"Failed to preconfigure GPG: {str(e)}")
+    except Exception as e: # noqa: BLE001
+        syslog.syslog(syslog.LOG_ERR, f"Failed to preconfigure GPG: {e}")
 
     # clean any leftovers regarding SSH and VMs
     ssh_dir=os.path.join(home_dir, ".ssh")
@@ -85,8 +85,8 @@ pcsc-shared
             fpath=os.path.join(ssh_dir, "known_hosts")
             with open(fpath, "rt") as fd:
                 kept:list[str]=[]
-                for line in fd.readlines():
-                    (host, key)=line.split(maxsplit=1)
+                for line in fd:
+                    (host, _)=line.split(maxsplit=1)
                     if not host.endswith(".vm"):
                         kept.append(line)
                 fd.close()
@@ -97,8 +97,8 @@ pcsc-shared
             os.chmod(fpath, 0o600)
         except FileNotFoundError:
             pass
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Failed to clean up SSH keys leftovers: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Failed to clean up SSH keys leftovers: {e}")
 
         # ssh config
         try:
@@ -106,7 +106,7 @@ pcsc-shared
             with open(fpath, "rt") as fd:
                 kept=[]
                 do_copy = True
-                for line in fd.readlines():
+                for line in fd:
                     if line.startswith("Host "):
                         (_, *targets) = line.split()
                         vmline=False
@@ -129,5 +129,5 @@ pcsc-shared
             os.chmod(fpath, 0o600)
         except FileNotFoundError:
             pass
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Failed to clean up SSH config leftovers: {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Failed to clean up SSH config leftovers: {e}")

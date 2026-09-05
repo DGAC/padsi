@@ -28,7 +28,7 @@ import tempfile
 import firewall
 import padsi.network
 
-from ..trafficshaper import TrafficShaper
+from ..trafficshaper import TrafficShaper, TrafficShaperConfException
 
 
 class WireGuardTrafficShaper(TrafficShaper):
@@ -43,7 +43,7 @@ class WireGuardTrafficShaper(TrafficShaper):
             try:
                 self._ping_test = ipaddress.IPv4Address(ping_test_ip)
             except ipaddress.AddressValueError:
-                raise Exception(f"Invalid ping test IP address '{ping_test_ip}'")
+                raise TrafficShaperConfException(f"Invalid ping test IP address '{ping_test_ip}'")
 
         if wg_iface is not None:
             self._wg_iface_name = wg_iface
@@ -69,7 +69,7 @@ class WireGuardTrafficShaper(TrafficShaper):
         if self._ping_test is not None:
             try:
                 args = ["ip", "netns", "exec", self.net_ns, "ping", "-c", "1", str(self._ping_test)]
-                proc = subprocess.run(args, timeout=1, capture_output=True)
+                proc = subprocess.run(args, timeout=1, capture_output=True, check=False)
                 if proc.returncode!=255:
                     res=proc.returncode == 0
             except subprocess.TimeoutExpired:
@@ -83,7 +83,7 @@ class WireGuardTrafficShaper(TrafficShaper):
         try:
             ipaddress.IPv4Address(self._wg_server_name)
             return False
-        except Exception:
+        except Exception: # noqa: BLE001
             return True
 
     @property
@@ -100,11 +100,11 @@ class WireGuardTrafficShaper(TrafficShaper):
             return
 
         if not os.path.exists(self._config_file):
-            raise Exception(f"WireGuard configuration file '{self._config_file}' does not exist")
+            raise TrafficShaperConfException(f"WireGuard configuration file '{self._config_file}' does not exist")
 
         try:
             with open(self._config_file, "rt") as fd:
-                for line in fd.readlines():
+                for line in fd:
                     if line.startswith("Address"):
                         (_, address_s) = line.split("=")
                         address_s = address_s.strip()
@@ -116,13 +116,13 @@ class WireGuardTrafficShaper(TrafficShaper):
                         if len(wg_port) > 0:
                             self._wg_port = int(wg_port[0])
             if self._config_address is None:
-                raise Exception("no address specified")
+                raise TrafficShaperConfException("no address specified")
             if not self._wg_server_name:
-                raise Exception("no server endpoint specified")
+                raise TrafficShaperConfException("no server endpoint specified")
             if self._wg_port <= 0 or self._wg_port > 65535:
-                raise Exception(f"invalid port {self._wg_port}")
-        except Exception as e:
-            raise Exception(f"Invalid WireGuard config file '{self._config_file}': {str(e)}")
+                raise TrafficShaperConfException(f"invalid port {self._wg_port}")
+        except Exception as e: # noqa: BLE001
+            raise TrafficShaperConfException(f"Invalid WireGuard config file '{self._config_file}': {e}")
 
     async def adapt(self, dns_resolvers_found: bool, host_fw: firewall.Firewall):
         self._analyse_config_file()
@@ -130,11 +130,11 @@ class WireGuardTrafficShaper(TrafficShaper):
         try:
             # may work if WG server is specified as an IP address
             wg_server_ip = ipaddress.IPv4Address(self._wg_server_name)
-        except Exception:
+        except Exception: # noqa: BLE001
             if dns_resolvers_found:
-                syslog.syslog(syslog.LOG_DEBUG, f"Resolving {str(self._wg_server_name)}...")
+                syslog.syslog(syslog.LOG_DEBUG, f"Resolving {self._wg_server_name}...")
                 wg_server_ip = await self.resolv(str(self._wg_server_name))
-                syslog.syslog(syslog.LOG_DEBUG, f"Resolved {str(self._wg_server_name)} to {wg_server_ip}")
+                syslog.syslog(syslog.LOG_DEBUG, f"Resolved {self._wg_server_name} to {wg_server_ip}")
             else:
                 syslog.syslog(syslog.LOG_DEBUG, "No DNS resolver available")
 
@@ -150,10 +150,10 @@ class WireGuardTrafficShaper(TrafficShaper):
             try:
                 syslog.syslog(syslog.LOG_DEBUG, f"Removing previous Wireguard flow '{self._allowed_flow}' for interface '{self._wg_iface_name}'")
                 host_fw.flow_delete_policy(firewall.FlowType.FILTER_OUTPUT, self._allowed_flow)
-            except Exception as e:
-                msg=f"Could not remove WireGuard network flow '{self._allowed_flow}': {str(e)}"
+            except Exception as e: # noqa: BLE001
+                msg=f"Could not remove WireGuard network flow '{self._allowed_flow}': {e}"
                 syslog.syslog(syslog.LOG_ERR, msg)
-                raise Exception(msg)
+                raise TrafficShaperConfException(msg)
             finally:
                 self._allowed_flow = None
 
@@ -169,11 +169,11 @@ class WireGuardTrafficShaper(TrafficShaper):
                 self._create_interface(wg_server_ip)
                 self.declare_default_route_interface(self._wg_iface_name)
                 self._wg_server_ip = wg_server_ip
-            except Exception as e:
+            except Exception as e: # noqa: BLE001
                 self._wg_server_ip = None
-                msg=f"Could not create WireGuard interface in traffic shaper's namespace: {str(e)}"
+                msg=f"Could not create WireGuard interface in traffic shaper's namespace: {e}"
                 syslog.syslog(syslog.LOG_ERR, msg)
-                raise Exception(msg)
+                raise TrafficShaperConfException(msg)
 
             # allowing communications with the WireGuard server itself; the communications are initiated in the "init" namespace,
             # hence the FILTER_OUTPUT chain.
@@ -181,74 +181,72 @@ class WireGuardTrafficShaper(TrafficShaper):
             try:
                 syslog.syslog(syslog.LOG_DEBUG, f"Allowing network flow to the WireGuard server '{self._allowed_flow=}'")
                 host_fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, self._allowed_flow, firewall.Policy.ALLOW)
-            except Exception as e:
+            except Exception as e: # noqa: BLE001
                 self._allowed_flow = None
-                msg=f"Could not allow network flow to the WireGuard server '{self._allowed_flow}': {str(e)}"
+                msg=f"Could not allow network flow to the WireGuard server '{self._allowed_flow}': {e}"
                 syslog.syslog(syslog.LOG_ERR, msg)
-                raise Exception(msg)
+                raise TrafficShaperConfException(msg)
 
     def _clean_namespace(self):
         for net_ns in (None, self.net_ns):
             try:
                 padsi.network.interface_delete(self._wg_iface_name, netns=net_ns)
-            except Exception as e:
-                syslog.syslog(syslog.LOG_WARNING, f"Could not remove WireGuard interface {self._wg_iface_name} from net NS {net_ns}: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_WARNING, f"Could not remove WireGuard interface {self._wg_iface_name} from net NS {net_ns}: {e}")
 
     def _create_interface(self, wg_server_addr: ipaddress.IPv4Address):
         # prepare config file accepted by "wg setconf" and extract the IP address of the interface
-        try:
-            tmp = tempfile.NamedTemporaryFile("wt")
-            with open(self._config_file, "rt") as fd:
-                for line in fd.readlines():
-                    if line.startswith("Endpoint"):
-                        tmp.write(f"Endpoint = {wg_server_addr}:{self._wg_port}\n")
-                    elif line.startswith("AllowedIPs"):
-                        tmp.write("AllowedIPs = 0.0.0.0/0\n")
-                    elif line.startswith("Address"):
-                        pass  # ignore that key
-                    elif line.startswith("DNS"):
-                        pass  # ignore that key
-                    else:
-                        tmp.write(line)
-                tmp.flush()
-        except Exception as e:
-            raise Exception(f"Invalid WireGuard config file '{self._config_file}': {str(e)}")
+        with tempfile.NamedTemporaryFile("wt") as tmp:
+            try:
+                with open(self._config_file, "rt") as fd:
+                    for line in fd:
+                        if line.startswith("Endpoint"):
+                            tmp.write(f"Endpoint = {wg_server_addr}:{self._wg_port}\n")
+                        elif line.startswith("AllowedIPs"):
+                            tmp.write("AllowedIPs = 0.0.0.0/0\n")
+                        elif line.startswith(("Address", "DNS")):
+                            pass  # ignore that key
+                        else:
+                            tmp.write(line)
+                    tmp.flush()
+            except Exception as e: # noqa: BLE001
+                raise TrafficShaperConfException(f"Invalid WireGuard config file '{self._config_file}': {e}")
 
-        # set up the WG interface
-        if padsi.network.interface_exists(self._wg_iface_name):
-            padsi.network.interface_delete(self._wg_iface_name)
+            # set up the WG interface
+            if padsi.network.interface_exists(self._wg_iface_name):
+                padsi.network.interface_delete(self._wg_iface_name)
 
-        try:
-            proc = subprocess.run(
-                ["ip", "link", "add", "dev", self._wg_iface_name, "type", "wireguard"],
-                capture_output=True, text=True, timeout=1)
-            if proc.returncode != 0:
-                raise Exception(f"Could not create WireGuard interface '{self._wg_iface_name}': {proc.stderr}")
+            try:
+                proc = subprocess.run(
+                    ["ip", "link", "add", "dev", self._wg_iface_name, "type", "wireguard"],
+                    capture_output=True, text=True, timeout=1, check=False)
+                if proc.returncode != 0:
+                    raise TrafficShaperConfException(f"Could not create WireGuard interface '{self._wg_iface_name}': {proc.stderr}")
 
-            proc = subprocess.run(
-                [self._wg_iface_name, "setconf", self._wg_iface_name, tmp.name],
-                capture_output=True, text=True, timeout=1)
-            if proc.returncode != 0:
-                raise Exception(f"Could not configure WireGuard interface '{self._wg_iface_name}' with config derived from '{self._config_file}': {proc.stderr}")
+                proc = subprocess.run(
+                    [self._wg_iface_name, "setconf", self._wg_iface_name, tmp.name],
+                    capture_output=True, text=True, timeout=1, check=False)
+                if proc.returncode != 0:
+                    raise TrafficShaperConfException(f"Could not configure WireGuard interface '{self._wg_iface_name}' with config derived from '{self._config_file}': {proc.stderr}")
 
-            # attach WG interface to the namespace
-            padsi.network.interface_move_to_namespace(self._wg_iface_name, new_netns=self.net_ns)
-            padsi.network.interface_set_up(self._wg_iface_name, True, self.net_ns)
-            padsi.network.addr_add(self._wg_iface_name, self._config_address, self.net_ns)
+                # attach WG interface to the namespace
+                padsi.network.interface_move_to_namespace(self._wg_iface_name, new_netns=self.net_ns)
+                padsi.network.interface_set_up(self._wg_iface_name, True, self.net_ns)
+                padsi.network.addr_add(self._wg_iface_name, self._config_address, self.net_ns)
 
-            padsi.network.route_add_default(self._wg_iface_name, None, self.net_ns)
+                padsi.network.route_add_default(self._wg_iface_name, None, self.net_ns)
 
-            fw = firewall.Firewall(self.net_ns)
-            fw.add_masquerade(out_iface=self._wg_iface_name)
-        except Exception as e:
-            self._clean_namespace()
-            raise e
+                fw = firewall.Firewall(self.net_ns)
+                fw.add_masquerade(out_iface=self._wg_iface_name)
+            except Exception:
+                self._clean_namespace()
+                raise
 
     @classmethod
     def from_data(cls, name: str, data: dict, config_dir: str) -> WireGuardTrafficShaper:
         conf = data.get("config")
         if conf is None or conf.get("file") is None:
-            raise Exception("Invalid traffic shaper configuration")
+            raise TrafficShaperConfException("Invalid traffic shaper configuration")
         conf_file = conf.get("file")
         if not os.path.isabs(conf_file):
             conf_file = os.path.join(config_dir, conf_file)

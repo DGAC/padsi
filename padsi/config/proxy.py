@@ -19,16 +19,18 @@
 
 from __future__ import annotations
 
-from .network import (FWRule, NetworkRessources, ResolvRule,
-                      load_rules_from_data)
+from .network import FWRule, NetworkRessources, ResolvRule, load_rules_from_data
 
+
+class ProxyConfException(Exception):
+    pass
 
 class Proxy:
     """Represent a proxy configuration"""
     def __init__(self, proxy:str, fw_rules:list[FWRule], resolv_rules:list[ResolvRule]|None, descr:str):
         # proxy should be "<target>[:<port number>]", no "http://" at the start, port 3128 will be used if not specified
-        if proxy.startswith("http://") or proxy.startswith("https://"):
-            raise Exception(f"Invalid proxy syntax '{proxy}' (no need to specify the HTTP or HTTPS protocol)")
+        if proxy.startswith(("http://", "https://")):
+            raise ProxyConfException(f"Invalid proxy syntax '{proxy}' (no need to specify the HTTP or HTTPS protocol)")
         (host, *extra)=proxy.split(":")
         if not host:
             raise ValueError(f"Invalid proxy specification '{proxy}': empty server part")
@@ -40,10 +42,10 @@ class Proxy:
             try:
                 port=int(extra[0])
                 if port<=0 or port>=65535:
-                    raise Exception("invalid port part")
+                    raise ProxyConfException("invalid port part")
                 self._port=port
-            except Exception as e:
-                raise ValueError(f"Invalid proxy specification '{proxy}': {str(e)}")
+            except Exception as e: # noqa: BLE001
+                raise ValueError(f"Invalid proxy specification '{proxy}': {e}")
         else:
             raise ValueError(f"Invalid proxy specification '{proxy}': invalid format")
         self._proxy=proxy
@@ -81,11 +83,11 @@ class Proxy:
             return None
 
         if not isinstance(data, dict):
-            raise Exception(f"Invalid proxy definition {data}")
+            raise ProxyConfException(f"Invalid proxy definition {data}")
 
         (fw_rules, resolv_rules)=load_rules_from_data(data.get("out-rules", []), named_netres)
 
         proxy=data.get("proxy")
         if proxy is None:
-            raise Exception("No 'proxy' section")
+            raise ProxyConfException("No 'proxy' section")
         return cls(proxy, fw_rules, resolv_rules, data.get("descr", "Unnamed"))

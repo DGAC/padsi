@@ -20,12 +20,13 @@
 import hashlib
 import json
 import os
-
 from dataclasses import dataclass
 
 from nsbubble import MountPointSet
+
 from .nssdb import NSSDB
-from .policies import ProgramPolicies
+from .policies import PoliciesException, ProgramPolicies
+
 
 @dataclass
 class PoliciesFile:
@@ -57,7 +58,7 @@ class FirefoxPolicies(ProgramPolicies):
         self._gid=None
         if uid is not None and gid is None or \
             uid is None and gid is not None:
-            raise Exception("Both uid and gid must be None or not None at the same time")
+            raise PoliciesException("Both uid and gid must be None or not None at the same time")
         if uid is not None and uid!=os.geteuid():
             self._uid=uid
             self._gid=gid
@@ -80,7 +81,7 @@ class FirefoxPolicies(ProgramPolicies):
             r_pol_file=mp_set.file_source_path(pol_file, False)
             w_pol_file=mp_set.file_source_path(pol_file, True)
             if w_pol_file is None:
-                raise Exception(f"CODEBUG: MountPointSet.file_source_path({pol_file}, True) returned None")
+                raise PoliciesException(f"CODEBUG: MountPointSet.file_source_path({pol_file}, True) returned None")
             res.append(PoliciesFile(r_pol_file, w_pol_file, pol_file))
         return res
 
@@ -95,8 +96,8 @@ class FirefoxPolicies(ProgramPolicies):
                     nssdb.clear_ca_certificates()
                     if self._uid is not None and self._gid is not None:
                         nssdb.chown(self._uid, self._gid)
-                except Exception as e:
-                    raise Exception(f"Failed to clean NSS database in '{dbpath}': {str(e)}")
+                except Exception as e: # noqa: BLE001
+                    raise PoliciesException(f"Failed to clean NSS database in '{dbpath}': {e}")
 
     def add_trusted_ca(self, mountpoint_set:MountPointSet, home_dir:str, nickname:str, ca_cert:str):
         # refer to https://mozilla.github.io/policy-templates/#certificates
@@ -105,7 +106,7 @@ class FirefoxPolicies(ProgramPolicies):
         for pol_file in self._get_policies_files(mountpoint_set):
             h_certs_dir=os.path.dirname(os.path.dirname(pol_file.write_path))
             if h_certs_dir=="/":
-                raise Exception("CODEBUG: certs_dir is '/'")
+                raise PoliciesException("CODEBUG: certs_dir is '/'")
             h_certs_dir=os.path.join(h_certs_dir, "padsi-certs")
             os.makedirs(h_certs_dir, exist_ok=True)
 

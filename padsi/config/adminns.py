@@ -28,6 +28,9 @@ from .trafficshaper import TrafficShaper
 
 _debug = False
 
+class AdminNSConfException(Exception):
+    pass
+
 class AdminNS:
     """Contains the configuration of an Admin namespace (the equivalent of a zone but for adminitration purposes)
     """
@@ -61,7 +64,7 @@ class AdminNS:
         # zone's attributes
         friendly_name = data.get("friendly-name")
         if friendly_name is not None and not isinstance(friendly_name, str):
-            raise Exception(f"Invalid friendly-name attribute '{friendly_name}")
+            raise AdminNSConfException(f"Invalid friendly-name attribute '{friendly_name}")
 
         # traffic shapers
         tsp:TrafficShaper|None=None
@@ -69,14 +72,14 @@ class AdminNS:
         if tsp_name is not None:
             tsp=traffic_shapers.get(tsp_name)
             if tsp is None:
-                raise Exception(f"Unknown traffic shaper '{tsp_name}'")
+                raise AdminNSConfException(f"Unknown traffic shaper '{tsp_name}'")
 
         # web proxies
         proxy_data=data.get("web-proxy")
         proxies:list[Proxy]=[]
         if proxy_data is not None:
             if not isinstance(proxy_data, list):
-                raise Exception("Invalid 'web-proxy' section")
+                raise AdminNSConfException("Invalid 'web-proxy' section")
             for proxy_conf in proxy_data:
                 proxy = Proxy.from_data(proxy_conf, named_netres)
                 if proxy is not None:
@@ -86,11 +89,11 @@ class AdminNS:
         netdata:dict|None=data.get("network")
         net = network.NetworkSpec.from_data(netdata, named_netres, None, config_dir=config_dir)
         if netdata is None or net is None:
-            raise Exception(f"Admin NS '{name}' must have a network configuration")
+            raise AdminNSConfException(f"Admin NS '{name}' must have a network configuration")
 
         (in_fw_rules, in_resolv_rules) = network.load_rules_from_data(netdata.get("in-rules", []), named_netres)
         if len(in_resolv_rules)>0:
-            raise Exception("Resolv. rules are not allowed as input rules")
+            raise AdminNSConfException("Resolv. rules are not allowed as input rules")
 
         return cls(name, friendly_name, net, in_fw_rules, proxies, config_dir, tsp)
 

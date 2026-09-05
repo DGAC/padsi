@@ -31,6 +31,9 @@ from .trafficshaper import TrafficShaper
 _debug = False
 
 
+class NetworkConfException(Exception):
+    pass
+
 class NetworkRessources:
     """Represent a list of network resources"""
 
@@ -45,22 +48,22 @@ class NetworkRessources:
                 elif sep.is_wildcard_domain:
                     self._domain_endpoints.append(sep)
                 else:
-                    raise Exception(f"Unhandled not IPv4 or domain endpoint '{sep}'")
+                    raise NetworkConfException(f"Unhandled not IPv4 or domain endpoint '{sep}'")
 
     @classmethod
     def from_data(cls, data: dict) -> NetworkRessources:
         descr = data.get("descr")
         if not isinstance(descr, str) or not descr:
-            raise Exception("Missing or invalid 'descr' attribute in network resources data")
+            raise NetworkConfException("Missing or invalid 'descr' attribute in network resources data")
         endpoints = data.get("endpoints")
         if not isinstance(endpoints, list):
-            raise Exception("Missing or invalid 'endpoints' attribute in network resources data")
+            raise NetworkConfException("Missing or invalid 'endpoints' attribute in network resources data")
         eplist: list[firewall.Endpoint] = []
         for eprepr in endpoints:
             try:
                 eplist.append(firewall.Endpoint.from_repr(eprepr))
-            except Exception as e:
-                raise Exception(f"Invalid endpoint '{eprepr}' in network resources data: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                raise NetworkConfException(f"Invalid endpoint '{eprepr}' in network resources data: {e}")
 
         return cls(descr, eplist)
 
@@ -83,16 +86,16 @@ def load_netres_file(path: str) -> dict[str, NetworkRessources]:
     with open(path, "r") as fd:
         data = json.load(fd)
         if not isinstance(data, dict):
-            raise Exception(f"Invalid network resources file '{path}'")
+            raise NetworkConfException(f"Invalid network resources file '{path}'")
         for name, netdata in data.items():
             if not isinstance(name, str) or not name:
-                raise Exception(f"Invalid network resources name '{name}' in file '{path}'")
+                raise NetworkConfException(f"Invalid network resources name '{name}' in file '{path}'")
             if not isinstance(netdata, dict):
-                raise Exception(f"Invalid network resources data for '{name}' in file '{path}'")
+                raise NetworkConfException(f"Invalid network resources data for '{name}' in file '{path}'")
             try:
                 res[name] = NetworkRessources.from_data(netdata)
-            except Exception as e:
-                raise Exception(f"{str(e)} (for '{name}' in file '{path}')")
+            except Exception as e: # noqa: BLE001
+                raise NetworkConfException(f"{e} (for '{name}' in file '{path}')")
     return res
 
 
@@ -166,24 +169,24 @@ def load_rules_from_data(rules_data: list[dict], named_netres: dict[str, Network
     if rules_data is not None:
         for rule in rules_data:
             if not isinstance(rule, dict):
-                raise Exception(f"Invalid rule '{rule}'")
+                raise NetworkConfException(f"Invalid rule '{rule}'")
             action = rule.get("action")
             if action not in ("allow", "deny"):
-                raise Exception(f"Invalid action in rule '{rule}'")
+                raise NetworkConfException(f"Invalid action in rule '{rule}'")
             descr = rule.get("descr")
             if descr is not None and not isinstance(descr, str):
-                raise Exception(f"Invalid 'descr' attribute in rule '{rule}'")
+                raise NetworkConfException(f"Invalid 'descr' attribute in rule '{rule}'")
             eprepr = rule.get("endpoint")
             netres = rule.get("netres")
             resolv = rule.get("resolv")
             if eprepr is not None and netres is not None:
-                raise Exception(f"Invalid rule '{rule}': both 'endpoint' and 'netres' specified")
+                raise NetworkConfException(f"Invalid rule '{rule}': both 'endpoint' and 'netres' specified")
             if eprepr is None and netres is None:
-                raise Exception(f"Invalid rule '{rule}': none of 'endpoint' or 'netres' specified")
+                raise NetworkConfException(f"Invalid rule '{rule}': none of 'endpoint' or 'netres' specified")
             if eprepr is not None:
                 if resolv is not None:
                     if not isinstance(resolv, list):
-                        raise Exception(f"Invalid 'resolv' '{resolv}' attribute in '{rule}'")
+                        raise NetworkConfException(f"Invalid 'resolv' '{resolv}' attribute in '{rule}'")
                     for entry in resolv:
                         try:
                             (typ, ttl, ip4) = entry.split("/")
@@ -191,29 +194,29 @@ def load_rules_from_data(rules_data: list[dict], named_netres: dict[str, Network
                                 _ttl=int(ttl)
                                 ipaddress.IPv4Address(ip4)
                             else:
-                                raise Exception(f"unknown reply type '{typ}'")
-                        except Exception as e:
-                            raise Exception(f"Invalid 'resolv' '{resolv}' attribute in '{rule}': {str(e)}")
+                                raise NetworkConfException(f"unknown reply type '{typ}'")
+                        except Exception as e: # noqa: BLE001
+                            raise NetworkConfException(f"Invalid 'resolv' '{resolv}' attribute in '{rule}': {e}")
                 try:
                     ep = firewall.Endpoint.from_repr(eprepr)
                     for sub_ep in ep.split_by_zone():
                         if sub_ep.is_ipv4 or sub_ep.is_all_ipv4:
                             if resolv is not None:
-                                raise Exception("'resolv' attribute can't be specified for non domain endpoint")
+                                raise NetworkConfException("'resolv' attribute can't be specified for non domain endpoint")
                             fw_rules.append(FWRule(action, descr, sub_ep))
                         elif sub_ep.is_wildcard_domain:
                             resolv_rules.append(ResolvRule(action, descr, sub_ep, resolv))
                         else:
-                            raise Exception(f"unhandled not IPv4 or domain endpoint '{sub_ep}'")
-                except Exception as e:
-                    raise Exception(f"Invalid 'endpoint' attribute '{eprepr}': {str(e)}")
+                            raise NetworkConfException(f"unhandled not IPv4 or domain endpoint '{sub_ep}'")
+                except Exception as e: # noqa: BLE001
+                    raise NetworkConfException(f"Invalid 'endpoint' attribute '{eprepr}': {e}")
             else:
                 if named_netres is None:
-                    raise Exception(f"Invalid rule '{rule}': 'netres' specified but no network resource defined")
+                    raise NetworkConfException(f"Invalid rule '{rule}': 'netres' specified but no network resource defined")
                 if netres is not None:
                     netresobj = named_netres.get(netres)
                     if netresobj is None:
-                        raise Exception(f"Invalid rule '{rule}': network resource '{netres}' is not defined")
+                        raise NetworkConfException(f"Invalid rule '{rule}': network resource '{netres}' is not defined")
                     if netresobj.ipv4_endpoints is not None:
                         for ep in netresobj.ipv4_endpoints:
                             fw_rules.append(FWRule(action, netresobj.descr, ep))
@@ -248,23 +251,15 @@ class DNSEndpoint:
             addr = ipaddress.IPv4Address(parts[0])
             if len(parts) > 1:
                 for item in parts[1:]:
-                    used = False
                     try:
                         port = int(item)
                         if port <= 0 or port > 65535:
-                            raise Exception
-                        used = True
-                    except Exception:
-                        pass
-
-                    if not used:
+                            raise NetworkConfException(f"Invalid port number {port}")
+                    except ValueError:
                         try:
                             proto = DNSProtocol(item.upper())
-                            used = True
-                        except Exception:
-                            pass
-                    if not used:
-                        raise Exception
+                        except ValueError:
+                            raise NetworkConfException(f"Invalid DNS protocol {item}")
 
             match (port, proto):
                 case (None, None):
@@ -282,8 +277,8 @@ class DNSEndpoint:
                     pass
 
             return cls(addr, port, proto)  # pyright: ignore
-        except Exception:
-            raise Exception(f"Invalid DNS server specification '{spec}', expected <IP address>[@<port>][@<protocol>]")
+        except Exception: # noqa: BLE001
+            raise NetworkConfException(f"Invalid DNS server specification '{spec}', expected <IP address>[@<port>][@<protocol>]")
 
 
 class NetworkSpec:
@@ -357,14 +352,14 @@ class NetworkSpec:
             return None
 
         if not isinstance(data, dict):
-            raise Exception(f"Invalid network definition {data}")
+            raise NetworkConfException(f"Invalid network definition {data}")
 
         tshaper: TrafficShaper | None = None
         resolvers:list[DNSEndpoint] | None=None
 
         if not rules_only:
             if config_dir is None:
-                raise Exception("CODEBUG in NetworkSpec loading error: config_dir should not be None")
+                raise NetworkConfException("CODEBUG in NetworkSpec loading error: config_dir should not be None")
             # traffic shaper
             tshaper = None
             tsref = data.get("traffic-shaper")
@@ -372,14 +367,14 @@ class NetworkSpec:
                 try:
                     tshaper = traffic_shapers[tsref]
                 except KeyError:
-                    raise Exception(f"Unknown traffic shaper '{tsref}'")
+                    raise NetworkConfException(f"Unknown traffic shaper '{tsref}'")
 
             # DNS resolvers
             dresolvers = data.get("dns-resolvers")
             if dresolvers is not None:
                 resolvers=[]
                 if not isinstance(dresolvers, list):
-                    raise Exception(f"Invalid list of DNS resolvers '{dresolvers}'")
+                    raise NetworkConfException(f"Invalid list of DNS resolvers '{dresolvers}'")
                 for item in dresolvers:
                     resolvers.append(DNSEndpoint.from_spec(item))
 

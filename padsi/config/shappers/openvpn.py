@@ -29,7 +29,7 @@ import syslog
 import firewall
 from padsi.network import interface_index
 
-from ..trafficshaper import TrafficShaper
+from ..trafficshaper import TrafficShaper, TrafficShaperConfException
 
 
 class OpenVPNTrafficShaper(TrafficShaper):
@@ -46,14 +46,14 @@ class OpenVPNTrafficShaper(TrafficShaper):
             try:
                 self._ping_test = ipaddress.IPv4Address(ping_test_ip)
             except ipaddress.AddressValueError:
-                raise Exception(f"Invalid ping test IP address '{ping_test_ip}'")
+                raise TrafficShaperConfException(f"Invalid ping test IP address '{ping_test_ip}'")
 
         self._vpn_iface_name="tun0"
         self._vpn_iface_idndex:int|None=None
         self._vpn_server_name:str|None=None
         self._vpn_port:int|None=None
 
-        self._proc:subprocess.Popen|None=None
+        self._proc:asyncio.subprocess.Process|None=None
         self._monit_task:asyncio.Task|None=None
 
         self._blocked_flow: firewall.NetFlow|None=None # block all traffic which goes out of the network namespace ("killswitch")
@@ -74,7 +74,7 @@ class OpenVPNTrafficShaper(TrafficShaper):
         if self._ping_test is not None:
             try:
                 args=["ip", "netns", "exec", self.net_ns, "ping", "-c", "1", str(self._ping_test)]
-                proc = subprocess.run(args, timeout=1, capture_output=True)
+                proc = subprocess.run(args, timeout=1, capture_output=True, check=False)
                 if proc.returncode!=255:
                     res=proc.returncode == 0
             except subprocess.TimeoutExpired:
@@ -88,7 +88,7 @@ class OpenVPNTrafficShaper(TrafficShaper):
         try:
             ipaddress.IPv4Address(self._vpn_server_name)
             return False
-        except Exception:
+        except Exception: # noqa: BLE001 # noqa: BLE001
             return True
 
     @property
@@ -105,21 +105,21 @@ class OpenVPNTrafficShaper(TrafficShaper):
             return
 
         if not os.path.exists(self._config_file):
-            raise Exception(f"OpenVPN configuration file '{self._config_file}' does not exist")
+            raise TrafficShaperConfException(f"OpenVPN configuration file '{self._config_file}' does not exist")
 
         try:
             proto:str|None=None
             with open(self._config_file, "rt") as fd:
-                for line in fd.readlines():
+                for line in fd:
                     if line.startswith("remote "):
                         (_, srv, port, proto)=line.split()
                         self._vpn_server_name=srv
                         self._vpn_port=int(port)
             if not self._vpn_server_name:
-                raise Exception("no server endpoint specified")
+                raise TrafficShaperConfException("no server endpoint specified")
             if self._vpn_port is not None:
                 if self._vpn_port <= 0 or self._vpn_port > 65535:
-                    raise Exception(f"invalid port {self._vpn_port}")
+                    raise TrafficShaperConfException(f"invalid port {self._vpn_port}")
             else:
                 match proto:
                     case "udp":
@@ -127,10 +127,10 @@ class OpenVPNTrafficShaper(TrafficShaper):
                     case "tcp":
                         self._vpn_port=443
                     case _:
-                        raise Exception(f"unknown protocol'{proto}'")
+                        raise TrafficShaperConfException(f"unknown protocol'{proto}'")
 
-        except Exception as e:
-            raise Exception(f"Invalid OpenVPN config file '{self._config_file}': {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise TrafficShaperConfException(f"Invalid OpenVPN config file '{self._config_file}': {e}")
 
     def setup(self, fw_init_ns:firewall.Firewall, lower_net:ipaddress.IPv4Network|None):
         super().setup(fw_init_ns, lower_net)
@@ -138,8 +138,8 @@ class OpenVPNTrafficShaper(TrafficShaper):
         self._blocked_flow=nflow
         try:
             fw_init_ns.flow_set_policy(firewall.FlowType.FILTER_FORWARD, nflow, firewall.Policy.DENY)
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Could not deny killswitch network flow '{nflow}': {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Could not deny killswitch network flow '{nflow}': {e}")
 
     async def _monit(self):
         """Monitors the presence of the VPN process and associated TUN interface and adjust masquerading"""
@@ -147,11 +147,10 @@ class OpenVPNTrafficShaper(TrafficShaper):
             try:
                 await asyncio.sleep(2)
                 # VPN process
-                if self._proc is not None:
-                    if self._proc.returncode is not None:
-                        # process has terminated
-                        self._proc.wait()
-                        self._proc=None
+                if self._proc is not None and self._proc.returncode is not None:
+                    # process has terminated
+                    await self._proc.wait()
+                    self._proc=None
 
                 # TUN interface
                 id=interface_index(self._vpn_iface_name, self.net_ns)
@@ -161,7 +160,7 @@ class OpenVPNTrafficShaper(TrafficShaper):
                             try:
                                 fw=firewall.Firewall(self.net_ns)
                                 fw.del_stale_masquerade(id)
-                            except Exception:
+                            except Exception: # noqa: BLE001,S110
                                 pass
                             self.undeclare_default_route_interface(self._vpn_iface_name)
 
@@ -169,8 +168,8 @@ class OpenVPNTrafficShaper(TrafficShaper):
                         try:
                             fw=firewall.Firewall(self.net_ns)
                             fw.add_masquerade(self._vpn_iface_name)
-                        except Exception as e:
-                            syslog.syslog(syslog.LOG_ERR, f"Failed to add masquerade to OpenVPN interface '{self._vpn_iface_name}': {str(e)}")
+                        except Exception as e: # noqa: BLE001
+                            syslog.syslog(syslog.LOG_ERR, f"Failed to add masquerade to OpenVPN interface '{self._vpn_iface_name}': {e}")
                         self.declare_default_route_interface(self._vpn_iface_name)
                 else:
                     if self._vpn_iface_idndex is not None:
@@ -179,13 +178,13 @@ class OpenVPNTrafficShaper(TrafficShaper):
                         try:
                             fw=firewall.Firewall(self.net_ns)
                             fw.del_stale_masquerade(id)
-                        except Exception:
+                        except Exception: # noqa: BLE001,S110
                             pass
                         self.undeclare_default_route_interface(self._vpn_iface_name)
             except asyncio.CancelledError:
                 return
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Monitoring task failed: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Monitoring task failed: {e}")
                 return
 
     async def adapt(self, dns_resolvers_found: bool, host_fw: firewall.Firewall):
@@ -199,8 +198,8 @@ class OpenVPNTrafficShaper(TrafficShaper):
             # kill existing VPN service
             try:
                 self._proc.send_signal(signal.SIGTERM)
-                self._proc.wait()
-            except Exception:
+                await self._proc.wait()
+            except Exception: # noqa: BLE001,S110
                 pass
             self._proc=None
 
@@ -210,10 +209,10 @@ class OpenVPNTrafficShaper(TrafficShaper):
                 try:
                     syslog.syslog(syslog.LOG_DEBUG, f"Removing previous allowed VPN flow '{self._allowed_flow}'")
                     host_fw.flow_delete_policy(firewall.FlowType.FILTER_FORWARD, self._allowed_flow)
-                except Exception as e:
-                    msg=f"Could not remove VPN network flow '{self._allowed_flow}': {str(e)}"
+                except Exception as e: # noqa: BLE001
+                    msg=f"Could not remove VPN network flow '{self._allowed_flow}': {e}"
                     syslog.syslog(syslog.LOG_ERR, msg)
-                    raise Exception(msg)
+                    raise TrafficShaperConfException(msg)
                 finally:
                     self._allowed_flow=None
 
@@ -222,11 +221,11 @@ class OpenVPNTrafficShaper(TrafficShaper):
         try:
             # may work if VPN server is specified as an IP address
             vpn_server_ip = ipaddress.IPv4Address(self._vpn_server_name)
-        except Exception:
+        except Exception: # noqa: BLE001
             if dns_resolvers_found:
-                syslog.syslog(syslog.LOG_DEBUG, f"Resolving {str(self._vpn_server_name)}...")
+                syslog.syslog(syslog.LOG_DEBUG, f"Resolving {self._vpn_server_name}...")
                 vpn_server_ip = await self.resolv(str(self._vpn_server_name))
-                syslog.syslog(syslog.LOG_DEBUG, f"Resolved {str(self._vpn_server_name)} to {vpn_server_ip}")
+                syslog.syslog(syslog.LOG_DEBUG, f"Resolved {self._vpn_server_name} to {vpn_server_ip}")
             else:
                 syslog.syslog(syslog.LOG_DEBUG, "No DNS resolver available")
 
@@ -237,29 +236,29 @@ class OpenVPNTrafficShaper(TrafficShaper):
         self._allowed_flow=firewall.NetFlow(None, firewall.Endpoint.from_repr(f"{vpn_server_ip} ^ udp ^ {self._vpn_port}"))
         try:
             host_fw.flow_set_policy(firewall.FlowType.FILTER_FORWARD, self._allowed_flow, firewall.Policy.ALLOW)
-        except Exception as e:
+        except Exception as e: # noqa: BLE001
             self._allowed_flow = None
-            msg=f"Could not allow network flow to the VPN server '{self._allowed_flow}': {str(e)}"
+            msg=f"Could not allow network flow to the VPN server '{self._allowed_flow}': {e}"
             syslog.syslog(syslog.LOG_ERR, msg)
-            raise Exception(msg)
+            raise TrafficShaperConfException(msg)
 
         assert(self._blocked_flow)
         try:
             host_fw.flow_delete_policy(firewall.FlowType.FILTER_FORWARD, self._blocked_flow)
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Could not remove deny killswitch network flow '{self._blocked_flow}': {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Could not remove deny killswitch network flow '{self._blocked_flow}': {e}")
         try:
             host_fw.flow_set_policy(firewall.FlowType.FILTER_FORWARD, self._blocked_flow, firewall.Policy.DENY)
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Could not deny killswitch network flow '{self._blocked_flow}': {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Could not deny killswitch network flow '{self._blocked_flow}': {e}")
 
-        # launch the OpenVNP server
+        # launch the OpenVPN server
         try:
-            self._proc=subprocess.Popen(["ip", "netns", "exec", self.net_ns, "openvpn", "--config", self._config_file])
+            self._proc=await asyncio.create_subprocess_exec("ip", "netns", "exec", self.net_ns, "openvpn", "--config", self._config_file)
             self._monit_task=asyncio.create_task(self._monit())
         except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Could not start the OpenVPN server: {str(e)}")
-            raise e
+            syslog.syslog(syslog.LOG_ERR, f"Could not start the OpenVPN server: {e}")
+            raise
 
     def destroy(self, fw_init_ns:firewall.Firewall):
         if self._monit_task is not None:
@@ -267,20 +266,20 @@ class OpenVPNTrafficShaper(TrafficShaper):
         if self._blocked_flow is not None:
             try:
                 fw_init_ns.flow_delete_policy(firewall.FlowType.FILTER_FORWARD, self._blocked_flow)
-            except Exception as e:
-                syslog.syslog(syslog.LOG_WARNING, f"Could not remove deny killswitch network flow '{self._blocked_flow}': {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_WARNING, f"Could not remove deny killswitch network flow '{self._blocked_flow}': {e}")
         if self._allowed_flow is not None:
             try:
                 fw_init_ns.flow_delete_policy(firewall.FlowType.FILTER_FORWARD, self._allowed_flow)
-            except Exception as e:
-                syslog.syslog(syslog.LOG_WARNING, f"Could not remove VPN network flow '{self._allowed_flow}': {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_WARNING, f"Could not remove VPN network flow '{self._allowed_flow}': {e}")
         super().destroy(fw_init_ns)
 
     @classmethod
     def from_data(cls, name: str, data: dict, config_dir: str) -> OpenVPNTrafficShaper:
         conf = data.get("config")
         if conf is None or conf.get("file") is None:
-            raise Exception("Invalid traffic shaper configuration")
+            raise TrafficShaperConfException("Invalid traffic shaper configuration")
         conf_file = conf.get("file")
         if not os.path.isabs(conf_file):
             conf_file = os.path.join(config_dir, conf_file)

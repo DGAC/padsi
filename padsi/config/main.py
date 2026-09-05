@@ -33,8 +33,7 @@ import padsi.xdg
 from .adminns import AdminNS, load_adminns_file
 from .clipboard import ClipboardRule, Policy
 from .mountpoint import MountPoint
-from .network import (FWRule, NetworkRessources, load_netres_file,
-                      load_rules_from_data)
+from .network import FWRule, NetworkRessources, load_netres_file, load_rules_from_data
 from .trafficshaper import TrafficShaper, load_from_file
 from .vm import VirtualMachine, VMUsage, load_vm_file
 from .zone import StartMode, Zone, load_zone_file
@@ -50,6 +49,9 @@ tap_ip = ipaddress.IPv4Address("192.168.244.1")
 
 # IP address of the VM as seen from the VM
 vm_ip = ipaddress.IPv4Address("192.168.244.2")
+
+class ConfigurationException(Exception):
+    pass
 
 class Configuration:
     """Contains the complete PADSI configurations (networking environment and zones)"""
@@ -77,19 +79,19 @@ class Configuration:
             fname = "padsi.conf"
             fpath = os.path.join(config_directory, fname)
             if not os.path.isfile(fpath):
-                raise Exception("Global configuration file 'padsi.conf' is missing")
+                raise ConfigurationException("Global configuration file 'padsi.conf' is missing")
             with open(fpath, "r") as fd:
                 data = json.load(fd)
                 self._var_dir = data.get("var-dir")
                 if not self._var_dir:
-                    raise Exception("No 'var-dir' top level attribute in global configuration")
+                    raise ConfigurationException("No 'var-dir' top level attribute in global configuration")
                 self._xdg_default_zone = data.get("xdg-default-zone")
 
                 # scripts section
                 scripts=data.get("scripts")
                 if scripts is not None:
                     if not isinstance(scripts, dict):
-                        raise Exception("invalid 'scripts' section")
+                        raise ConfigurationException("invalid 'scripts' section")
                     self._need_restart_check=scripts.get("need-restart-check")
                     if self._need_restart_check is not None and not os.path.exists(self._need_restart_check):
                         syslog.syslog(syslog.LOG_ERR, f"The 'need-restart-check' attribute points to a non existant file '{self._need_restart_check}'")
@@ -97,7 +99,7 @@ class Configuration:
                 # global network settings
                 netdata = data.get("networking")
                 if netdata is None:
-                    raise Exception("Missing 'networking' section")
+                    raise ConfigurationException("Missing 'networking' section")
                 cidr = netdata.get("host-network")
                 if cidr is not None:
                     self._host_network = ipaddress.IPv4Network(cidr)
@@ -126,7 +128,7 @@ class Configuration:
                     for nzapp in section_data:
                         nzapp = nzapp.strip()
                         if not isinstance(nzapp, str) or not nzapp:
-                            raise Exception(f"Invalid app ID '{nzapp}' in the 'nozone-apps' section")
+                            raise ConfigurationException(f"Invalid app ID '{nzapp}' in the 'nozone-apps' section")
                         nzlist.append(nzapp)
                     self._nozone_apps = nzlist
 
@@ -135,9 +137,9 @@ class Configuration:
                     try:
                         self._firewall_logs_group=int(group)
                         if self._firewall_logs_group<0 or self._firewall_logs_group>=2**16:
-                            raise Exception()
-                    except Exception:
-                        raise Exception(f"Invalid firewall logs group '{group}'")
+                            raise ConfigurationException()
+                    except Exception: # noqa: BLE001
+                        raise ConfigurationException(f"Invalid firewall logs group '{group}'")
 
                 clipboard=data.get("clipboard")
                 if clipboard is not None:
@@ -145,15 +147,15 @@ class Configuration:
                         for rule_data in clipboard:
                             crule=ClipboardRule.from_data(rule_data)
                             self._clipboard_rules.append(crule)
-                    except Exception:
-                        raise Exception(f"Invalid clipboard rules '{clipboard}'")
+                    except Exception: # noqa: BLE001
+                        raise ConfigurationException(f"Invalid clipboard rules '{clipboard}'")
 
             # load all the traffic shapers' definitions
             for fname in os.listdir(config_directory):
                 if fname.endswith(".tsp"):
                     tsp=load_from_file(os.path.join(config_directory, fname))
                     if tsp.name=="init":
-                        raise Exception("Invalid traffic shaper name 'init'")
+                        raise ConfigurationException("Invalid traffic shaper name 'init'")
                     self._traffic_shapers[tsp.name]=tsp
             self._traffic_shapers={k: v for k, v in sorted(self._traffic_shapers.items(), key=lambda item: item[0])}
 
@@ -203,32 +205,32 @@ class Configuration:
                     )
                     self._admin_ns_list.append(admin)
 
-        except Exception as e:
+        except Exception as e: # noqa: BLE001
             if fname is None:
-                raise Exception(f"Failed to load configuration in '{config_directory}': {str(e)}")
-            raise Exception(f"Failed to load configuration in '{config_directory}' (file '{fname}'): {str(e)}")
+                raise ConfigurationException(f"Failed to load configuration in '{config_directory}': {e}")
+            raise ConfigurationException(f"Failed to load configuration in '{config_directory}' (file '{fname}'): {e}")
 
         # load host in and out rules
         (fw_rules, resolv_rules) = load_rules_from_data(host_in_rules_data, self._named_netres)
         if resolv_rules:
-            raise Exception(f"Host network access for inbound connections does not allow non CIDR based rules {resolv_rules}")
+            raise ConfigurationException(f"Host network access for inbound connections does not allow non CIDR based rules {resolv_rules}")
         self._host_in_fw_rules = fw_rules
         (fw_rules, resolv_rules) = load_rules_from_data(host_out_rules_data, self._named_netres)
         if resolv_rules:
-            raise Exception(f"Host network access for outbound connections does not allow non CIDR based rules {resolv_rules}")
+            raise ConfigurationException(f"Host network access for outbound connections does not allow non CIDR based rules {resolv_rules}")
         self._host_out_fw_rules = fw_rules
 
         # global coherence checks
         if self._xdg_default_zone is not None and self._xdg_default_zone not in self._zones:
-            raise Exception(f"XDG default zone '{self._xdg_default_zone}' is not defined")
+            raise ConfigurationException(f"XDG default zone '{self._xdg_default_zone}' is not defined")
         if self._host_network is not None:
             if self._host_network.overlaps(users_br_network) or users_br_network.overlaps(self._host_network):
-                raise Exception(f"Network configuration error: networks {str(users_br_network)} and {str(self._host_network)} overlap")
+                raise ConfigurationException(f"Network configuration error: networks {users_br_network} and {self._host_network} overlap")
             try:
                 if self._host_network.num_addresses<256:
-                    raise Exception()
-            except Exception:
-                raise Exception(f"Network {str(self._host_network)} is too small")
+                    raise ConfigurationException()
+            except Exception: # noqa: BLE001
+                raise ConfigurationException(f"Network {self._host_network} is too small")
 
         # check there is not duplicate incoming traffic rules
         all_in_rules:list[FWRule]=self._host_in_fw_rules if self._host_in_fw_rules else []
@@ -236,7 +238,7 @@ class Configuration:
             if adminns.traffic_shaper is None and adminns.in_fw_rules:
                 for rule in adminns.in_fw_rules:
                     if rule in all_in_rules:
-                        raise Exception(f"Duplicate inbound rule {rule.action} {rule.endpoint} ({rule.descr}) in the admin NS '{adminns.name}'")
+                        raise ConfigurationException(f"Duplicate inbound rule {rule.action} {rule.endpoint} ({rule.descr}) in the admin NS '{adminns.name}'")
                     all_in_rules.append(rule)
         self._admin_ns_list.sort(key=lambda x: x.name)
 
@@ -258,19 +260,19 @@ class Configuration:
         def _check_mountpoint(mp: MountPoint, context: str):
             try:
                 padsi.misc.expand_variables_in_string(mp.mount_path, all_vars)
-            except Exception:
-                raise Exception(f"Invalid mount point in {context}: destination path '{mp.mount_path}' uses invalid variable")
+            except Exception: # noqa: BLE001
+                raise ConfigurationException(f"Invalid mount point in {context}: destination path '{mp.mount_path}' uses invalid variable")
             try:
                 padsi.misc.expand_variables_in_string(mp.source_path, all_vars)
-            except Exception:
-                raise Exception(f"Invalid mount point in {context}: source path '{mp.source_path}' uses invalid variable")
+            except Exception: # noqa: BLE001
+                raise ConfigurationException(f"Invalid mount point in {context}: source path '{mp.source_path}' uses invalid variable")
 
         for item in self.zones:
             if item.mount_points is not None:
                 for mp in item.mount_points:
                     _check_mountpoint(mp, f"zone '{item.name}'")
         if self._vm_definitions[VMUsage.RUN] is not None:
-            for _, item in self._vm_definitions[VMUsage.RUN].items():
+            for item in self._vm_definitions[VMUsage.RUN].values():
                 if item.mount_points is not None:
                     for mp in item.mount_points:
                         _check_mountpoint(mp, f"VM '{item.id}'")
@@ -470,7 +472,7 @@ class Configuration:
         zone = self._zones.get(zone_name)
         if zone is not None:
             return zone
-        raise Exception(f"Undefined zone '{zone_name}'")
+        raise ConfigurationException(f"Undefined zone '{zone_name}'")
 
     @property
     def admin_ns_list(self) -> list[AdminNS]:
@@ -486,7 +488,7 @@ class Configuration:
         for admin in self._admin_ns_list:
             if admin.name==name:
                 return admin
-        raise Exception(f"Undefined admin NS '{name}'")
+        raise ConfigurationException(f"Undefined admin NS '{name}'")
 
     def get_unused_low_network(self) -> ipaddress.IPv4Network:
         """Return au unused network which contains at least 2 ip addresses in its range, which can be used
@@ -517,7 +519,7 @@ class Configuration:
             pass
         msg = f"No more networks available in '{self._host_network}'"
         syslog.syslog(syslog.LOG_ERR, msg)
-        raise Exception(msg)
+        raise ConfigurationException(msg)
 
     def get_unused_low_admin_network(self) -> ipaddress.IPv4Network:
         """Return au unused network which contains at least 2 ip addresses in its range, which can be used
@@ -530,7 +532,7 @@ class Configuration:
         if self._admin_sub_network_index==len(self._admin_sub_networks):
             msg = "No more admin networks available"
             syslog.syslog(syslog.LOG_ERR, msg)
-            raise Exception(msg)
+            raise ConfigurationException(msg)
         net=self._admin_sub_networks[self._admin_sub_network_index]
         self._admin_sub_network_index+=1
         if _debug:
@@ -545,7 +547,7 @@ class Configuration:
         """Get a VM definition for a specific usage and its ID"""
         try:
             return self._vm_definitions[usage][vm_id]
-        except Exception:
+        except Exception: # noqa: BLE001
             return None
 
     def XDG_DATA_DIRS_install(self):
@@ -568,13 +570,13 @@ class Configuration:
                 with open("/etc/profile.d/zzz_padsi.sh", "w") as fd:
                     fd.write(data)
             else:
-                raise Exception("The '/etc/profile.d' directory does not exist on this system")
+                raise ConfigurationException("The '/etc/profile.d' directory does not exist on this system")
 
     def _get_xdg_dir_for_de_file(self, de_file: str) -> str:
         for xdg_dir in self.xdg_data_dirs:
             if de_file.startswith(xdg_dir):
                 return xdg_dir[1:]  # remove leading "/"
-        raise Exception(f"Desktop entry file/dir '{de_file}' is not in any of the declared XDG data directories")
+        raise ConfigurationException(f"Desktop entry file/dir '{de_file}' is not in any of the declared XDG data directories")
 
     def get_de_files_install_dir(self, de_file: str | None, zone_name: str | None) -> str:
         """Determine where desktop entry files created by this object are installed. the de_file string may represent an actual dekstop
@@ -603,7 +605,7 @@ class Configuration:
         try:
             os.makedirs(install_dir, exist_ok=True)
         except PermissionError:
-            raise Exception(f"CODEBUG: could not create desktop entries directory '{install_dir}' due to permissions")
+            raise ConfigurationException(f"CODEBUG: could not create desktop entries directory '{install_dir}' due to permissions")
 
         return install_dir
 
@@ -633,7 +635,7 @@ class Configuration:
         try:
             os.makedirs(install_dir, exist_ok=True)
         except PermissionError:
-            raise Exception(f"CODEBUG: could not create icons directory '{install_dir}' due to permissions")
+            raise ConfigurationException(f"CODEBUG: could not create icons directory '{install_dir}' due to permissions")
 
         return install_dir
 
@@ -649,9 +651,7 @@ class Configuration:
         res: set[str] = set()
         prefix = f"padsi.{user_zone_name}." if not is_global else None
         for fname in os.listdir(install_dir):
-            if is_global:
-                res.add(os.path.join(install_dir, fname))
-            elif prefix is not None and fname.startswith(prefix):
+            if is_global or (prefix is not None and fname.startswith(prefix)):
                 res.add(os.path.join(install_dir, fname))
         return res
 
@@ -661,9 +661,8 @@ class Configuration:
         res = set()
         for fname in os.listdir(install_dir):
             fpath = os.path.join(install_dir, fname)
-            if os.path.isfile(fpath):
-                if zone_name is None or fname.startswith(f"padsi.{zone_name}"):
-                    res.add(fpath)
+            if os.path.isfile(fpath) and zone_name is None or fname.startswith(f"padsi.{zone_name}"):
+                res.add(fpath)
         return res
 
     def desktop_entry_install(self, de_file: str, user_zone_name: str | None) -> tuple[set[str], set[str]]:
@@ -718,7 +717,7 @@ class Configuration:
                         if is_global and de.app_id in zone.apps or not is_global:
                             if zone == self.xdg_default_zone:
                                 if _debug:
-                                    logging.debug(f"In zone {zone_name} (default zone), customizing with icon_color=None, user_de={not is_global}, icons_install_dir={icons_install_dir}")
+                                    logging.debug(f"In zone {zone_name} (default zone), customizing with icon_color=None, user_de={not is_global}, icons_install_dir={icons_install_dir}") # noqa: LOG015
                                 (de_files, icon_files) = de.customize_for_zone(
                                     zone=zone,
                                     de_install_dir=de_install_dir,
@@ -729,7 +728,7 @@ class Configuration:
                                 )
                             else:
                                 if _debug:
-                                    logging.debug(f"In zone {zone_name}, customizing with user_de={not is_global}, icons_install_dir={icons_install_dir}")
+                                    logging.debug(f"In zone {zone_name}, customizing with user_de={not is_global}, icons_install_dir={icons_install_dir}") # noqa: LOG015
                                 (de_files, icon_files) = de.customize_for_zone(
                                     zone=zone,
                                     de_install_dir=de_install_dir,
@@ -749,8 +748,7 @@ class Configuration:
                                 de_install_dir,
                                 de.filename,
                             ],
-                            capture_output=True,
-                            text=True
+                            capture_output=True, text=True, check=False
                         )
                         if res.returncode != 0:
                             syslog.syslog(syslog.LOG_WARNING, f"Could not copy app {de.app_id} original DE to {de_install_dir}: {res.stdout}, {res.stderr}")
@@ -765,15 +763,14 @@ class Configuration:
                                     "true",
                                     new_de_file,
                                 ],
-                                capture_output=True,
-                                text=True
+                                capture_output=True, text=True, check=False
                             )
                             if res.returncode != 0:
-                                raise Exception(f"Could not set Nodisplay in DE file to {new_de_file}: {res.stderr}")
+                                raise ConfigurationException(f"Could not set Nodisplay in DE file to {new_de_file}: {res.stderr}")
                             touched_de_files.add(new_de_file)
 
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Could not handle Desktop entry file '{de.app_id}': {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Could not handle Desktop entry file '{de.app_id}': {e}")
         return (touched_de_files, touched_icon_files)
 
     def desktop_entry_uninstall(self, de_file: str, user_zone_name: str | None) -> tuple[set[str], set[str]]:
@@ -800,7 +797,7 @@ class Configuration:
             for fname in os.listdir(de_install_dir):
                 if fname.startswith("padsi.") and fname.endswith(suffix):
                     (_, fname_zone, *_) = fname.split(".")
-                    for zone_name, zone in zones.items():
+                    for zone_name in zones:
                         if fname_zone == zone_name:
                             rem_file = os.path.join(de_install_dir, fname)
 
@@ -812,19 +809,19 @@ class Configuration:
                                 touched_icon_files.add(de.icon_file)
                                 try:
                                     os.remove(de.icon_file)
-                                except Exception as e:
+                                except Exception as e: # noqa: BLE001
                                     syslog.syslog(
                                         syslog.LOG_ERR,
-                                        f"Could not remove obsolete icon file '{rem_file}': {str(e)}",
+                                        f"Could not remove obsolete icon file '{rem_file}': {e}",
                                     )
 
                             # remove desktop entry file itself
                             touched_de_files.add(rem_file)
                             try:
                                 os.remove(rem_file)
-                            except Exception as e:
+                            except Exception as e: # noqa: BLE001
                                 syslog.syslog(
                                     syslog.LOG_ERR,
-                                    f"Could not remove obsolete desktop entry file '{rem_file}': {str(e)}",
+                                    f"Could not remove obsolete desktop entry file '{rem_file}': {e}",
                                 )
         return (touched_de_files, touched_icon_files)
