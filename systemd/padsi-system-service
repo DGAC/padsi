@@ -470,29 +470,27 @@ class UserServer(Server):
         tsp=None if tsp_name is None else self._gconf.get_traffic_shaper(tsp_name)
 
         loop=asyncio.get_event_loop()
-        res=await loop.run_in_executor(None, network_infra_setup, self._host_fw, tsp,
-            setup_args["lower-iface"], setup_args["net-namespace-raw"],
-            setup_args["init-pid"], ipaddress.IPv4Interface(setup_args["bridge-ip"]),
-            setup_args["bridge-name"], ipaddress.IPv4Network(setup_args["lower-net"]),
-            setup_args["syslog-prefix"], setup_args["mtu"])
-        if isinstance(res, KeyError):
-            raise SystemServiceException(f"CODEBUG: no '{res}' key present")
-        if isinstance(res, Exception):
-            raise res
+        try:
+            await loop.run_in_executor(None, network_infra_setup, self._host_fw, tsp,
+                setup_args["lower-iface"], setup_args["net-namespace-raw"],
+                setup_args["init-pid"], ipaddress.IPv4Interface(setup_args["bridge-ip"]),
+                setup_args["bridge-name"], ipaddress.IPv4Network(setup_args["lower-net"]),
+                setup_args["syslog-prefix"], setup_args["mtu"])
+        except KeyError as e:
+            raise SystemServiceException(f"CODEBUG: missing key '{e}'")
 
     async def _infra_cleanup(self, cleanup_args:dict):
         tsp_name:TrafficShaper|None=cleanup_args.get("traffic-shaper")
         tsp=None if tsp_name is None else self._gconf.get_traffic_shaper(tsp_name)
 
         loop=asyncio.get_event_loop()
-        res=await loop.run_in_executor(None, network_infra_cleanup, self._host_fw, tsp,
-            cleanup_args["lower-iface"], cleanup_args["run-dir"],
-            cleanup_args["components"], ipaddress.IPv4Network(cleanup_args["lower-net"]),
-            cleanup_args["syslog-prefix"])
-        if isinstance(res, KeyError):
-            raise SystemServiceException(f"CODEBUG: no '{res}' key present")
-        if isinstance(res, Exception):
-            raise res
+        try:
+            await loop.run_in_executor(None, network_infra_cleanup, self._host_fw, tsp,
+                cleanup_args["lower-iface"], cleanup_args["run-dir"],
+                cleanup_args["components"], ipaddress.IPv4Network(cleanup_args["lower-net"]),
+                cleanup_args["syslog-prefix"])
+        except KeyError as e:
+            raise SystemServiceException(f"CODEBUG: missing key '{e}'")
 
     async def _infra_attach_zone_apps(self, attach_args:dict):
         loop=asyncio.get_event_loop()

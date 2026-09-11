@@ -82,15 +82,19 @@ def network_infra_setup(
         fw_init_ns.add_masquerade(source_addr=addr_in_infra_ns.ip)
         fw_init_ns.set_default_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.ALLOW)
         syslog.syslog(syslog.LOG_DEBUG, f"{syslog_prefix}: setup done")
-    except Exception as e: # noqa: BLE001
+    except Exception as e:
         syslog.syslog(syslog.LOG_ERR, f"{syslog_prefix}: setup failed: {e}")
         try:
             padsi.network.interface_delete(veth_iface, lower_net_ns)
-        except Exception as e: # noqa: BLE001
-            syslog.syslog(syslog.LOG_ERR,f"{syslog_prefix}: setup failed, while removing veth {veth_iface}, error: {e}")
+        except Exception as se: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR,f"{syslog_prefix}: setup failed, while removing veth {veth_iface}, error: {se}")
+        raise
     finally:
         if ns_nzone is not None:
-            nsbubble.named_netns_remove(net_bubble_netns)
+            try:
+                nsbubble.named_netns_remove(net_bubble_netns)
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR,f"{syslog_prefix}: could not remove netns {net_bubble_netns}: {e}")
 
 def network_infra_cleanup(
     fw_init_ns: firewall.Firewall,
