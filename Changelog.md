@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.32 2026-09-11
+
+- many bug fixes
+- some minor features (more options to control zones' features, )
+
 ## 0.9.29 2026-06-23
 
 - better logs analyser
