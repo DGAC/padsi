@@ -46,18 +46,14 @@ class USBRedir(Component):
         self._proc:subprocess.Popen|None=None
         self._pid:int|None=None # PID of the usbredir-server.py
 
-    def get_mountpoints(self) -> dict:
+    def get_mountpoints(self) -> set[nsbubble.MountPoint]:
         """Get the mount points required by the component
         Cf. nsbubble's documentation for the formalism
         """
         script_dir=os.path.dirname(__file__)
 
         return {
-            os.path.join(script_dir, "helper-proxy.py"): {
-                "mount-point": "/usr/libexec/spice-client-glib-usb-acl-helper",
-                "read-only": True,
-                "monitored": False
-            }
+            nsbubble.MountPoint(os.path.join(script_dir, "helper-proxy.py"), "/usr/libexec/spice-client-glib-usb-acl-helper")
         }
 
     def start(self, api:nsbubble.BubbleAPI):

@@ -55,7 +55,7 @@ class VirtualMachine:
     """Represent a VM configuration (not a running VM instance)"""
 
     def __init__(self, vm_id: str, os_variant: str, os_version: str | None, vm_descr: str, vm_dir: str, usage: VMUsage, specs: nsbubble.VMSpecs,
-        show_ui: bool, read_only: bool, mounts: list[MountPoint], network: NetworkSpec|None, allowed_users: list[str]|None, scripts: dict[VMScript, str]):
+        show_ui: bool, read_only: bool, mounts: set[MountPoint], network: NetworkSpec|None, allowed_users: list[str]|None, scripts: dict[VMScript, str]):
         """NB: the zone argument is used to copy the resolution and firewall rules from the zone itself"""
         if vm_dir is None:
             raise VirtualMachineException(f"Invalid VM directory{vm_dir}")
@@ -69,7 +69,7 @@ class VirtualMachine:
         self._show_ui = show_ui
         self._read_only = read_only
         self._scripts: dict[VMScript, str] = scripts
-        self._mounts: list[MountPoint] = mounts if mounts else []
+        self._mounts: set[MountPoint] = mounts
         self._network: NetworkSpec|None = network
         self._allowed_users: list[str]|None = allowed_users
         if allowed_users is not None:
@@ -172,7 +172,7 @@ class VirtualMachine:
         return self._read_only
 
     @property
-    def mount_points(self) -> list[MountPoint]:
+    def mount_points(self) -> set[MountPoint]:
         """Get the list of mount points configured in the VM, with regards to the zone's configuration"""
         return self._mounts
 
@@ -336,11 +336,11 @@ def load_vm_file(path: str, root_path: str, named_netres: dict[str, NetworkResso
                 if usage == VMUsage.RUN:
                     mounts = MountPoint.load_from_data(usagedata.get("mounts"), allow_absolute_destination_path=False)
                     if mounts is None:
-                        mounts=[]
+                        mounts=set()
                 else:
                     if usagedata.get("mounts"):
                         raise VirtualMachineException(f"Mount points are not allowed for the {usage.value} usage")
-                    mounts = []
+                    mounts = set()
 
                 # network
                 net = NetworkSpec.from_data(usagedata.get("network"), named_netres, rules_only=True)

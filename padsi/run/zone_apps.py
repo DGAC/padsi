@@ -239,17 +239,13 @@ class ZoneApps(ZoneFoundations):
         self._dbus_router.setup()
         self.api.declare_env_variable("DBUS_SESSION_BUS_ADDRESS", "unix:path=/bubble/run/dbus-router/router.socket")
 
-    def compute_mount_points(self) -> dict:
+    def compute_mount_points(self) -> set[nsbubble.MountPoint]:
         mounts=super().compute_mount_points()
         mounts.update(get_apps_generic_mount_points(self._z_infra.wayland_proxy_socket if self._z_infra is not None else None))
         script_dir=os.path.dirname(os.path.realpath(__file__))
 
         # home dir
-        mounts[self._zuf.zone_home_dir]={
-            "mount-point": padsi.misc.get_user_home_dir(self._uid),
-            "read-only": False,
-            "monitored": False
-        }
+        mounts.add(nsbubble.MountPoint(self._zuf.zone_home_dir, padsi.misc.get_user_home_dir(self._uid), readonly=False))
 
         # zone's MOUNT-POINTS option
         rev_mp:dict[str,str]={}
@@ -263,11 +259,7 @@ class ZoneApps(ZoneFoundations):
                 ro=True
                 if len(mode)==1 and mode[0]=="rw":
                     ro=False
-                mounts[mp_host]={
-                    "mount-point": mp_zone,
-                    "read-only": ro,
-                    "monitored": False
-                }
+                mounts.add(nsbubble.MountPoint(mp_host, mp_zone, readonly=ro))
                 rev_mp[mp_zone]=mp_host
 
         # /etc/resolv.conf file
@@ -276,26 +268,14 @@ class ZoneApps(ZoneFoundations):
             with open(resolv_conf, "w") as fd:
                 fd.write(f"nameserver {self._infra_dns_ip}\n")
                 fd.close()
-            mounts[resolv_conf]={
-                "mount-point": "/etc/resolv.conf",
-                "read-only": True,
-                "monitored": False
-            }
+            mounts.add(nsbubble.MountPoint(resolv_conf, "/etc/resolv.conf"))
 
         # zone service
         if self._zone_service_socket is not None:
-            mounts[self._zone_service_socket]={
-                "mount-point": "/bubble/run/padsi-zserv.sock",
-                "read-only": False,
-                "monitored": False
-            }
+            mounts.add(nsbubble.MountPoint(self._zone_service_socket, "/bubble/run/padsi-zserv.sock", readonly=False))
 
         # CLI file
-        mounts["/usr/share/padsi/padsi/cli/padsi-cli-zone"]={
-            "mount-point": "/usr/bin/padsi-cli",
-            "read-only": True,
-            "monitored": False
-        }
+        mounts.add(nsbubble.MountPoint("/usr/share/padsi/padsi/cli/padsi-cli-zone", "/usr/bin/padsi-cli"))
 
         # PKI certificates
         pki_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKI)
@@ -332,11 +312,7 @@ class ZoneApps(ZoneFoundations):
                 syslog.syslog(syslog.LOG_ERR, f"Could not openssl rehash certs in '{certs_dir}': {proc.stderr}")
 
             # mount
-            mounts[certs_dir]={
-                "mount-point": host_certs_dir,
-                "read-only": True,
-                "monitored": False
-            }
+            mounts.add(nsbubble.MountPoint(certs_dir, host_certs_dir))
 
         # PKCS11 library
         pkcs11_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11)
@@ -345,34 +321,18 @@ class ZoneApps(ZoneFoundations):
             if pkcs11_option.driver_path is not None and \
                 not pkcs11_option.driver_path.startswith("/usr") and not pkcs11_option.driver_path.startswith("/lib"):
                 # FIXME: also add DLL dependencies (use 'ldd')
-                mounts[pkcs11_option.driver_path]={
-                    "mount-point": pkcs11_option.driver_path,
-                    "read-only": True,
-                    "monitored": False
-                }
+                mounts.add(nsbubble.MountPoint(pkcs11_option.driver_path, pkcs11_option.driver_path))
 
         # FIDO2 usage
         fido2_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.FIDO2)
         if fido2_option.enabled:
             # programs need access to have access to /sys to perform udev enumration and /run/udev for hotplug detection
             # beyond access to /dev/hidraw*
-            mounts["/sys"]={
-                "mount-point": "/sys",
-                "read-only": True,
-                "monitored": False
-            }
-            mounts["/run/udev"]={
-                "mount-point": "/run/udev",
-                "read-only": True,
-                "monitored": False
-            }
+            mounts.add(nsbubble.MountPoint("/sys", "/sys"))
+            mounts.add(nsbubble.MountPoint("/run/udev", "/run/udev"))
 
             # access to the netlink host helper
-            mounts[f"/run/user/{self._uid}/padsi-netlink.sock"]={
-                "mount-point": "/bubble/run/padsi-netlink.sock",
-                "read-only": False,
-                "monitored": False
-            }
+            mounts.add(nsbubble.MountPoint(f"/run/user/{self._uid}/padsi-netlink.sock", "/bubble/run/padsi-netlink.sock", readonly=False))
 
             # set up LD_PRELOAD for the netlink shim
             shim_lib=os.path.realpath(os.path.join(script_dir, "..", "..", "bin", "netlink-shim.so"))
@@ -381,11 +341,7 @@ class ZoneApps(ZoneFoundations):
             preload_file=os.path.join(self.tmp_dir, "netlink.preload")
             with open(preload_file, "wt") as fd:
                 fd.write(f"{shim_lib}\n")
-            mounts[preload_file]={
-                "mount-point": "/etc/ld.so.preload",
-                "read-only": True,
-                "monitored": False
-            }
+            mounts.add(nsbubble.MountPoint(preload_file, "/etc/ld.so.preload"))
 
         # policies directories for the programs for which policies can be defined
         factory=padsi.config.ProgramPoliciesFactory()
@@ -398,18 +354,10 @@ class ZoneApps(ZoneFoundations):
                     fdirname=dirname
                     if fdirname[-1]!="/":
                         fdirname+="/"
-                    mounts[dirname]={
-                        "mount-point": fdirname,
-                        "read-only": False,
-                        "monitored": False
-                    }
+                    mounts.add(nsbubble.MountPoint(dirname, fdirname, readonly=False))
 
         # for the man program
-        mounts["/etc/manpath.config"]={
-            "mount-point": "/etc/manpath.config",
-            "read-only": True,
-            "monitored": False
-        }
+        mounts.add(nsbubble.MountPoint("/etc/manpath.config", "/etc/manpath.config"))
         return mounts
 
     @property
@@ -565,39 +513,23 @@ class ZoneApps(ZoneFoundations):
                 os.chown(dir, uid, gid)
                 os.chmod(dir, 0o700)
 
-def get_apps_generic_mount_points(wayland_proxy_socket:str|None) -> dict:
+def get_apps_generic_mount_points(wayland_proxy_socket:str|None) -> set[nsbubble.MountPoint]:
     script_dir=os.path.dirname(os.path.realpath(__file__))
     mounts={
-        os.path.join(script_dir, "etc"): {
-            "mount-point": "/bubble/etc",
-            "read-only": True,
-            "monitored": False
-        }
+        nsbubble.MountPoint(os.path.join(script_dir, "etc"), "/bubble/etc")
     }
 
     if wayland_proxy_socket is not None:
         # bind mount the Wayland proxy's socket
-        mounts[wayland_proxy_socket]={
-            "mount-point": "/bubble/run/wayland-0",
-            "read-only": False,
-            "monitored": False
-        }
+        mounts.add(nsbubble.MountPoint(wayland_proxy_socket, "/bubble/run/wayland-0", readonly=False))
     else:
         # bind mount the host's Wayland compositor's socket
         denv:nsbubble.DisplayEnvironment=nsbubble.get_display_env()
         if denv.runtime_dir and denv.wayland_display:
-            mounts[os.path.join(denv.runtime_dir, denv.wayland_display)]={
-                "mount-point": "/bubble/run/wayland-0",
-                "read-only": False,
-                "monitored": False
-            }
+            mounts.add(nsbubble.MountPoint(os.path.join(denv.runtime_dir, denv.wayland_display), "/bubble/run/wayland-0", readonly=False))
 
     # extra mount points for some applications
     for romp in ("/etc/alternatives", "/etc/chromium.d", "/etc/gimp", "/etc/libreoffice", "/opt", "/var/lib/flatpak"):
         if os.path.isdir(romp):
-            mounts[romp]={
-                "mount-point": romp,
-                "read-only": True,
-                "monitored": False
-            }
+            mounts.add(nsbubble.MountPoint(romp, romp))
     return mounts

@@ -273,48 +273,24 @@ class BubbleVM(nsbubble.Bubble):
         # VirtioFSD instances
         self._vfs_dirs:list[VirtioSharedDirectory]|None=vfs_dirs
 
-        _mounts={
-            "/dev/kvm": {
-                "mount-point": "/dev/kvm",
-                "read-only": False,
-                "monitored": False
-            }
+        _mounts: set[nsbubble.MountPoint]={
+            nsbubble.MountPoint("/dev/kvm", "/dev/kvm", readonly=False)
         }
 
         # give access to backend images
         for path in self._image.get_backing_files_names():
-            _mounts[path]={
-                    "mount-point": path,
-                    "read-only": True,
-                    "monitored": False
-                }
+            _mounts.add(nsbubble.MountPoint(path, path))
 
-        _mounts[image_file]={
-            "mount-point": image_file,
-            "read-only": False,
-            "monitored": False
-        }
-        _mounts[vars_file]={
-            "mount-point": vars_file,
-            "read-only": False,
-            "monitored": False
-        }
+        _mounts.add(nsbubble.MountPoint(image_file, image_file, readonly=False))
+        _mounts.add(nsbubble.MountPoint(vars_file, vars_file, readonly=False))
 
         # bind ISO files
         if self._boot_iso is not None:
-            _mounts[self._boot_iso]={
-                    "mount-point": self._boot_iso,
-                    "read-only": True,
-                    "monitored": False
-                }
+            _mounts.add(nsbubble.MountPoint(self._boot_iso, self._boot_iso))
 
         if self._extra_isos is not None:
             for isofile in self._extra_isos:
-                _mounts[isofile]={
-                    "mount-point": isofile,
-                    "read-only": True,
-                    "monitored": False
-                }
+                _mounts.add(nsbubble.MountPoint(isofile, isofile))
 
         # add last to give a higher priority
         if features.mounts is not None:

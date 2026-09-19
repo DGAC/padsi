@@ -67,18 +67,10 @@ class VirtioFSServer(Component):
     def socket_path(self) -> str:
         return os.path.join("/tmp", f"virtiofsd-{self.fsname}.socket")
 
-    def get_mountpoints(self) -> dict:
+    def get_mountpoints(self) -> set[nsbubble.MountPoint]:
         return {
-            _get_virtiofsd_binary_path(): {
-                "mount-point": "/tmp/virtiofsd",
-                "read-only": True,
-                "monitored": False
-            },
-            self._shared_dir_in_host: {
-                "mount-point": self._shared_dir_in_bubble,
-                "read-only": False,
-                "monitored": False
-            }
+            nsbubble.MountPoint(_get_virtiofsd_binary_path(), "/tmp/virtiofsd"),
+            nsbubble.MountPoint(self._shared_dir_in_host, self._shared_dir_in_bubble, readonly=False)
         }
 
     def start(self, api:nsbubble.BubbleAPI):

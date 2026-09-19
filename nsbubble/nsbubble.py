@@ -46,7 +46,7 @@ import pyinotify
 import requests
 import requests_unixsocket
 
-from .mountpoint import MountPointSet
+from .mountpoint import MountPoint, MountPointSet
 
 system_ns_mountdir="/run/netns" # at least for Debian
 _debug=True
@@ -239,16 +239,7 @@ class ShadowedResolvFile(ShadowedFile):
 @dataclass
 class Features:
     bind_dev:bool=False                     # if True, the whole /dev directory is bound, otherwise, an empty devtmpfs FS is mounted
-    mounts:dict[str,dict]|None=None         # dictionary specifying which extra directories have to be mounted, like: 192.168.2.45/32
-                                            # {
-                                            #    host_path: {
-                                            #       "mount-point": mount_path,
-                                            #       "read-only": True if read only, False owtherwise,
-                                            #       "monitored": for files only, True if the file will change in the bubble when changed in the host
-                                            #                    which means it's possible to use inotify in the bubble (by default, some programs like
-                                            #                    VI create another file when writing and the original file remains mounted in the bubble)
-                                            #    }
-                                            # }
+    mounts:set[MountPoint]|None=None        # dictionary specifying which extra directories have to be mounted
     home_dir:str|None=None                  # specify the directory which will be mounted as the home directory of the user in the bubble
     working_dir:str|None=None               # specifies a working directory (defaults to the home directory)
     display_env:dict|None=None              # to pass the XDG_RUNTIME_DIR and/or DISPLAY and/or WAYLAND_DISPLAY are copied to the environment in the bubble
@@ -288,7 +279,7 @@ class Features:
             raise BubbleException("If a VDE address is specified, then a VDE switch path must also be provided")
 
         if self.mounts is None:
-            self.mounts={}
+            self.mounts=set()
 
 @dataclass
 class DisplayEnvironment:
@@ -639,7 +630,8 @@ class Bubble:
 
         bargs:list[str]=[]
         for mpgrp in self._mp_set.groups:
-            bargs+=mpgrp.get_bwrap_args(self._run_dir, self._overlay_tmpdir.name)
+            grpargs=mpgrp.get_bwrap_args(self._run_dir, self._overlay_tmpdir.name)
+            bargs+=grpargs
 
         args+=bargs
         args+=[
@@ -1180,11 +1172,7 @@ class VDESwitch(Bubble):
             switch_run_dir=self._swtmpdir.name
 
         mounts={
-            switch_run_dir: {
-                "mount-point": switch_run_dir,
-                "read-only": False,
-                "monitored": False
-            }
+            MountPoint(switch_run_dir, switch_run_dir, readonly=False)
         }
         features=Features(mounts=mounts)
         super().__init__(features=features, run_dir=switch_run_dir)

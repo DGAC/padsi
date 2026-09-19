@@ -294,7 +294,7 @@ class ZoneFoundations:
     #
     # methods which can be subclassed
     #
-    def compute_mount_points(self) -> dict:
+    def compute_mount_points(self) -> set[nsbubble.MountPoint]:
         """Get all the mount points for the zone, to be overridden by sub classes if necessary,
         not taking into account the mount points required by the components used
         """
@@ -311,16 +311,8 @@ class ZoneFoundations:
             fd.write("\n")
 
         return {
-            mid_path: {
-                "mount-point": "/etc/machine-id",
-                "read-only": True,
-                "monitored": False
-            },
-            self.logs_dir: {
-                "mount-point": "/var/log",
-                "read-only": False,
-                "monitored": False
-            }
+            nsbubble.MountPoint(mid_path, "/etc/machine-id"),
+            nsbubble.MountPoint(self.logs_dir, "/var/log", readonly=False)
         }
 
     @property

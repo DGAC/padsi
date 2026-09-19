@@ -35,11 +35,10 @@ class Component(ABC):
     def name(self) -> str:
         return str(self.__class__)
 
-    def get_mountpoints(self) -> dict|None:
+    def get_mountpoints(self) -> set[nsbubble.MountPoint]:
         """Get the mount points required by the component
-        Cf. nsbubble's documentation for the formalism
         """
-        return None
+        return set()
 
     def get_required_user_entry(self) -> str|None:
         """Specific user which may be required by the component

@@ -47,23 +47,15 @@ class WaylandProxy(Component):
 
         syslog.syslog(syslog.LOG_INFO, f"Wayland proxy: paste into {zone_name} is allowed from: {','.join(allowed_zones)}")
 
-    def get_mountpoints(self) -> dict|None:
+    def get_mountpoints(self) -> set[nsbubble.MountPoint]:
         denv:nsbubble.DisplayEnvironment=nsbubble.get_display_env()
         if denv.runtime_dir and denv.wayland_display:
             return {
-                os.path.join(denv.runtime_dir, denv.wayland_display):{
-                    "mount-point": "/bubble/run/wayland-0",
-                    "read-only": False,
-                    "monitored": False
-                },
-                self._socket_dir : {
-                    "mount-point": "/bubble/run/wl-proxy",
-                    "read-only": False,
-                    "monitored": False
-                }
+                nsbubble.MountPoint(os.path.join(denv.runtime_dir, denv.wayland_display), "/bubble/run/wayland-0", readonly=False),
+                nsbubble.MountPoint(self._socket_dir, "/bubble/run/wl-proxy", readonly=False)
             }
         syslog.syslog(syslog.LOG_WARNING, "Could not identify the Wayland environment in the host OS")
-        return None
+        return set()
 
     @property
     def wayland_proxy_socket(self) -> str:

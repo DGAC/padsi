@@ -52,7 +52,7 @@ class StaticFirewall(Component):
         self._sandbox_dir_name:str|None=None
         self._pid:int|None=None # process's PID
 
-    def get_mountpoints(self) -> dict:
+    def get_mountpoints(self) -> set[nsbubble.MountPoint]:
         script_dir=os.path.dirname(__file__)
 
         # copy the resources to a tmp directory
@@ -60,33 +60,19 @@ class StaticFirewall(Component):
             self._sandbox_dir_obj=tempfile.TemporaryDirectory()
             self._sandbox_dir_name=self._sandbox_dir_obj.name
 
-            # scripts
-            bin_dir=os.path.join(self._sandbox_dir_name, "bin") # pyright: ignore
-            os.makedirs(bin_dir)
-            shutil.copy2(os.path.join(script_dir, "padsi-static-fw"), bin_dir)
-            shutil.copytree(f"{script_dir}/../../../../firewall", os.path.join(bin_dir, "firewall"))
-
             # FW rules
             data=[rule.format_for_component() for rule in self._fw_rules]
             fw_rules_path=f"{self._sandbox_dir_name}/fw-rules.json"
             with open(fw_rules_path, "wt") as fd:
                 json.dump(data, fd)
         else:
-            bin_dir=os.path.join(self._sandbox_dir_name, "bin")
             data=[rule.format_for_component() for rule in self._fw_rules]
             fw_rules_path=f"{self._sandbox_dir_name}/fw-rules.json"
 
         return {
-            fw_rules_path: { # allowed FW rules file
-                "mount-point": "/etc/fw-rules.json",
-                "read-only": True,
-                "monitored": True
-            },
-            f"{bin_dir}": {
-                "mount-point": "/padsi-fw-bin",
-                "read-only": True,
-                "monitored": False
-            }
+            nsbubble.MountPoint(fw_rules_path, "/etc/fw-rules.json", monitored=True),
+            nsbubble.MountPoint(script_dir, "/padsi-fw-bin"),
+            nsbubble.MountPoint(os.path.realpath(os.path.join(script_dir, "firewall")), "/padsi-fw-bin/firewall")
         }
 
     @property

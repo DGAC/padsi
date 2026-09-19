@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 #
 # Copyright (c) 2025-2026 DGAC/DSNA
 #
@@ -69,7 +67,7 @@ class DHCPServer(Component):
         self._tapvm_configured=False
         self._pid:int|None=None # PID of the DHCP server
 
-    def get_mountpoints(self) -> dict:
+    def get_mountpoints(self) -> set[nsbubble.MountPoint]:
         """Get the mount points required by the component
         Cf. nsbubble's documentation for the formalism
         """
@@ -100,32 +98,15 @@ class DHCPServer(Component):
         else:
             run_dir=f"{self._sandbox_dir_name}/kea"
 
+        if self._config_file is None:
+            raise DHCPComponentException("CODEBUG: self._config_file should not be None at this point")
+        script_dir=os.path.realpath(os.path.dirname(__file__))
         return {
-            self._config_file: {
-                "mount-point": "/etc/kea-dhcp.conf",
-                "read-only": True,
-                "monitored": False
-            },
-            run_dir: {
-                "mount-point": "/run/kea",
-                "read-only": False,
-                "monitored": False
-            },
-            f"{os.path.dirname(__file__)}/tapvm-setup.sh": {
-                "mount-point": "/tmp/tapvm-setup.sh",
-                "read-only": True,
-                "monitored": False
-            },
-            f"{os.path.dirname(__file__)}/dirs-setup.sh": {
-                "mount-point": "/tmp/dirs-setup.sh",
-                "read-only": True,
-                "monitored": False
-            },
-            "/usr/sbin/kea-dhcp4": { # kea binary to avoid apparmor restrictions
-                "mount-point": "/tmp/kea-dhcp4",
-                "read-only": True,
-                "monitored": False
-            }
+            nsbubble.MountPoint(self._config_file, "/etc/kea-dhcp.conf"),
+            nsbubble.MountPoint(run_dir, "/run/kea", readonly=False),
+            nsbubble.MountPoint(os.path.join(script_dir, "tapvm-setup.sh"), "/tmp/tapvm-setup.sh"),
+            nsbubble.MountPoint(os.path.join(script_dir, "dirs-setup.sh"), "/tmp/dirs-setup.sh"),
+            nsbubble.MountPoint("/usr/sbin/kea-dhcp4", "/tmp/kea-dhcp4")
         }
 
     @property

@@ -30,13 +30,13 @@ class MountPointConfException(Exception):
 class MountPoint(BubbleMountPoint):
     """Represent a mount point, a simple wrapper around nsbubble's MountPoint"""
     @staticmethod
-    def load_from_data(mounts_data:dict, allow_absolute_destination_path:bool) -> list[MountPoint]|None:
+    def load_from_data(mounts_data:dict, allow_absolute_destination_path:bool) -> set[MountPoint]|None:
         """Load a configuration block about mount points
         """
         if mounts_data is None:
             return None
 
-        mounts=[]
+        mounts=set()
         if not isinstance(mounts_data, dict):
             raise MountPointConfException("Invalid 'mounts' section")
         for mp, mdata in mounts_data.items():
@@ -55,6 +55,6 @@ class MountPoint(BubbleMountPoint):
             if os.path.isabs(source):
                 raise MountPointConfException(f"Invalid mount point: source path {source} must be relative and not absolute")
 
-            mounts.append(MountPoint(source, mp, mode!="rw", require_abs_mount_path=False))
+            mounts.add(MountPoint(source, mp, mode!="rw", require_abs_mount_path=False))
 
         return mounts

@@ -231,16 +231,12 @@ class ZoneInfra(ZoneFoundations):
         """Get the root certificate of the web redirection certification authority if any"""
         return None if self._web_infra_c is None else self._web_infra_c.get_root_cert()
 
-    def compute_mount_points(self) -> dict:
+    def compute_mount_points(self) -> set[nsbubble.MountPoint]:
         mounts=super().compute_mount_points()
         web_redirection_option = self.zone_conf.get_option(padsi.config.ZoneOptionType.WEB_REDIRECTION)
         if web_redirection_option.enabled:
             # add access to notifications service via its Unix socket
-            mounts[f"/run/user/{self.uid}/padsi-notify.sock"] = {
-                "mount-point": "/bubble/run/padsi-notify.sock",
-                "read-only": False,
-                "monitored": False,
-            }
+            mounts.add(nsbubble.MountPoint(f"/run/user/{self.uid}/padsi-notify.sock", "/bubble/run/padsi-notify.sock", readonly=False))
         return mounts
 
     @property

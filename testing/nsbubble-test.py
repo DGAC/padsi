@@ -130,7 +130,7 @@ def setup_test_data(tmp_dir:str) -> str:
             os.chmod(os.path.join(dirpath, item), 0o444)
     return test_data_dir
 
-def test_firefox(mounts:dict, test_data_dir:str):
+def test_firefox(mounts:set[nsbubble.MountPoint], test_data_dir:str):
     with tempfile.TemporaryDirectory() as t_run_dir:
         with tempfile.TemporaryDirectory() as t_ovl_dir:
             if _debug:
@@ -231,7 +231,7 @@ def test_firefox(mounts:dict, test_data_dir:str):
                 raise Exception(f"expected {exp}, got {loc}")
 
 
-def test_chrome(mounts:dict, test_data_dir:str):
+def test_chrome(mounts:set[nsbubble.MountPoint], test_data_dir:str):
     with tempfile.TemporaryDirectory() as t_run_dir:
         with tempfile.TemporaryDirectory() as t_ovl_dir:
             bound_dirs=[]
@@ -360,16 +360,8 @@ class DirsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             test_data_dir=setup_test_data(tmp_dir)
             mounts={
-                f"{test_data_dir}/etc/padsi/mount-points/myzone/etc_firefox": {
-                    "mount-point": "/etc/firefox/policies",
-                    "read-only": False,
-                    "monitored": False
-                },
-                f"{test_data_dir}/etc/firefox": {
-                    "mount-point": "/etc/firefox",
-                    "read-only": True,
-                    "monitored": False
-                },
+                nsbubble.MountPoint(f"{test_data_dir}/etc/padsi/mount-points/myzone/etc_firefox", "/etc/firefox/policies", readonly=False),
+                nsbubble.MountPoint(f"{test_data_dir}/etc/firefox", "/etc/firefox")
             }
             test_firefox(mounts, test_data_dir)
 
@@ -377,16 +369,8 @@ class DirsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             test_data_dir=setup_test_data(tmp_dir)
             mounts={
-                f"{test_data_dir}/etc/firefox": {
-                    "mount-point": "/etc/firefox",
-                    "read-only": True,
-                    "monitored": False
-                },
-                f"{test_data_dir}/etc/padsi/mount-points/myzone/etc_firefox": {
-                    "mount-point": "/etc/firefox/policies",
-                    "read-only": False,
-                    "monitored": False
-                },
+                nsbubble.MountPoint(f"{test_data_dir}/etc/firefox", "/etc/firefox"),
+                nsbubble.MountPoint(f"{test_data_dir}/etc/padsi/mount-points/myzone/etc_firefox", "/etc/firefox/policies", readonly=False)
             }
             test_firefox(mounts, test_data_dir)
 
@@ -394,16 +378,8 @@ class DirsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             test_data_dir=setup_test_data(tmp_dir)
             mounts={
-                f"{test_data_dir}/etc/chromium": {
-                    "mount-point": "/etc/chromium",
-                    "read-only": False,
-                    "monitored": False
-                },
-                f"{test_data_dir}/etc/chromium.d": {
-                    "mount-point": "/etc/chromium.d",
-                    "read-only": True,
-                    "monitored": False
-                }
+                nsbubble.MountPoint(f"{test_data_dir}/etc/chromium", "/etc/chromium", readonly=False),
+                nsbubble.MountPoint(f"{test_data_dir}/etc/chromium.d", "/etc/chromium.d")
             }
             test_chrome(mounts, test_data_dir)
 
@@ -411,16 +387,8 @@ class DirsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             test_data_dir=setup_test_data(tmp_dir)
             mounts={
-                f"{test_data_dir}/etc/chromium.d": {
-                    "mount-point": "/etc/chromium.d",
-                    "read-only": True,
-                    "monitored": False
-                },
-                f"{test_data_dir}/etc/chromium": {
-                    "mount-point": "/etc/chromium",
-                    "read-only": False,
-                    "monitored": False
-                }
+                nsbubble.MountPoint(f"{test_data_dir}/etc/chromium.d", "/etc/chromium.d"),
+                nsbubble.MountPoint(f"{test_data_dir}/etc/chromium", "/etc/chromium", readonly=False)
             }
             test_chrome(mounts, test_data_dir)
 

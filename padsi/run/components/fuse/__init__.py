@@ -57,23 +57,15 @@ class Fuse(Component):
         self._dirs_list.append(bubble_dir)
         self._dirs_list.append(host_dir)
 
-    def get_mountpoints(self) -> dict:
+    def get_mountpoints(self) -> set[nsbubble.MountPoint]:
         """Get the mount points required by the component
         Cf. nsbubble's documentation for the formalism
         """
-        script_dir=os.path.dirname(__file__)
+        script_dir=os.path.realpath(os.path.dirname(__file__))
 
         return {
-            os.path.join(script_dir, "fusermount-proxy.py"): {
-                "mount-point": "/usr/bin/fusermount",
-                "read-only": True,
-                "monitored": False
-            },
-            os.path.join(script_dir, "umount-proxy.py"): {
-                "mount-point": "/usr/bin/umount",
-                "read-only": True,
-                "monitored": False
-            }
+            nsbubble.MountPoint(os.path.join(script_dir, "fusermount-proxy.py"), "/usr/bin/fusermount"),
+            nsbubble.MountPoint(os.path.join(script_dir, "umount-proxy.py"), "/usr/bin/umount")
         }
 
     def start(self, api:nsbubble.BubbleAPI):

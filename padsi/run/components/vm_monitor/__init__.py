@@ -35,16 +35,12 @@ class VMMonitor(Component):
     def __init__(self):
         self._started=False
 
-    def get_mountpoints(self) -> dict:
+    def get_mountpoints(self) -> set[nsbubble.MountPoint]:
         """Get the mount points required by the component
         Cf. nsbubble's documentation for the formalism
         """
         return {
-            f"{os.path.dirname(__file__)}/vm-monitor.py": {
-                "mount-point": "/tmp/vm-monitor.py",
-                "read-only": True,
-                "monitored": False
-            }
+            nsbubble.MountPoint(os.path.join(os.path.dirname(__file__), "vm-monitor.py"), "/tmp/vm-monitor.py")
         }
 
     def start_monitor(self, api:nsbubble.BubbleAPI, image_file:str, vars_file:str, infos_file:str, qemu_pid:int, viewer_pid:int|None):

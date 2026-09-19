@@ -115,32 +115,12 @@ class ZoneDBusRouter:
         socket_path_dir=os.path.realpath(os.path.dirname(self._dbus_router_socket_path))
         os.makedirs(socket_path_dir, exist_ok=True)
         socket_path_fname=os.path.basename(self._dbus_router_socket_path)
-        mounts={
-            self._dbus_router_path: { # dbus-router program itself
-                "mount-point": "/host/dbus-router",
-                "read-only": True,
-                "monitored": False
-            },
-            self._logs_dir: {
-                "mount-point": "/var/log",
-                "read-only": False,
-                "monitored": False
-            },
-            socket_path_dir: {
-                "mount-point": "/bubble/run/router", # where the socket created by the wayland proxy will be
-                "read-only": False,
-                "monitored": False
-            },
-            self._host_dbus_socket_path: {
-                "mount-point": "/bubble/run/dbus-host.socket",
-                "read-only": False,
-                "monitored": False
-            },
-            self._zone_dbus_socket_path: {
-                "mount-point": "/bubble/run/dbus-zone.socket",
-                "read-only": False,
-                "monitored": False
-            }
+        mounts:set[nsbubble.MountPoint]={
+            nsbubble.MountPoint(self._dbus_router_path, "/host/dbus-router"),
+            nsbubble.MountPoint(self._logs_dir, "/var/log", readonly=False),
+            nsbubble.MountPoint(socket_path_dir, "/bubble/run/router", readonly=False), # where the socket created by the wayland proxy will be
+            nsbubble.MountPoint(self._host_dbus_socket_path, "/bubble/run/dbus-host.socket", readonly=False),
+            nsbubble.MountPoint(self._zone_dbus_socket_path, "/bubble/run/dbus-zone.socket", readonly=False)
         }
 
         syslog.syslog(syslog.LOG_DEBUG, f"Configuring DBus router for zone '{self._zone_config.name}'")

@@ -181,20 +181,6 @@ class MountPoint:
         return True
 
 
-    @classmethod
-    def from_data(cls, source_path:str, info:dict)->MountPoint:
-        if not isinstance(info, dict):
-            raise MountPointException(f"Invalid mountpoint info {info}")
-        mp=info.get("mount-point")
-        ro=info.get("read-only", True)
-        monit=info.get("monitored", False)
-        if (not isinstance(mp, str) or mp=="") or \
-            not isinstance(ro, bool) or \
-            monit is not None and not isinstance(monit, bool):
-            raise MountPointException(f"Invalid mountpoint info {info}: expected a dict")
-        return cls(source_path, mp, ro, False if monit is None else monit)
-
-
 @dataclass
 class MountPointGroup:
     """Group mount points beneath a common top directory"""
@@ -207,6 +193,7 @@ class MountPointGroup:
     def __post_init__(self):
         if len(self.mount_points)==0:
             raise MountPointException("CODEBUG: MountPointGroup has no MountPoint")
+        self._dirs_created=False
 
     def add(self, mpoint:MountPoint):
         if self.mount_path.startswith(mpoint.mount_path):
@@ -220,6 +207,10 @@ class MountPointGroup:
         - run_dir: directory where the mount points will actually be (prefixing each MountPoint.mount_path)
         - tmp_dir: TMP directory where some writable directories may be created if necessary
         """
+        if self._dirs_created:
+            raise MountPointException("CODEBUG: the get_bwrap_args() function should only be called once")
+        self._dirs_created=True
+
         if len(self.mount_points)==0:
             return []
 
@@ -364,7 +355,7 @@ class MountPointSet:
         return None
 
     @classmethod
-    def from_specifications(cls, mounts:dict[str,dict]|None, bound_dirs:list[str], run_dir:str) -> MountPointSet:
+    def from_specifications(cls, mounts:set[MountPoint]|None, bound_dirs:list[str], run_dir:str) -> MountPointSet:
         """Create a MountPointSet from some specifications"""
         # prepare list of directories which will either be RO-mounted AS-IS, or will be the base of an
         # overlay if we have mount points beneath them.
@@ -376,13 +367,8 @@ class MountPointSet:
             groups[mpgrp.mount_path]=mpgrp
 
         if mounts is not None:
-            # compute MountPoint objects, to be removed when improved API
-            mpoints:list[MountPoint]=[]
-            for hpath, info in mounts.items():
-                mpoints.append(MountPoint.from_data(hpath, info))
-
             # group mount points in overlays
-            for mpoint in mpoints:
+            for mpoint in mounts:
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"handling mountpoint={mpoint}" )
                 found=False

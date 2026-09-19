@@ -304,49 +304,25 @@ class ZoneVM(ZoneFoundations):
     def firewall_log_spec(self) -> firewall.LogSpec:
         return self._firewall_denied_spec
 
-    def compute_mount_points(self) -> dict:
+    def compute_mount_points(self) -> set[nsbubble.MountPoint]:
         mounts=super().compute_mount_points()
         mounts.update(get_apps_generic_mount_points(self._z_infra.wayland_proxy_socket if self._z_infra is not None else None))
 
-        mounts[self._vm_v.infos_file] = {
-            "mount-point": self._vm_v.infos_file,
-            "read-only": False,
-            "monitored": False,
-        }
+        mounts.add(nsbubble.MountPoint(self._vm_v.infos_file, self._vm_v.infos_file, readonly=False))
 
         if not os.path.exists(self._viewer.bubble_prog_name):
-            mounts[self._viewer.real_prog_name] = {
-                "mount-point": self._viewer.bubble_prog_name,
-                "read-only": True,
-                "monitored": False,
-            }
+            mounts.add(nsbubble.MountPoint(self._viewer.real_prog_name, self._viewer.bubble_prog_name))
 
         # programs need access to have access to /sys to perform udev enumration and /run/udev for hotplug detection
         # beyond access to /dev/hidraw*
-        mounts["/sys"] = {
-            "mount-point": "/sys",
-            "read-only": True,
-            "monitored": False,
-        }
-        mounts["/run/udev"] = {
-            "mount-point": "/run/udev",
-            "read-only": True,
-            "monitored": False,
-        }
+        mounts.add(nsbubble.MountPoint("/sys", "/sys"))
+        mounts.add(nsbubble.MountPoint("/run/udev", "/run/udev"))
 
         # access to the user service, for USB devices management
-        mounts[f"/run/user/{self._uid}/padsi-userv.sock"] = {
-            "mount-point": "/bubble/run/padsi-userv.sock",
-            "read-only": False,
-            "monitored": False,
-        }
+        mounts.add(nsbubble.MountPoint(f"/run/user/{self._uid}/padsi-userv.sock", "/bubble/run/padsi-userv.sock", readonly=False))
 
         # access to the netlink host helper, required for USB redirection
-        mounts[f"/run/user/{self._uid}/padsi-netlink.sock"] = {
-            "mount-point": "/bubble/run/padsi-netlink.sock",
-            "read-only": False,
-            "monitored": False,
-        }
+        mounts.add(nsbubble.MountPoint(f"/run/user/{self._uid}/padsi-netlink.sock", "/bubble/run/padsi-netlink.sock", readonly=False))
 
         # set up LD_PRELOAD for the netlink shim, required for USB redirection
         script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -356,11 +332,7 @@ class ZoneVM(ZoneFoundations):
         preload_file = os.path.join(self._run_dir, "netlink.preload")
         with open(preload_file, "wt") as fd:
             fd.write(f"{shim_lib}\n")
-        mounts[preload_file] = {
-            "mount-point": "/etc/ld.so.preload",
-            "read-only": True,
-            "monitored": False,
-        }
+        mounts.add(nsbubble.MountPoint(preload_file, "/etc/ld.so.preload"))
         return mounts
 
     @property

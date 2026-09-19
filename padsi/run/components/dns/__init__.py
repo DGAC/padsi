@@ -154,7 +154,7 @@ class DNSServer(Component):
         self._resolv_rules_extra[context] = rules
         self._recreate_resolv_rules()
 
-    def get_mountpoints(self) -> dict:
+    def get_mountpoints(self) -> set[nsbubble.MountPoint]:
         script_dir = os.path.dirname(__file__)
 
         # copy the resources to a tmp directory
@@ -165,67 +165,32 @@ class DNSServer(Component):
             # unbound's config
             conf_dir = f"{self._sandbox_dir_name}/unbound"
             os.makedirs(conf_dir)
-            shutil.copyfile(
-                f"{script_dir}/unbound/unbound.conf", f"{conf_dir}/unbound.conf"
-            )
-            shutil.copytree(f"{script_dir}/unbound/conf.d", f"{conf_dir}/conf.d")
-
-            # scripts
-            bin_dir = f"{self._sandbox_dir_name}/bin"
-            os.makedirs(bin_dir)
-            for file in ("padsi-dns-server", "padsi-dns-fw"):
-                shutil.copy2(f"{script_dir}/{file}", f"{bin_dir}")
-            shutil.copyfile(
-                f"{script_dir}/unbound/unbound-module.py",
-                f"{bin_dir}/unbound-module.py",
-            )
-            shutil.copytree(f"{script_dir}/../../../../firewall", f"{bin_dir}/firewall")
+            shutil.copyfile(f"{script_dir}/unbound-conf-tmpl/unbound.conf", f"{conf_dir}/unbound.conf")
+            shutil.copytree(f"{script_dir}/unbound-conf-tmpl/conf.d", f"{conf_dir}/conf.d")
         else:
             conf_dir = f"{self._sandbox_dir_name}/unbound"
-            bin_dir = f"{self._sandbox_dir_name}/bin"
 
         self._recreate_resolv_rules()
         self._recreate_resolv_conf()
         self._create_dns_fw_config_file()
 
+        if self._resolv_rules_file is None:
+            raise DNSComponentException("CODEBUG: self._resolv_rules_file should not be None at this point")
+        if self._resolv_conf_file is None:
+            raise DNSComponentException("CODEBUG: self._resolv_conf_file should not be None at this point")
+        if self._dns_fw_config_file is None:
+            raise DNSComponentException("CODEBUG: self._dns_fw_config_file should not be None at this point")
         mounts={
-            conf_dir: {
-                "mount-point": "/etc/unbound",
-                "read-only": False,
-                "monitored": False,
-            },
-            "/usr/sbin/unbound": {  # unbound binary to avoid apparmor restrictions
-                "mount-point": "/tmp/unbound",
-                "read-only": True,
-                "monitored": False,
-            },
-            f"{bin_dir}": {
-                "mount-point": "/padsi-dns-bin",
-                "read-only": True,
-                "monitored": False,
-            },
-            self._resolv_rules_file: {
-                "mount-point": "/etc/resolv-rules.json",
-                "read-only": True,
-                "monitored": True,
-            },
-            self._resolv_conf_file: {
-                "mount-point": "/etc/resolv-conf.json",
-                "read-only": True,
-                "monitored": True,
-            },
-            self._dns_fw_config_file: {
-                "mount-point": "/etc/dns-fw-conf.json",
-                "read-only": True,
-                "monitored": False,
-            }
+            nsbubble.MountPoint(conf_dir, "/etc/unbound", readonly=False),
+            nsbubble.MountPoint("/usr/sbin/unbound", "/tmp/unbound"),
+            nsbubble.MountPoint(script_dir, "/padsi-dns-bin"),
+            nsbubble.MountPoint(os.path.realpath(os.path.join(script_dir, "firewall")), "/padsi-dns-bin/firewall"),
+            nsbubble.MountPoint(self._resolv_rules_file, "/etc/resolv-rules.json", monitored=True),
+            nsbubble.MountPoint(self._resolv_conf_file, "/etc/resolv-conf.json", monitored=True),
+            nsbubble.MountPoint(self._dns_fw_config_file, "/etc/dns-fw-conf.json")
         }
         if self._dns_blocklist is not None:
-            mounts[self._dns_blocklist]={
-                "mount-point": "/etc/unbound/conf.d/blocklist.conf",
-                "read-only": True,
-                "monitored": False,
-            }
+            mounts.add(nsbubble.MountPoint(self._dns_blocklist, "/etc/unbound/conf.d/blocklist.conf"))
 
         return mounts
 

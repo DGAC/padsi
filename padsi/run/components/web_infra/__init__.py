@@ -64,16 +64,12 @@ class WebInfra(Component):
 
         self._pid:int|None=None # PID of the catch all web server
 
-    def get_mountpoints(self) -> dict:
+    def get_mountpoints(self) -> set[nsbubble.MountPoint]:
         """Get the mount points required by the component
         Cf. nsbubble's documentation for the formalism
         """
         mounts={
-            self._sandbox_dir_name: {
-                "mount-point": "/etc/web-infra",
-                "read-only": True,
-                "monitored": False
-            }
+            nsbubble.MountPoint(self._sandbox_dir_name, "/etc/web-infra")
         }
 
         if self._listening_ip is None:
@@ -82,11 +78,7 @@ class WebInfra(Component):
             fname=os.path.join(self._sandbox_dir_name, "resolv.conf")
             with open(fname, "wt") as fd:
                 fd.write(f"nameserver    {self._listening_ip.ip}\n")
-            mounts[fname]={
-                "mount-point": "/etc/resolv.conf",
-                "read-only": True,
-                "monitored": False
-            }
+            mounts.add(nsbubble.MountPoint(fname, "/etc/resolv.conf"))
 
         return mounts
 
