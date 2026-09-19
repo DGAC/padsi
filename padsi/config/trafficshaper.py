@@ -180,13 +180,13 @@ class TrafficShaper:
                         if counter<30: # wait a bit for the "connection to the world" DNS resolution to work
                             await asyncio.sleep(0.5)
                         else:
-                            syslog.syslog(syslog.LOG_ERR, f"DNS resolution failed: {e}")
+                            syslog.syslog(syslog.LOG_WARNING, f"DNS resolution failed, waited too long: {e}")
                             return None
                     else:
-                        syslog.syslog(syslog.LOG_ERR, f"DNS resolution failed: {e}")
+                        syslog.syslog(syslog.LOG_WARNING, f"DNS resolution failed: {e}")
                         return None
                 except Exception as e: # noqa: BLE001
-                    syslog.syslog(syslog.LOG_ERR, f"DNS resolution failed: {e}")
+                    syslog.syslog(syslog.LOG_WARNING, f"DNS resolution failed: {e}")
                     return None
         finally:
             socket.setdefaulttimeout(to)

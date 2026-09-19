@@ -271,9 +271,11 @@ if __name__=="__main__":
                 syslog.syslog(syslog.LOG_INFO, "Connected to the FW socket")
             break
         except (FileNotFoundError, ConnectionRefusedError):
-            syslog.syslog(syslog.LOG_INFO, f"Socket to talk to the FW '{fw_socket_file}' is not present yet or FW refusing the connection, waiting a bit")
+            if counter==0:
+                syslog.syslog(syslog.LOG_INFO, f"FW socket '{fw_socket_file}' is not present yet or FW refusing the connection, waiting a bit")
             counter+=1
             if counter>=10:
+                syslog.syslog(syslog.LOG_ERR, f"Could not connect the Unix socket to '{fw_socket_file}': not present yet or FW refusing the connection")
                 sys.exit(2)
             time.sleep(1)
         except Exception as e: # noqa: BLE001

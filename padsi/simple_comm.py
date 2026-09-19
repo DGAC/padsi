@@ -173,6 +173,10 @@ class Client:
                         req_id=res.req_id
                     else:
                         raise Exception("CODEBUG: reply should start with 'RESULT:' or 'EXCEPTION:'")
+                    try:
+                        req_id=int(req_id if req_id is not None else "dummy")
+                    except ValueError:
+                        raise Exception("Invalid 'req_id': should be an integer")
 
                     # transmit reply object to task
                     queue=self._requests_queues.get(req_id)
