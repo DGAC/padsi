@@ -28,6 +28,8 @@ import datetime
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import tarfile
 import tempfile
 import uuid
@@ -108,17 +110,23 @@ class VMArchive:
             except Exception: # noqa: BLE001
                 raise VMArchiveException("Could not open archive, or nvalid archive: missing or invalid manifest")
 
-    def extract(self, vm_conf:VirtualMachine) -> str:
-        """Extract the VM version's files in the <staged_dir>/<extract-id> directory.
+    def extract(self, vm_conf:VirtualMachine, uid:int|None=None) -> str:
+        """Extract the VM version's files in the <staged_dir>/<extract-id> directory where extract-id is a generated UUDI4
         If the archive is partial, this function makes a very basic check based on the file size
         before extracting it to the selected directory (the complete hash check will be performed by the user service when asked)
-        Return that "extract-id" ID (which is a UUID4)
+
+        If a user ID is specified, then the archive will be extracted in its associated directory.
+
+        Return the extract-id
         """
+        if uid is not None and os.geteuid() not in (uid, 0):
+           raise VMArchiveException(f"Not enough privileges to extract VM's files as user {uid} (being {os.geteuid()})")
+
         vm_files:VMFiles|None=None
         if self._dependency_size is not None:
             # get partial's VM version image file size if any and find already installed VM version
             # with a matching image size
-            vm_files=VMFiles(vm_conf.directory)
+            vm_files=VMFiles(vm_conf.directory, uid=uid)
             vm_version:VMVersion|None=None
             for vm_v in vm_files.base_versions:
                 if os.stat(vm_v.image_file).st_size==self._dependency_size:
@@ -129,12 +137,22 @@ class VMArchive:
 
         # extract the archive's contents
         if vm_files is None:
-            vm_files=VMFiles(vm_conf.directory, analyse=False)
+            vm_files=VMFiles(vm_conf.directory, uid=uid, analyse=False)
         extract_id=str(uuid.uuid4())
         extract_dir=os.path.join(vm_files.staging_directory, extract_id)
         os.makedirs(extract_dir)
         with tarfile.open(self._ar_file) as tar:
             tar.extractall(extract_dir)
+
+        if uid is not None and os.geteuid() != uid:
+            proc=subprocess.run(["chown", "-R", f"{uid}", extract_dir], capture_output=True, text=True, check=False)
+            if proc.returncode!=0:
+                try:
+                    # get rid of files if possible
+                    shutil.rmtree(extract_dir)
+                except Exception: # noqa: BLE001,S110
+                    pass
+                raise VMArchiveException(f"Could not change ownership of '{extract_dir}' to user {uid}: {proc.stderr}")
         return extract_id
 
     @classmethod

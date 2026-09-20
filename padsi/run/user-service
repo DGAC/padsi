@@ -510,11 +510,11 @@ class PadsiUserService:
         )
         res=await asyncio.gather(*tasks, return_exceptions=True)
         if isinstance(res[0], BaseException):
-            msg=f"Error while starting zone '{zone_conf.name}' infra: {res[0]}"
+            msg=f"Error while starting INFRA for zone '{zone_conf.name}': {res[0]}"
             syslog.syslog(syslog.LOG_ERR, msg)
             raise UserServiceException(msg)
         if isinstance(res[1], BaseException):
-            msg=f"Error while starting zone '{zone_conf.name}' userfiles: {res[1]}"
+            msg=f"Error while starting USERFILES for zone '{zone_conf.name}': {res[1]}"
             syslog.syslog(syslog.LOG_ERR, msg)
             raise UserServiceException(msg)
         return (res[0], res[1])
@@ -531,8 +531,8 @@ class PadsiUserService:
             elif zone_conf.start_mode == padsi.config.StartMode.ALWAYS_INFRA:
                 try:
                     await self._get_zone_infra_and_userfiles(zone_conf)
-                except Exception as e: # noqa: BLE001
-                    syslog.syslog(syslog.LOG_ERR, f"Error while starting zone '{zone_name}' infra: {e}")
+                except Exception: # noqa: BLE001,S110
+                    pass # error already logged
         syslog.syslog(syslog.LOG_INFO, "Finished starting always present zones")
 
     async def _zones_background_cleaner(self):
@@ -673,7 +673,7 @@ class PadsiUserService:
             return zdata.userfiles
 
         # check request already being handled
-        task = Task(f"zfiles:{zone_conf.name}", f"Creating user files for zone {zone_conf.name}")
+        task = Task(f"zoneuserfiles:{zone_conf.name}", f"Creating user files for zone {zone_conf.name}")
 
         try:
             waited = await self._mark_task_started(task)

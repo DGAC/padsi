@@ -161,13 +161,8 @@ class AdminService:
             action=data.get("action")
             if action is None:
                 raise AdminServiceException("Invalid input: no action specified")
-            match action:
-                case "import" | "load":
-                    hdd_file = data.get("hdd-file")
-                    vars_file = data.get("vars-file")
-                    extract_id = data.get("extract-id")
-                case _:
-                    raise AdminServiceException(f"Invalid action {action}")
+            if action not in ("create-dirs", "import", "load"):
+                raise AdminServiceException(f"Invalid action '{action}'")
 
             zone_name = data.get("zone")
             if zone_name is not None and not isinstance(zone_name, str):
@@ -177,8 +172,14 @@ class AdminService:
 
         # do the job
         match action:
+            case "create-dirs":
+                await vm_proxy.create_vm_dirs(self._call_system_service, vm_id, padsi.config.VMUsage.INSTALL)
+                return json_response(None)
             case"import":
                 try:
+                    hdd_file = data.get("hdd-file")
+                    vars_file = data.get("vars-file")
+                    extract_id = data.get("extract-id")
                     vm_version=await vm_proxy.stage_imported_files(self._gconf, self._call_system_service, vm_id,
                             self._uid, self._gid, hdd_file, vars_file, message)
                     return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": None})
@@ -193,6 +194,7 @@ class AdminService:
                     return web.Response(text=f"Could not import the VM: {e}", status=400)
             case "load":
                 try:
+                    extract_id = data.get("extract-id")
                     vm_version=await vm_proxy.vm_load(self._gconf, self._call_system_service, vm_id,
                         self._uid, self._gid, extract_id, message)
                     return json_response({"vm-id": vm_id, "vm-version": str(vm_version), "task": None})

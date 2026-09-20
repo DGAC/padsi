@@ -25,6 +25,9 @@
 
 from __future__ import annotations
 
+import os
+import pwd
+
 import padsi.config
 import padsi.run
 
@@ -135,9 +138,14 @@ class ClientAdmin(BaseClient):
         }
         self.post("/vm", data)
 
+        # use the "padsi" user if we are running as root
+        uid=None
+        if os.geteuid()==0:
+            uid=pwd.getpwnam("padsi").pw_uid
+
         # extract the archive (the directory which contains the extracted files will be destroyed by the PADSI service)
         syslog.syslog(syslog.LOG_INFO, "extracting VM files before loading")
-        extract_id=vm_ar.extract(vm_conf)
+        extract_id=vm_ar.extract(vm_conf, uid=uid)
         data={
             "action": "load",
             "vm-id": vm_ar.vm_id,
