@@ -307,7 +307,7 @@ class Configuration:
             for copy_zone in all_zones:
                 czlist:set[str]={copy_zone} # a zone can copy/paste with itself
                 for zone_name in all_zones:
-                    if copy_zone in self._clipboard_allowed_copy_from[zone_name]:
+                    if copy_zone in self._clipboard_allowed_copy_from.get(zone_name, set()):
                         czlist.add(zone_name)
                 self._clipboard_allowed_paste_to[copy_zone]=czlist
 
@@ -434,10 +434,14 @@ class Configuration:
     def zone_needs_wayland_proxy(self, zone_name:str) -> bool:
         """Tell if a Wayland proxy needs to be present in the infrastructure of a zone
         """
+        if len(self._clipboard_rules)==0:
+            return False
+
         # a proxy is needed if pasting to the zone is somehow restricted
         all_zones=self._zones.keys()
         nb_zones=len(all_zones)
-        if len(self._clipboard_allowed_copy_from[zone_name])!=nb_zones:
+        cfrom=self._clipboard_allowed_copy_from.get(zone_name)
+        if cfrom is None or len(cfrom)!=nb_zones:
             return True
 
         # a proxy is not needed if there is no filtering or if the only filtering is that a single zone is completely "isolated"
@@ -456,7 +460,7 @@ class Configuration:
         """Get the list of zones from which content can be copied and pasted into
         the specified zone
         """
-        return self._clipboard_allowed_copy_from[paste_zone]
+        return self._clipboard_allowed_copy_from.get(paste_zone, set())
 
     @property
     def zones(self) -> list[Zone]:
