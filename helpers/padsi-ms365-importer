@@ -44,10 +44,10 @@ import os
 import sys
 
 try:
-    from firewall import Endpoint
+    from padsi.fwlib import Endpoint
 except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-    from firewall import Endpoint
+    from padsi.fwlib import Endpoint
 
 parser=argparse.ArgumentParser(description="PADSI tool to convert MS365 endpoint requirements to a netres file, refer to https://learn.microsoft.com/en-us/microsoft-365/enterprise/urls-and-ip-address-ranges?view=o365-worldwide to download the resources as a JSON file")
 subparsers=parser.add_subparsers()

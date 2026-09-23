@@ -46,9 +46,9 @@ except ModuleNotFoundError:
     import padsi.config
 
 import padsi.misc
-from firewall import Endpoint, NetFlow
 from padsi.config import ResolvRule, TrafficShaper
 from padsi.config.network import FWRule
+from padsi.fwlib import Endpoint, NetFlow
 
 from client import print_vm_status
 from client_admin import ClientAdmin

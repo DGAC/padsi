@@ -27,10 +27,10 @@ import ipaddress
 import os
 import syslog
 
-import firewall
 import nsbubble
 import padsi.config
 import padsi.network
+from padsi import fwlib
 from padsi.config.trafficshaper import TrafficShaper
 
 from .components import dns, fw_logger, web_infra
@@ -84,7 +84,7 @@ class AdminInfra(ZoneFoundations):
 
         self._web_infra_c: web_infra.WebInfra|None=None
 
-        self._firewall_denied_spec=firewall.LogSpec(self.syslog_prefix, global_conf.firewall_logs_group)
+        self._firewall_denied_spec=fwlib.LogSpec(self.syslog_prefix, global_conf.firewall_logs_group)
 
         self._fw_rules: list[padsi.config.FWRule]|None = None
         self._resolv_rules: list[padsi.config.ResolvRule]|None = None

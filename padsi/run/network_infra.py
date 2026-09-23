@@ -26,10 +26,10 @@ import ipaddress
 import subprocess
 import syslog
 
-import firewall
 import nsbubble
 import padsi.network
-from firewall.netflow import Endpoint
+from padsi import fwlib
+from padsi.fwlib.netflow import Endpoint
 from padsi.config.trafficshaper import TrafficShaper
 
 from .components import Component
@@ -37,7 +37,7 @@ from .components import Component
 external_zone_iface = "eth0"  # name of the interface in the bubble which allows communications with the world outside of the zone
 
 def network_infra_setup(
-    fw_init_ns: firewall.Firewall,
+    fw_init_ns: fwlib.Firewall,
     traffic_shaper:TrafficShaper|None,
     veth_iface: str, # interface name in the "init" network NS
     net_bubble_netns: str,
@@ -75,12 +75,12 @@ def network_infra_setup(
         padsi.network.route_add_default(veth_zone, addr_in_init_ns.ip, ns_nzone)
 
         # FW settings
-        fw_zone_ns = firewall.Firewall(ns_nzone)
+        fw_zone_ns = fwlib.Firewall(ns_nzone)
         fw_zone_ns.add_masquerade(out_iface=veth_zone)
-        fw_zone_ns.set_default_policy(firewall.FlowType.FILTER_INPUT, firewall.Policy.ALLOW)
+        fw_zone_ns.set_default_policy(fwlib.FlowType.FILTER_INPUT, fwlib.Policy.ALLOW)
 
         fw_init_ns.add_masquerade(source_addr=addr_in_infra_ns.ip)
-        fw_init_ns.set_default_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.ALLOW)
+        fw_init_ns.set_default_policy(fwlib.FlowType.FILTER_FORWARD, fwlib.Policy.ALLOW)
         syslog.syslog(syslog.LOG_DEBUG, f"{syslog_prefix}: setup done")
     except Exception as e:
         syslog.syslog(syslog.LOG_ERR, f"{syslog_prefix}: setup failed: {e}")
@@ -97,7 +97,7 @@ def network_infra_setup(
                 syslog.syslog(syslog.LOG_ERR,f"{syslog_prefix}: could not remove netns {net_bubble_netns}: {e}")
 
 def network_infra_cleanup(
-    fw_init_ns: firewall.Firewall,
+    fw_init_ns: fwlib.Firewall,
     traffic_shaper:TrafficShaper|None,
     veth_iface: str,
     run_dir: str,
@@ -174,7 +174,7 @@ def network_infra_create_attach_netns(
 
         padsi.network.interface_attach_to_bridge(veth_infra, infra_bridge_name, ns_infra)
 
-        fw = firewall.Firewall(attached_netns)
+        fw = fwlib.Firewall(attached_netns)
         fw.add_masquerade(out_iface=veth_izone)
 
         _allow_unprivileged_ping(attached_netns, syslog_prefix)
@@ -207,13 +207,13 @@ def network_infra_dnat_incoming(
         ns_infra = nsbubble.named_netns_create(infra_netns, infra_init_pid)
 
         # forward traffic in the infra
-        fw=firewall.Firewall(infra_netns)
+        fw=fwlib.Firewall(infra_netns)
         fw.add_dnat(dest_addr=final_ip.ip, in_iface=None, protocol_spec=endpoint.protocols_as_string, port_spec=endpoint.ports_as_string)
 
         # forward traffic from the "init" network NS or a traffic shaper network NS
         dest_addr = ipaddress.IPv4Interface(f"{lower_net[2]}/{lower_net.prefixlen}")
         if traffic_shaper is None:
-            fw_init_ns = firewall.Firewall(traffic_shaper.net_ns if traffic_shaper is not None else None, objects_prefix="padsi" if traffic_shaper is None else None)
+            fw_init_ns = fwlib.Firewall(traffic_shaper.net_ns if traffic_shaper is not None else None, objects_prefix="padsi" if traffic_shaper is None else None)
             for iface in padsi.network.get_default_interfaces():
                 fw_init_ns.add_dnat(dest_addr=dest_addr.ip, in_iface=iface, protocol_spec=endpoint.protocols_as_string, port_spec=endpoint.ports_as_string)
         else:
@@ -269,7 +269,7 @@ def network_infra_attach_zone_apps(
 
         padsi.network.interface_attach_to_bridge(veth_infra, infra_bridge_name, ns_infra)
 
-        fw = firewall.Firewall(ns_zone)
+        fw = fwlib.Firewall(ns_zone)
         fw.add_masquerade(out_iface=veth_izone)
 
         _allow_unprivileged_ping(ns_zone, syslog_prefix)

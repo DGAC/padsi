@@ -38,12 +38,11 @@ from dataclasses import dataclass
 from aiohttp import web
 from aiohttp.web_response import json_response
 
-import firewall
 import nsbubble
 import padsi.config
 import padsi.misc
 import padsi.run
-from padsi import namesgenerator
+from padsi import fwlib, namesgenerator
 from padsi.run import vm_proxy
 from padsi.run.vm.version import VMState
 from padsi.simple_comm import Client, Message, MessageType, ServerProcessDied
@@ -227,7 +226,7 @@ class ZoneData:
                             padsi.config.ResolvRule(
                                 "allow",
                                 f"Allow access to VM {izone.vm_version}/{izone.vm_version.nickname}",
-                                firewall.Endpoint.from_repr(",".join(izone.domain_names)),
+                                fwlib.Endpoint.from_repr(",".join(izone.domain_names)),
                                 resolv,
                             )
                         )
@@ -1927,7 +1926,7 @@ class PadsiUserService:
             # the previous list
             res: list[str] = []  # list of zones where the site is allowed
             if allowed_zones is not None:
-                endpoint = firewall.Endpoint.from_repr(f"{host}. ^ tcp ^ {port}")
+                endpoint = fwlib.Endpoint.from_repr(f"{host}. ^ tcp ^ {port}")
                 for zone_name in allowed_zones:
                     try:
                         zone_conf = self._gconf.get_zone(zone_name)

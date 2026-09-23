@@ -28,10 +28,10 @@ import ipaddress
 import os
 import syslog
 
-import firewall
 import nsbubble
 import padsi.config
 import padsi.network
+from padsi import fwlib
 from padsi.simple_comm import Message, MessageType, Server
 
 from .components import dns, fw_logger, wayland_proxy, web_infra
@@ -122,7 +122,7 @@ class ZoneInfra(ZoneFoundations):
 
             # DNS service
             opt=padsi.config.BlockListOption.downcast(self.zone_conf.get_option(padsi.config.ZoneOptionType.DNS_BLOCKLIST))
-            fw_denied_spec=firewall.LogSpec(self.syslog_prefix, self.global_conf.firewall_logs_group)
+            fw_denied_spec=fwlib.LogSpec(self.syslog_prefix, self.global_conf.firewall_logs_group)
             if self.zone_conf.has_dns_resolution:
                 comp = dns.DNSServer(
                     self.resolv_rules,
@@ -141,7 +141,7 @@ class ZoneInfra(ZoneFoundations):
                     rules=[]
                     for name in ("wpad.", "proxy."):
                         rule=padsi.config.ResolvRule(action="allow", descr=f"Allow to {name}",
-                            endpoint=firewall.Endpoint.from_repr(name), resolv=[f"A/3600/{self._br_ip.ip}"])
+                            endpoint=fwlib.Endpoint.from_repr(name), resolv=[f"A/3600/{self._br_ip.ip}"])
                         rules.append(rule)
                     comp.add_extra_rules("web-proxy", rules)
 

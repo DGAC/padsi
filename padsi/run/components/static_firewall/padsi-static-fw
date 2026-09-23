@@ -30,7 +30,7 @@ import sys
 import syslog
 import time
 
-import firewall
+from padsi import fwlib
 
 
 class FirewallException(Exception):
@@ -52,21 +52,21 @@ def _get_default_route_interface():
 
     raise FirewallException(f"Could not determine default route's interface: {len(data)} default route(s), exactly 1 needed")
 
-class Firewall(firewall.Firewall):
+class Firewall(fwlib.Firewall):
     """Object which modifies the netfilter based firewall to:
     - allow or deny access based on static rules (in the file pointer by the fw_rules_file variable, defaulting to /etc/fw-rules.json)
     - allow access to IPs (and potentially more restricted protocols and ports) based on resolution rules (the same ones used by the
       DNS server part)
     """
-    def __init__(self, fw_rules_file:str|None=None, log_denied_spec:firewall.LogSpec|None=None):
+    def __init__(self, fw_rules_file:str|None=None, log_denied_spec:fwlib.LogSpec|None=None):
         self._out_iface=_get_default_route_interface()
 
         # initialize actual FW object before loading any rule
         super().__init__(log_denied_spec=log_denied_spec)
 
         # default policies
-        self.set_default_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.DENY)
-        self.set_related_connections_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.ALLOW)
+        self.set_default_policy(fwlib.FlowType.FILTER_FORWARD, fwlib.Policy.DENY)
+        self.set_related_connections_policy(fwlib.FlowType.FILTER_FORWARD, fwlib.Policy.ALLOW)
 
         # static firewall rules
         self._install_fw_rules("/etc/fw-rules.json" if fw_rules_file is None else fw_rules_file)
@@ -78,16 +78,16 @@ class Firewall(firewall.Firewall):
                 rule=None
                 try:
                     rule=entry.get("rule")
-                    fl=firewall.NetFlow(None, firewall.Endpoint.from_repr(rule))
-                    policy=firewall.Policy.ALLOW if entry.get("action")=="allow" else firewall.Policy.DENY
+                    fl=fwlib.NetFlow(None, fwlib.Endpoint.from_repr(rule))
+                    policy=fwlib.Policy.ALLOW if entry.get("action")=="allow" else fwlib.Policy.DENY
                     try:
                         match entry.get("chain"):
                             case "INPUT":
-                                fltype=firewall.FlowType.FILTER_INPUT
+                                fltype=fwlib.FlowType.FILTER_INPUT
                             case "OUTPUT":
-                                fltype=firewall.FlowType.FILTER_OUTPUT
+                                fltype=fwlib.FlowType.FILTER_OUTPUT
                             case "FORWARD":
-                                fltype=firewall.FlowType.FILTER_FORWARD
+                                fltype=fwlib.FlowType.FILTER_FORWARD
                             case _:
                                 syslog.syslog(syslog.LOG_ERR, f"Invalid chain '{entry.get('chain')}' in FW rule, ignoring rule")
                                 fltype=None
@@ -101,7 +101,7 @@ class Firewall(firewall.Firewall):
 if __name__=="__main__":
     try:
         if len(sys.argv)>1:
-            lspec=firewall.LogSpec.from_str(sys.argv[1])
+            lspec=fwlib.LogSpec.from_str(sys.argv[1])
         else:
             lspec=None
         f=Firewall(log_denied_spec=lspec)

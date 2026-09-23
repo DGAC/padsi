@@ -26,12 +26,11 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import tempfile
 
-import firewall
 import nsbubble
 import padsi.config
+from padsi import fwlib
 
 from .. import Component
 
@@ -42,7 +41,7 @@ class StaticFirewallException(Exception):
 class StaticFirewall(Component):
     """Configure a bubble's netfilter firewall"""
 
-    def __init__(self, fw_rules:list[padsi.config.FWRule], log_denied_spec:firewall.LogSpec|None=None, log_only:bool=False):
+    def __init__(self, fw_rules:list[padsi.config.FWRule], log_denied_spec:fwlib.LogSpec|None=None, log_only:bool=False):
         """program to set some pre-defined firewall rules
         """
         self._fw_rules=fw_rules
@@ -72,7 +71,6 @@ class StaticFirewall(Component):
         return {
             nsbubble.MountPoint(fw_rules_path, "/etc/fw-rules.json", monitored=True),
             nsbubble.MountPoint(script_dir, "/padsi-fw-bin"),
-            nsbubble.MountPoint(os.path.realpath(os.path.join(script_dir, "firewall")), "/padsi-fw-bin/firewall")
         }
 
     @property
@@ -83,7 +81,11 @@ class StaticFirewall(Component):
         """Actually start the required processes in a bubble using the api object
         """
         if self._pid is None:
-            env={"LOG_ONLY":"yes"} if self._log_only else None
+            env={
+                "PYTHONPATH": "/usr/share/padsi"
+            }
+            if self._log_only:
+                env["LOG_ONLY"] = "yes"
             if self._log_denied_spec is None:
                 self._pid=api.start_process(["/padsi-fw-bin/padsi-static-fw"], extra_env=env, ignore_status=False, capabilities="net_admin")
             else:

@@ -23,7 +23,7 @@
 import re
 import unittest
 
-import firewall.netflow as netflow
+from padsi.fwlib import netflow
 
 
 def _domain_match(domain: str, rule: str) -> bool:

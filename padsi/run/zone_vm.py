@@ -34,9 +34,9 @@ import syslog
 import tempfile
 import time
 
-import firewall
 import nsbubble
 import padsi.config
+from padsi import fwlib
 from padsi.misc import compute_user_xdg_subdirectories, expand_variables_in_string
 
 from .components import dhcp, dns, fw_logger, usbredir, virtiofs, web_infra
@@ -112,7 +112,7 @@ def _create_proxy(zone_conf:padsi.config.Zone, vm_conf: padsi.config.VirtualMach
         # only consider block rules, allow rules are controled by the zone in which the VM is running
         resolv_rules=[rule for rule in vm_conf.network.resolv_rules if rule.action!="allow"]
     # pass through, traffic will be filtered by the zone's proxy
-    resolv_rules.append(padsi.config.ResolvRule("allow", None, firewall.Endpoint.from_repr("*")))
+    resolv_rules.append(padsi.config.ResolvRule("allow", None, fwlib.Endpoint.from_repr("*")))
 
     return padsi.config.Proxy(next_hop, fw_rules, resolv_rules, "Proxy for zone's proxy")
 
@@ -154,7 +154,7 @@ class ZoneVM(ZoneFoundations):
         self._virtiofs_srvs: list[virtiofs.VirtioFSServer] = []
         self._virtiofs_data: list[nsbubble.VirtioSharedDirectory] = []
         self.syslog_prefix=f"VM_{self._uid}_{self._vm_conf.id}_{vm_version}/{vm_version.nickname}"
-        self._firewall_denied_spec=firewall.LogSpec(self.syslog_prefix, global_conf.firewall_logs_group)
+        self._firewall_denied_spec=fwlib.LogSpec(self.syslog_prefix, global_conf.firewall_logs_group)
 
         self._web_infra_c: web_infra.WebInfra | None=None
         self._dns_c: dns.DNSServer|None=None
@@ -200,7 +200,7 @@ class ZoneVM(ZoneFoundations):
                     rules=[]
                     for name in ("wpad.", "proxy."):
                         rule=padsi.config.ResolvRule(action="allow", descr=f"Allow VM to {name}",
-                            endpoint=firewall.Endpoint.from_repr(name), resolv=[f"A/3600/{padsi.config.tap_ip}"])
+                            endpoint=fwlib.Endpoint.from_repr(name), resolv=[f"A/3600/{padsi.config.tap_ip}"])
                         rules.append(rule)
                     comp.add_extra_rules("web-proxy", rules)
 
@@ -225,14 +225,14 @@ class ZoneVM(ZoneFoundations):
                 fw_rules.append(padsi.config.FWRule(
                     "allow",
                     "Web proxy access",
-                    firewall.Endpoint.from_repr(f"{self._z_infra.bridge_ip.ip} ^ tcp ^ 3128"),
+                    fwlib.Endpoint.from_repr(f"{self._z_infra.bridge_ip.ip} ^ tcp ^ 3128"),
                     padsi.config.FWRuleChain.OUTPUT,
                 ))
                 if self.zone_conf.get_option(padsi.config.ZoneOptionType.INTER_VM_NET).enabled:
                     fw_rules.append(padsi.config.FWRule(
                         "allow",
                         "Inter VM communications",
-                        firewall.Endpoint.from_repr(f"{self._z_infra.bridge_ip.network}"),
+                        fwlib.Endpoint.from_repr(f"{self._z_infra.bridge_ip.network}"),
                         padsi.config.FWRuleChain.FORWARD,
                     ))
                 if _debug:
@@ -301,7 +301,7 @@ class ZoneVM(ZoneFoundations):
         return True
 
     @property
-    def firewall_log_spec(self) -> firewall.LogSpec:
+    def firewall_log_spec(self) -> fwlib.LogSpec:
         return self._firewall_denied_spec
 
     def compute_mount_points(self) -> set[nsbubble.MountPoint]:
@@ -580,17 +580,17 @@ class ZoneVM(ZoneFoundations):
             self._dns_c.add_extra_rules(context, rules)
 
 
-def zone_vm_setup(net_bubble_netns: str, net_bubble_init_pid: int, log_denied_spec: firewall.LogSpec):
+def zone_vm_setup(net_bubble_netns: str, net_bubble_init_pid: int, log_denied_spec: fwlib.LogSpec):
     ns_nzone = None
     try:
         ns_nzone = nsbubble.named_netns_create(net_bubble_netns, net_bubble_init_pid)
-        fw_zone_ns = firewall.Firewall(ns_nzone, log_denied_spec=log_denied_spec)
+        fw_zone_ns = fwlib.Firewall(ns_nzone, log_denied_spec=log_denied_spec)
 
         # allow programs in the zone's bubble to communicate with the VM
         fw_zone_ns.flow_set_policy(
-            firewall.FlowType.FILTER_OUTPUT,
-            firewall.NetFlow.from_repr(f"*>>{padsi.config.vm_ip}"),
-            firewall.Policy.ALLOW,
+            fwlib.FlowType.FILTER_OUTPUT,
+            fwlib.NetFlow.from_repr(f"*>>{padsi.config.vm_ip}"),
+            fwlib.Policy.ALLOW,
         )
 
         # allow programs in all the bubbles of the same zone to connect to the VM using DNAT

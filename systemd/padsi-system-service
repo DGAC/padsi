@@ -42,8 +42,8 @@ import aiofiles
 import aionotify
 import psutil
 
-import firewall
 import padsi.misc
+from padsi import fwlib
 from padsi.config import Configuration, TrafficShaper, VirtualMachine, VMUsage
 from padsi.run import (
     AdminVMFiles,
@@ -75,7 +75,7 @@ class SystemServiceException(Exception):
 class UserServer(Server):
     """User service for a specific user
     """
-    def __init__(self, gconf:Configuration, net_in_manager:NetworkInputManager, traffic_shapers:dict[str, TrafficShaper], host_fw: firewall.Firewall, lock:asyncio.Lock, usb_devices_watcher:USBDevicesMonitor|None, uid: int, gid:int):
+    def __init__(self, gconf:Configuration, net_in_manager:NetworkInputManager, traffic_shapers:dict[str, TrafficShaper], host_fw: fwlib.Firewall, lock:asyncio.Lock, usb_devices_watcher:USBDevicesMonitor|None, uid: int, gid:int):
         super().__init__(lock)
         self._gconf=gconf
         self._net_in_manager=net_in_manager
@@ -517,7 +517,7 @@ class UserServer(Server):
             raise res
 
     async def _infra_dnat_incoming(self, args:dict):
-        endpoint=firewall.Endpoint.from_repr(args["endpoint"])
+        endpoint=fwlib.Endpoint.from_repr(args["endpoint"])
         tsp:TrafficShaper|None=None
         tsp_name=args["traffic-shaper"]
         if tsp_name is not None:
@@ -539,7 +539,7 @@ class UserServer(Server):
 
     async def _vm_zone_setup(self, setup_args:dict):
         loop=asyncio.get_event_loop()
-        lspec=firewall.LogSpec.from_str(setup_args["log-denied-spec"])
+        lspec=fwlib.LogSpec.from_str(setup_args["log-denied-spec"])
         res=await loop.run_in_executor(None, zone_vm_setup, setup_args["net-namespace-raw"], setup_args["init-pid"], lspec)
         if isinstance(res, Exception):
             raise res
@@ -1373,8 +1373,8 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         self._usb_watcher=USBDevicesMonitor(gconf.logs_dir)
         self._usb_watcher_task:asyncio.Task|None=None
 
-        self._host_fw=firewall.Firewall(netns=None,
-            log_denied_spec=firewall.LogSpec(_init_log_prefix, self._gconf.firewall_logs_group),
+        self._host_fw=fwlib.Firewall(netns=None,
+            log_denied_spec=fwlib.LogSpec(_init_log_prefix, self._gconf.firewall_logs_group),
             objects_prefix="padsi")
         self._net_in_manager=NetworkInputManager(self._host_fw)
 
@@ -1383,7 +1383,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         return self._lock
 
     @property
-    def host_fw(self) -> firewall.Firewall:
+    def host_fw(self) -> fwlib.Firewall:
         return self._host_fw
 
     @property
@@ -1531,15 +1531,15 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                         syslog.syslog(syslog.LOG_ERR, f"Could not determine if all traffic shapers need DNS resolution (assuming yes): {e}")
 
                     # temporary allow DNS resolution if necessary for traffic shaper
-                    allowed_dns_flows:list[firewall.NetFlow]=[]
+                    allowed_dns_flows:list[fwlib.NetFlow]=[]
                     if dns_resolv_needed:
                         for ip in self._dns_resolvers:
                             flow=None
                             try:
-                                flow=firewall.NetFlow(None, firewall.Endpoint.from_repr(f"{ip}^udp^53"))
+                                flow=fwlib.NetFlow(None, fwlib.Endpoint.from_repr(f"{ip}^udp^53"))
                                 if _debug:
                                     syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: allow tmp DNS resolution: {flow}")
-                                self._host_fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, flow, firewall.Policy.ALLOW)
+                                self._host_fw.flow_set_policy(fwlib.FlowType.FILTER_OUTPUT, flow, fwlib.Policy.ALLOW)
                                 allowed_dns_flows.append(flow)
                             except Exception as e: # noqa: BLE001
                                 syslog.syslog(syslog.LOG_ERR, f"Could not allow outboud DNS flow '{flow}': {e}")
@@ -1559,7 +1559,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
                         try:
                             if _debug:
                                 syslog.syslog(syslog.LOG_INFO, f"Adapting traffic shapers: remove tmp DNS resolution: {flow}")
-                            self._host_fw.flow_delete_policy(firewall.FlowType.FILTER_OUTPUT, flow)
+                            self._host_fw.flow_delete_policy(fwlib.FlowType.FILTER_OUTPUT, flow)
                         except Exception as e: # noqa: BLE001
                             syslog.syslog(syslog.LOG_ERR, f"Could not block outboud DNS flow '{flow}': {e}")
                 if _debug:
@@ -1608,28 +1608,28 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         fw=self._host_fw
 
         # deny input and output by default except related connections
-        for family in (firewall.Family.IPv4, firewall.Family.IPv6):
-            fw.flush(firewall.FlowType.FILTER_OUTPUT, family=family)
-            fw.set_default_policy(firewall.FlowType.FILTER_OUTPUT, firewall.Policy.DENY, family=family)
-            fw.set_related_connections_policy(firewall.FlowType.FILTER_OUTPUT, firewall.Policy.ALLOW, family=family)
+        for family in (fwlib.Family.IPv4, fwlib.Family.IPv6):
+            fw.flush(fwlib.FlowType.FILTER_OUTPUT, family=family)
+            fw.set_default_policy(fwlib.FlowType.FILTER_OUTPUT, fwlib.Policy.DENY, family=family)
+            fw.set_related_connections_policy(fwlib.FlowType.FILTER_OUTPUT, fwlib.Policy.ALLOW, family=family)
 
-            fw.flush(firewall.FlowType.FILTER_INPUT, family=family)
-            fw.set_default_policy(firewall.FlowType.FILTER_INPUT, firewall.Policy.DENY, family=family)
-            fw.set_related_connections_policy(firewall.FlowType.FILTER_INPUT, firewall.Policy.ALLOW, family=family)
+            fw.flush(fwlib.FlowType.FILTER_INPUT, family=family)
+            fw.set_default_policy(fwlib.FlowType.FILTER_INPUT, fwlib.Policy.DENY, family=family)
+            fw.set_related_connections_policy(fwlib.FlowType.FILTER_INPUT, fwlib.Policy.ALLOW, family=family)
 
         # block IPv6 forward
-        fw.set_default_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.DENY, family=firewall.Family.IPv6)
+        fw.set_default_policy(fwlib.FlowType.FILTER_FORWARD, fwlib.Policy.DENY, family=fwlib.Family.IPv6)
 
         # allow DHCP
-        flow=firewall.NetFlow.from_repr("* ^ 68 > udp > 255.255.255.255 ^ 67")
-        fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, flow, firewall.Policy.ALLOW)
-        flow=firewall.NetFlow.from_repr("* ^ 67 > udp > * ^68")
-        fw.flow_set_policy(firewall.FlowType.FILTER_INPUT, flow, firewall.Policy.ALLOW)
+        flow=fwlib.NetFlow.from_repr("* ^ 68 > udp > 255.255.255.255 ^ 67")
+        fw.flow_set_policy(fwlib.FlowType.FILTER_OUTPUT, flow, fwlib.Policy.ALLOW)
+        flow=fwlib.NetFlow.from_repr("* ^ 67 > udp > * ^68")
+        fw.flow_set_policy(fwlib.FlowType.FILTER_INPUT, flow, fwlib.Policy.ALLOW)
 
         # silently drop any packet to non routable multicast addressed (autoconfig/autodiscovery is dangerous)
-        flow=firewall.NetFlow.from_repr("* > > 224.0.0.0/4")
-        fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, flow, firewall.Policy.DENY, log_if_deny=False)
-        fw.flow_set_policy(firewall.FlowType.FILTER_INPUT, flow, firewall.Policy.DENY, log_if_deny=False)
+        flow=fwlib.NetFlow.from_repr("* > > 224.0.0.0/4")
+        fw.flow_set_policy(fwlib.FlowType.FILTER_OUTPUT, flow, fwlib.Policy.DENY, log_if_deny=False)
+        fw.flow_set_policy(fwlib.FlowType.FILTER_INPUT, flow, fwlib.Policy.DENY, log_if_deny=False)
 
         # apply rules defined in the configuration
         if self._gconf.host_inbound_fw_rules is not None:
@@ -1638,18 +1638,18 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
 
         if self._gconf.host_outbound_fw_rules is not None:
             for rule in self._gconf.host_outbound_fw_rules:
-                flow=firewall.NetFlow(rule.endpoint, None)
-                fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, flow, firewall.Policy.ALLOW if rule.action=="allow" else firewall.Policy.DENY)
+                flow=fwlib.NetFlow(rule.endpoint, None)
+                fw.flow_set_policy(fwlib.FlowType.FILTER_OUTPUT, flow, fwlib.Policy.ALLOW if rule.action=="allow" else fwlib.Policy.DENY)
 
     def _cleanup_fw_rules(self):
         """Remove PADSI's rules which have been set up
         """
         fw=self._host_fw
-        for family in (firewall.Family.IPv4, firewall.Family.IPv6):
-            for ft in firewall.FlowType:
+        for family in (fwlib.Family.IPv4, fwlib.Family.IPv6):
+            for ft in fwlib.FlowType:
                 try:
                     fw.flush(ft)
-                    fw.set_default_policy(ft, firewall.Policy.ALLOW, family=family)
+                    fw.set_default_policy(ft, fwlib.Policy.ALLOW, family=family)
                 except Exception as e: # noqa: BLE001
                     syslog.syslog(syslog.LOG_ERR, f"Could not clean up host firewall's flow type '{ft}': {e}")
 

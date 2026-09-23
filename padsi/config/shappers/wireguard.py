@@ -25,8 +25,8 @@ import subprocess
 import syslog
 import tempfile
 
-import firewall
 import padsi.network
+from padsi import fwlib
 
 from ..trafficshaper import TrafficShaper, TrafficShaperConfException
 
@@ -58,7 +58,7 @@ class WireGuardTrafficShaper(TrafficShaper):
         self._wg_server_ip: ipaddress.IPv4Address | None = None
         self._config_address: ipaddress.IPv4Interface
         self._config_file = config_file
-        self._allowed_flow: firewall.NetFlow | None = None
+        self._allowed_flow: fwlib.NetFlow | None = None
 
     def __str__(self) -> str:
         return f"WireGuard({self._config_file})"
@@ -124,7 +124,7 @@ class WireGuardTrafficShaper(TrafficShaper):
         except Exception as e: # noqa: BLE001
             raise TrafficShaperConfException(f"Invalid WireGuard config file '{self._config_file}': {e}")
 
-    async def adapt(self, dns_resolvers_found: bool, host_fw: firewall.Firewall):
+    async def adapt(self, dns_resolvers_found: bool, host_fw: fwlib.Firewall):
         self._analyse_config_file()
         wg_server_ip: ipaddress.IPv4Address|None=None
         try:
@@ -149,7 +149,7 @@ class WireGuardTrafficShaper(TrafficShaper):
         if self._allowed_flow is not None:
             try:
                 syslog.syslog(syslog.LOG_DEBUG, f"Removing previous Wireguard flow '{self._allowed_flow}' for interface '{self._wg_iface_name}'")
-                host_fw.flow_delete_policy(firewall.FlowType.FILTER_OUTPUT, self._allowed_flow)
+                host_fw.flow_delete_policy(fwlib.FlowType.FILTER_OUTPUT, self._allowed_flow)
             except Exception as e: # noqa: BLE001
                 msg=f"Could not remove WireGuard network flow '{self._allowed_flow}': {e}"
                 syslog.syslog(syslog.LOG_ERR, msg)
@@ -177,10 +177,10 @@ class WireGuardTrafficShaper(TrafficShaper):
 
             # allowing communications with the WireGuard server itself; the communications are initiated in the "init" namespace,
             # hence the FILTER_OUTPUT chain.
-            self._allowed_flow = firewall.NetFlow(None, firewall.Endpoint.from_repr(f"{wg_server_ip} ^ udp ^ {self._wg_port}"))
+            self._allowed_flow = fwlib.NetFlow(None, fwlib.Endpoint.from_repr(f"{wg_server_ip} ^ udp ^ {self._wg_port}"))
             try:
                 syslog.syslog(syslog.LOG_DEBUG, f"Allowing network flow to the WireGuard server '{self._allowed_flow=}'")
-                host_fw.flow_set_policy(firewall.FlowType.FILTER_OUTPUT, self._allowed_flow, firewall.Policy.ALLOW)
+                host_fw.flow_set_policy(fwlib.FlowType.FILTER_OUTPUT, self._allowed_flow, fwlib.Policy.ALLOW)
             except Exception as e: # noqa: BLE001
                 self._allowed_flow = None
                 msg=f"Could not allow network flow to the WireGuard server '{self._allowed_flow}': {e}"
@@ -236,7 +236,7 @@ class WireGuardTrafficShaper(TrafficShaper):
 
                 padsi.network.route_add_default(self._wg_iface_name, None, self.net_ns)
 
-                fw = firewall.Firewall(self.net_ns)
+                fw = fwlib.Firewall(self.net_ns)
                 fw.add_masquerade(out_iface=self._wg_iface_name)
             except Exception:
                 self._clean_namespace()

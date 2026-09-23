@@ -31,8 +31,8 @@ import syslog
 import tempfile
 
 import nsbubble
-from firewall import Endpoint
 from padsi.config import FWRule, FWRuleChain, Proxy, ResolvRule
+from padsi.fwlib import Endpoint
 
 from .. import Component
 from .ca import RedirectCA

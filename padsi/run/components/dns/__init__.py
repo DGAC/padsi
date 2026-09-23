@@ -30,9 +30,9 @@ import syslog
 import tempfile
 from itertools import groupby
 
-import firewall
 import nsbubble
 import padsi.config
+from padsi import fwlib
 
 from .. import Component
 
@@ -49,7 +49,7 @@ class DNSServer(Component):
         self,
         resolv_rules: list[padsi.config.ResolvRule] | None,
         resolvers: list[padsi.config.network.DNSEndpoint] | None,
-        log_denied_spec: firewall.LogSpec | None = None,
+        log_denied_spec: fwlib.LogSpec | None = None,
         log_only: bool = False,
         denied_fallback_ip: str | None = None,
         has_web_proxy: bool = False,
@@ -184,7 +184,6 @@ class DNSServer(Component):
             nsbubble.MountPoint(conf_dir, "/etc/unbound", readonly=False),
             nsbubble.MountPoint("/usr/sbin/unbound", "/tmp/unbound"),
             nsbubble.MountPoint(script_dir, "/padsi-dns-bin"),
-            nsbubble.MountPoint(os.path.realpath(os.path.join(script_dir, "firewall")), "/padsi-dns-bin/firewall"),
             nsbubble.MountPoint(self._resolv_rules_file, "/etc/resolv-rules.json", monitored=True),
             nsbubble.MountPoint(self._resolv_conf_file, "/etc/resolv-conf.json", monitored=True),
             nsbubble.MountPoint(self._dns_fw_config_file, "/etc/dns-fw-conf.json")
@@ -212,7 +211,11 @@ class DNSServer(Component):
 
     def start(self, api: nsbubble.BubbleAPI):
         """Actually start the required processes in a bubble using the api object"""
-        env = {"LOG_ONLY": "yes"} if self._log_only else {}
+        env={
+            "PYTHONPATH": "/usr/share/padsi"
+        }
+        if self._log_only:
+            env["LOG_ONLY"] = "yes"
         if self._denied_fallback_ip is not None:
             env["DENIED_FALLBACK_IP"] = self._denied_fallback_ip
         if self._pid1 is None:
@@ -256,7 +259,7 @@ class DNSServer(Component):
     @classmethod
     def deserialize(cls, data: dict) -> DNSServer:
         ldata = data.get("data", {})
-        obj = cls([], None, firewall.LogSpec.from_str(ldata["log-deny-spec"]), ldata["log-only"])
+        obj = cls([], None, fwlib.LogSpec.from_str(ldata["log-deny-spec"]), ldata["log-only"])
         obj._sandbox_dir_name = ldata["dir"]
         obj._pid1 = ldata["pid1"]
         obj._pid2 = ldata["pid2"]
@@ -326,7 +329,7 @@ def validate_resolv_rules(rules: list):
 
             if spec is not None:
                 try:
-                    firewall.Endpoint.from_repr(f"* ^ {spec}")
+                    fwlib.Endpoint.from_repr(f"* ^ {spec}")
                 except Exception: # noqa: BLE001
                     raise DNSComponentException(f"Rule spec '{spec}' is invalid")
     except Exception as e: # noqa: BLE001

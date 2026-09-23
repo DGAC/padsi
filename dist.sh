@@ -91,7 +91,6 @@ function create_main_package() {
     ln -s "../share/padsi/padsi/cli/padsi-cli-host" "$bindir/padsi-cli"
     ln -s "../share/padsi/padsi/cli/padsi-sys" "$bindir/padsi-sys"
     rsync -avdl --exclude=__pycache__ "$srcdir/nsbubble/"* "$installdir/nsbubble/" > /dev/null
-    rsync -avdl --exclude=__pycache__ "$srcdir/firewall/"* "$installdir/firewall/" > /dev/null
     rsync -avdl --exclude=__pycache__ --exclude=padsi-agent "$srcdir/vm-management/"* "$installdir/vm-management/" > /dev/null
 
     src_compdir="$srcdir/padsi/run/components"

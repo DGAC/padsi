@@ -27,8 +27,7 @@ import socket
 import syslog
 from dataclasses import dataclass
 
-import firewall
-from padsi import network
+from padsi import fwlib, network
 
 _debug=False
 
@@ -116,7 +115,7 @@ class TrafficShaper:
         """Get the MTU imposed by the traffic shaper"""
         return None
 
-    def setup(self, fw_init_ns:firewall.Firewall, lower_net:ipaddress.IPv4Network|None):
+    def setup(self, fw_init_ns:fwlib.Firewall, lower_net:ipaddress.IPv4Network|None):
         """Set up the resources: create (or re-create) the network namespace"""
         self._need_setup=False
         if self.net_ns_exists:
@@ -127,8 +126,8 @@ class TrafficShaper:
             network.netns_add(self._netns_name)
             network.interface_set_up("lo", True, self._netns_name)
 
-            fw_zone_ns = firewall.Firewall(self._netns_name)
-            fw_zone_ns.set_default_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.ALLOW)
+            fw_zone_ns = fwlib.Firewall(self._netns_name)
+            fw_zone_ns.set_default_policy(fwlib.FlowType.FILTER_FORWARD, fwlib.Policy.ALLOW)
 
             if lower_net is not None:
                 # set up the VETH link between the "init" net NS and self.net_ns if not yet done
@@ -152,14 +151,14 @@ class TrafficShaper:
                     # FW settings
                     fw_zone_ns.add_masquerade(out_iface=veth_tsp)
                     fw_init_ns.add_masquerade(source_addr=addr_in_tsp_ns.ip)
-                    fw_init_ns.set_default_policy(firewall.FlowType.FILTER_FORWARD, firewall.Policy.ALLOW)
+                    fw_init_ns.set_default_policy(fwlib.FlowType.FILTER_FORWARD, fwlib.Policy.ALLOW)
 
             syslog.syslog(syslog.LOG_DEBUG, f"Setting up network ns '{self._netns_name}' done")
         except Exception as e:
             syslog.syslog(syslog.LOG_ERR, f"Failed to set up network ns '{self._netns_name}': {e}")
             raise
 
-    def destroy(self, fw_init_ns:firewall.Firewall):
+    def destroy(self, fw_init_ns:fwlib.Firewall):
         """Destroy any resources which have been set up"""
         if self.net_ns_exists:
             network.netns_delete(self._netns_name)
@@ -205,7 +204,7 @@ class TrafficShaper:
             return
 
         self._dnat_rules[rule_id]=rule
-        fw_init_ns = firewall.Firewall(self.net_ns, objects_prefix=fw_objects_prefix)
+        fw_init_ns = fwlib.Firewall(self.net_ns, objects_prefix=fw_objects_prefix)
         for iface in self._default_route_ifaces:
             if _debug:
                 syslog.syslog(syslog.LOG_DEBUG, f"TrafficShaper::add_incoming_dnat({iface=} {dest_addr=} {protocol_spec=} {port_spec=}) netns={self.net_ns}")
@@ -219,7 +218,7 @@ class TrafficShaper:
             return
         self._default_route_ifaces.add(iface)
         for rule in self._dnat_rules.values():
-            fw_init_ns = firewall.Firewall(self.net_ns, objects_prefix=self._fw_prefix)
+            fw_init_ns = fwlib.Firewall(self.net_ns, objects_prefix=self._fw_prefix)
             if _debug:
                 syslog.syslog(syslog.LOG_DEBUG, f"TrafficShaper::declare_default_route_interface({iface=} dest_addr={rule.dest_addr} protocol_spec={rule.protocol_spec} port_spec={rule.port_spec}) netns={self.net_ns}")
             fw_init_ns.add_dnat(rule.dest_addr, iface, rule.protocol_spec, rule.port_spec)
@@ -231,10 +230,10 @@ class TrafficShaper:
         if iface not in self._default_route_ifaces:
             return
         self._default_route_ifaces.remove(iface)
-        fw_init_ns = firewall.Firewall(self.net_ns, objects_prefix=self._fw_prefix)
+        fw_init_ns = fwlib.Firewall(self.net_ns, objects_prefix=self._fw_prefix)
         syslog.syslog(syslog.LOG_DEBUG, f"TrafficShaper::undeclare_default_route_interface({iface=}) netns={self.net_ns}")
         if _debug:
-            fw_init_ns.clear_interface_rules(iface, firewall.FlowType.NAT_PREROUTING)
+            fw_init_ns.clear_interface_rules(iface, fwlib.FlowType.NAT_PREROUTING)
 
     #
     # To be implemented by sub classes
@@ -245,7 +244,7 @@ class TrafficShaper:
         # to be overridden by actual implementation
         return None
 
-    async def adapt(self, dns_resolvers_found: bool, host_fw: firewall.Firewall):
+    async def adapt(self, dns_resolvers_found: bool, host_fw: fwlib.Firewall):
         """Function called whenever the /etc/resolv.conf file changes or the traffic shaper is not functional
         """
         # to be overridden by actual implementation

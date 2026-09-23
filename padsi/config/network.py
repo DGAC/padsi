@@ -24,7 +24,7 @@ import ipaddress
 import json
 from dataclasses import dataclass
 
-import firewall
+from padsi.fwlib import Endpoint
 
 from .trafficshaper import TrafficShaper
 
@@ -37,10 +37,10 @@ class NetworkConfException(Exception):
 class NetworkRessources:
     """Represent a list of network resources"""
 
-    def __init__(self, descr: str, endpoints: list[firewall.Endpoint]):
+    def __init__(self, descr: str, endpoints: list[Endpoint]):
         self._desrc = descr
-        self._ipv4_endpoints: list[firewall.Endpoint] = []
-        self._domain_endpoints: list[firewall.Endpoint] = []
+        self._ipv4_endpoints: list[Endpoint] = []
+        self._domain_endpoints: list[Endpoint] = []
         for ep in endpoints:
             for sep in ep.split_by_zone():
                 if sep.is_ipv4:
@@ -58,10 +58,10 @@ class NetworkRessources:
         endpoints = data.get("endpoints")
         if not isinstance(endpoints, list):
             raise NetworkConfException("Missing or invalid 'endpoints' attribute in network resources data")
-        eplist: list[firewall.Endpoint] = []
+        eplist: list[Endpoint] = []
         for eprepr in endpoints:
             try:
-                eplist.append(firewall.Endpoint.from_repr(eprepr))
+                eplist.append(Endpoint.from_repr(eprepr))
             except Exception as e: # noqa: BLE001
                 raise NetworkConfException(f"Invalid endpoint '{eprepr}' in network resources data: {e}")
 
@@ -72,11 +72,11 @@ class NetworkRessources:
         return self._desrc
 
     @property
-    def ipv4_endpoints(self) -> list[firewall.Endpoint] | None:
+    def ipv4_endpoints(self) -> list[Endpoint] | None:
         return self._ipv4_endpoints
 
     @property
-    def domain_endpoints(self) -> list[firewall.Endpoint] | None:
+    def domain_endpoints(self) -> list[Endpoint] | None:
         return self._domain_endpoints
 
 
@@ -111,7 +111,7 @@ class FWRule:
 
     action: str  # "allow" or "deny"
     descr: str | None
-    endpoint: firewall.Endpoint  # endpoint.is_ipv4 will be True
+    endpoint: Endpoint  # endpoint.is_ipv4 will be True
     chain: FWRuleChain = FWRuleChain.FORWARD
 
     def __repr__(self) -> str:
@@ -134,7 +134,7 @@ class ResolvRule:
 
     action: str  # "allow" or "deny"
     descr: str | None
-    endpoint: firewall.Endpoint
+    endpoint: Endpoint
     resolv: list[str] | None = None  # each string in the following format: 'A' '/' <response-validity> '/' <response as IPv4>
 
     def format_for_component(self) -> list[dict]:
@@ -157,7 +157,7 @@ class ResolvRule:
             )
         return res
 
-    def is_part_of(self, other_endpoint: firewall.Endpoint) -> bool:
+    def is_part_of(self, other_endpoint: Endpoint) -> bool:
         return self.endpoint.is_part_of(other_endpoint)
 
 
@@ -198,7 +198,7 @@ def load_rules_from_data(rules_data: list[dict], named_netres: dict[str, Network
                         except Exception as e: # noqa: BLE001
                             raise NetworkConfException(f"Invalid 'resolv' '{resolv}' attribute in '{rule}': {e}")
                 try:
-                    ep = firewall.Endpoint.from_repr(eprepr)
+                    ep = Endpoint.from_repr(eprepr)
                     for sub_ep in ep.split_by_zone():
                         if sub_ep.is_ipv4 or sub_ep.is_all_ipv4:
                             if resolv is not None:
