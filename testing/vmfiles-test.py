@@ -521,16 +521,16 @@ class AdminVMTest(unittest.TestCase):
             vmf1.refresh()
             vmf2.refresh()
             avmf=AdminVMFiles(testdir.name, 1000)
-            self.assertEqual(vmf1.base_versions, avmf.base_versions)
-            self.assertEqual(vmf2.base_versions, avmf.base_versions)
+            self.assertEqual(sorted([str(v) for v in vmf1.base_versions]), sorted([str(v) for v in avmf.base_versions]))
+            self.assertEqual(sorted([str(v) for v in vmf2.base_versions]), sorted([str(v) for v in avmf.base_versions]))
 
             # verify user versions
             self.assertEqual(vmf1.get_all_user_versions(), avmf.user_versions(1000))
             self.assertEqual(vmf2.get_all_user_versions(), avmf.user_versions(2000))
 
             # snapshot user versions
-            self.assertEqual(vmf1.snapshot_versions, avmf.snapshot_versions(1000))
-            self.assertEqual(vmf2.snapshot_versions, avmf.snapshot_versions(2000))
+            self.assertEqual(vmf1.get_all_snapshot_versions(), avmf.snapshot_versions(1000))
+            self.assertEqual(vmf2.get_all_snapshot_versions(), avmf.snapshot_versions(2000))
 
             # other stuff
             self.assertCountEqual(vmf1.obsolete_versions, [VMVersion(VMVersionType.BASE, vmf1.directory, 1)])
@@ -601,8 +601,8 @@ class AdminVMTest(unittest.TestCase):
             # staged VM versions verifications
             vmf1.refresh()
             avmf=AdminVMFiles(testdir.name, 1000)
-            self.assertEqual(vmf1.base_versions, avmf.base_versions)
-            self.assertEqual(vmf2.base_versions, avmf.base_versions)
+            self.assertEqual(sorted([str(v) for v in vmf1.base_versions]), sorted([str(v) for v in avmf.base_versions]))
+            self.assertEqual(sorted([str(v) for v in vmf2.base_versions]), sorted([str(v) for v in avmf.base_versions]))
 
             self.assertEqual(vmf1.get_staged(VMVersionType.BASE), avmf.get_staged(VMVersionType.BASE, 1000))
             self.assertEqual(vmf2.get_staged(VMVersionType.BASE), avmf.get_staged(VMVersionType.BASE, 2000))

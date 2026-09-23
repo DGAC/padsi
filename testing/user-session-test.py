@@ -37,8 +37,8 @@ class TestNotifier(UserSessionNotifier):
         print(f"User {uid=} {gid=} is logged in")
         self._logged_in_users.add(uid)
 
-    def user_logged_out_cb(self, uid:int, gid:int):
-        print(f"User {uid=} {gid=} is logged out")
+    def user_logged_out_cb(self, uid:int):
+        print(f"User {uid=} is logged out")
         self._logged_in_users.remove(uid)
 
     def user_is_logged_in(self, uid:int) -> bool:

@@ -307,7 +307,7 @@ class Server:
                         retcode=self._process.returncode
 
                     if retcode!=0:
-                        stderr=(await self._process.stderr.read()).decode() # pyright: ignore
+                        stderr=(await self._process.stderr.read()).decode() # pyright: ignore (.stderr is not None by construction)
                         if stderr:
                             msg=f"Client process died with return code {retcode} ({stderr})"
                             syslog.syslog(syslog.LOG_ERR, msg)
@@ -401,7 +401,7 @@ class Server:
             task.cancel()
             await asyncio.wait([task])
             e=task.exception() # avoid useless warnings
-            if e is not None and not isinstance(e, ClientProcessKilled):
+            if e is not None and not isinstance(e, ClientProcessKilled): # don't raise any exception if client process was killed
                 raise e
 
     async def _handle_request(self, request:Message) -> Message:

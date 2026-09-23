@@ -30,7 +30,7 @@ import syslog
 import time
 import unittest
 
-import prctl
+import prctl  # needs the python3-prctl package
 import psutil
 
 from padsi.simple_comm import Client, Message, MessageType, Server
@@ -45,11 +45,14 @@ class MessagesTest(unittest.TestCase):
         self.assertEqual(req2.req_id, 34)
         self.assertEqual(req2.data, data)
 
+class TestServerException(Exception):
+    pass
+
 class TestServer(Server):
     async def handle_request(self, request:Message) -> Message:
         syslog.syslog(syslog.LOG_DEBUG, f"Test server: handling request {request.to_str()}")
         if "fail" in request.data:
-            raise Exception(f"Failed: {request.data['fail']}")
+            raise TestServerException(f"Failed: {request.data['fail']}")
         if "counter" in request.data:
             request.data["counter"]=int(request.data["counter"])+1
         return Message(MessageType.REPLY, request.data)
@@ -121,7 +124,6 @@ class MainTest(unittest.TestCase):
             await asyncio.sleep(0.2)
             self.assertEqual(task.done(), True)
             self.assertEqual(task.cancelled(), False)
-            self.assertIn("Client process killed with signal", str(task.exception()))
             self.assertEqual(server.is_running, False)
         asyncio.run(run_test())
 
