@@ -25,8 +25,7 @@ import subprocess
 import syslog
 import tempfile
 
-import padsi.network
-from padsi import fwlib
+from padsi import fwlib, network
 
 from ..trafficshaper import TrafficShaper, TrafficShaperConfException
 
@@ -190,7 +189,7 @@ class WireGuardTrafficShaper(TrafficShaper):
     def _clean_namespace(self):
         for net_ns in (None, self.net_ns):
             try:
-                padsi.network.interface_delete(self._wg_iface_name, netns=net_ns)
+                network.interface_delete(self._wg_iface_name, netns=net_ns)
             except Exception as e: # noqa: BLE001
                 syslog.syslog(syslog.LOG_WARNING, f"Could not remove WireGuard interface {self._wg_iface_name} from net NS {net_ns}: {e}")
 
@@ -213,8 +212,8 @@ class WireGuardTrafficShaper(TrafficShaper):
                 raise TrafficShaperConfException(f"Invalid WireGuard config file '{self._config_file}': {e}")
 
             # set up the WG interface
-            if padsi.network.interface_exists(self._wg_iface_name):
-                padsi.network.interface_delete(self._wg_iface_name)
+            if network.interface_exists(self._wg_iface_name):
+                network.interface_delete(self._wg_iface_name)
 
             try:
                 proc = subprocess.run(
@@ -230,11 +229,11 @@ class WireGuardTrafficShaper(TrafficShaper):
                     raise TrafficShaperConfException(f"Could not configure WireGuard interface '{self._wg_iface_name}' with config derived from '{self._config_file}': {proc.stderr}")
 
                 # attach WG interface to the namespace
-                padsi.network.interface_move_to_namespace(self._wg_iface_name, new_netns=self.net_ns)
-                padsi.network.interface_set_up(self._wg_iface_name, True, self.net_ns)
-                padsi.network.addr_add(self._wg_iface_name, self._config_address, self.net_ns)
+                network.interface_move_to_namespace(self._wg_iface_name, new_netns=self.net_ns)
+                network.interface_set_up(self._wg_iface_name, True, self.net_ns)
+                network.addr_add(self._wg_iface_name, self._config_address, self.net_ns)
 
-                padsi.network.route_add_default(self._wg_iface_name, None, self.net_ns)
+                network.route_add_default(self._wg_iface_name, None, self.net_ns)
 
                 fw = fwlib.Firewall(self.net_ns)
                 fw.add_masquerade(out_iface=self._wg_iface_name)

@@ -43,7 +43,7 @@ import requests
 import requests_unixsocket
 from gi.repository import GLib  # pyright: ignore
 
-import padsi.config
+from padsi import config
 
 
 class ProgException(Exception):
@@ -57,7 +57,7 @@ class Notification:
     zones: list[str]# list of zones which can be used
 
 class NotificationsServer:
-    def __init__(self, gconf:padsi.config.Configuration, user_session_dir:str):
+    def __init__(self, gconf:config.Configuration, user_session_dir:str):
         self._gconf=gconf
         self._notifs:dict[int,Notification]={} # key=notification ID
         self._buffers:dict[int,bytes]={} # data buffer per FD
@@ -131,8 +131,8 @@ class NotificationsServer:
                 msg=json.loads(self._buffers[fd].decode())
                 url=msg["url"]
                 browser=msg["browser"]
-                if browser not in padsi.config.ProgramPoliciesFactory().supported_browsers:
-                    browser=padsi.config.ProgramPoliciesFactory().default_browser
+                if browser not in config.ProgramPoliciesFactory().supported_browsers:
+                    browser=config.ProgramPoliciesFactory().default_browser
 
                 purl=urllib.parse.urlparse(url)
                 if purl.scheme not in ("http", "https"):
@@ -262,7 +262,7 @@ if __name__=="__main__":
         user_session_dir=sys.argv[1]
         config_dir=sys.argv[2]
 
-        gconf=padsi.config.Configuration(config_dir)
+        gconf=config.Configuration(config_dir)
 
         uid=os.geteuid()
         os.environ["DBUS_SESSION_BUS_ADDRESS"]=f"unix:path=/run/user/{os.geteuid()}/bus" # needed to connect to the DBus session bus

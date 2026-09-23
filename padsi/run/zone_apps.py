@@ -36,8 +36,7 @@ import time
 import psutil
 
 import nsbubble
-import padsi.config
-import padsi.misc
+from padsi import config, misc
 
 from .components import fuse
 from .dbus import ZoneDBusRouter
@@ -64,8 +63,8 @@ class ZoneApps(ZoneFoundations):
     """
     def __init__(
         self,
-        global_conf: padsi.config.Configuration,
-        zone_conf: padsi.config.Zone,
+        global_conf: config.Configuration,
+        zone_conf: config.Zone,
         uid: int,
         run_dir: str,
         logs_dir: str,
@@ -99,7 +98,7 @@ class ZoneApps(ZoneFoundations):
         self._prepare_components()
 
     def _prepare_components(self):
-        with_fuse=self.zone_conf.get_option(padsi.config.ZoneOptionType.FUSE).enabled
+        with_fuse=self.zone_conf.get_option(config.ZoneOptionType.FUSE).enabled
         if with_fuse:
             user_def=pwd.getpwuid(self.uid)
             bhome_dir=os.path.join("/home", f"{user_def.pw_name}")
@@ -135,7 +134,7 @@ class ZoneApps(ZoneFoundations):
     def with_x11(self) -> bool:
         if self._with_x11 is not None:
             return self._with_x11
-        return self.zone_conf.get_option(padsi.config.ZoneOptionType.X11).enabled
+        return self.zone_conf.get_option(config.ZoneOptionType.X11).enabled
 
     @with_x11.setter
     def with_x11(self, forced_with_x11:bool):
@@ -224,7 +223,7 @@ class ZoneApps(ZoneFoundations):
                 raise last_e
         self._dbus_env_in_host=dbus_env
 
-    def _start_dbus_router(self, options:list[padsi.config.ZoneOption]):
+    def _start_dbus_router(self, options:list[config.ZoneOption]):
         """Start a DBus router instance in its own bubble
         """
         if self._dbus_socket_path_in_host is None:
@@ -245,13 +244,13 @@ class ZoneApps(ZoneFoundations):
         script_dir=os.path.dirname(os.path.realpath(__file__))
 
         # home dir
-        mounts.add(nsbubble.MountPoint(self._zuf.zone_home_dir, padsi.misc.get_user_home_dir(self._uid), readonly=False))
+        mounts.add(nsbubble.MountPoint(self._zuf.zone_home_dir, misc.get_user_home_dir(self._uid), readonly=False))
 
         # zone's MOUNT-POINTS option
         rev_mp:dict[str,str]={}
-        mp_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.MOUNT_POINTS)
+        mp_option=self.zone_conf.get_option(config.ZoneOptionType.MOUNT_POINTS)
         if mp_option.enabled:
-            mp_option=padsi.config.StrStrDictOption.downcast(mp_option)
+            mp_option=config.StrStrDictOption.downcast(mp_option)
             for (mp_zone, mp_host) in mp_option.map.items():
                 (mp_zone, *mode)=mp_zone.split(",", maxsplit=1)
                 if not os.path.isabs(mp_zone):
@@ -278,9 +277,9 @@ class ZoneApps(ZoneFoundations):
         mounts.add(nsbubble.MountPoint("/usr/share/padsi/padsi/cli/padsi-cli-zone", "/usr/bin/padsi-cli"))
 
         # PKI certificates
-        pki_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKI)
+        pki_option=self.zone_conf.get_option(config.ZoneOptionType.PKI)
         if pki_option.enabled:
-            pki_option=padsi.config.PKIOption.downcast(pki_option)
+            pki_option=config.PKIOption.downcast(pki_option)
             certs_dir=os.path.join(self.tmp_dir, "certs")
             os.makedirs(certs_dir)
             all_certs_file=os.path.join(self.tmp_dir, "certs/ca-certificates.crt")
@@ -315,16 +314,16 @@ class ZoneApps(ZoneFoundations):
             mounts.add(nsbubble.MountPoint(certs_dir, host_certs_dir))
 
         # PKCS11 library
-        pkcs11_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11)
+        pkcs11_option=self.zone_conf.get_option(config.ZoneOptionType.PKCS11)
         if pkcs11_option.enabled:
-            pkcs11_option=padsi.config.PKCS11Option.downcast(pkcs11_option)
+            pkcs11_option=config.PKCS11Option.downcast(pkcs11_option)
             if pkcs11_option.driver_path is not None and \
                 not pkcs11_option.driver_path.startswith("/usr") and not pkcs11_option.driver_path.startswith("/lib"):
                 # FIXME: also add DLL dependencies (use 'ldd')
                 mounts.add(nsbubble.MountPoint(pkcs11_option.driver_path, pkcs11_option.driver_path))
 
         # FIDO2 usage
-        fido2_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.FIDO2)
+        fido2_option=self.zone_conf.get_option(config.ZoneOptionType.FIDO2)
         if fido2_option.enabled:
             # programs need access to have access to /sys to perform udev enumration and /run/udev for hotplug detection
             # beyond access to /dev/hidraw*
@@ -344,7 +343,7 @@ class ZoneApps(ZoneFoundations):
             mounts.add(nsbubble.MountPoint(preload_file, "/etc/ld.so.preload"))
 
         # policies directories for the programs for which policies can be defined
-        factory=padsi.config.ProgramPoliciesFactory()
+        factory=config.ProgramPoliciesFactory()
         for progname in factory.supported_programs:
             policies=factory.get_program_policies(progname)
             if policies is not None:
@@ -362,14 +361,14 @@ class ZoneApps(ZoneFoundations):
 
     @property
     def features(self) -> nsbubble.Features:
-        bind_medias=self.zone_conf.get_option(padsi.config.ZoneOptionType.MASS_STORAGE).enabled
-        with_drm=self.zone_conf.get_option(padsi.config.ZoneOptionType.DRM).enabled
-        with_fuse=self.zone_conf.get_option(padsi.config.ZoneOptionType.FUSE).enabled
-        with_mmedia=self.zone_conf.get_option(padsi.config.ZoneOptionType.MULTIMEDIA).enabled or self.zone_conf.get_option(padsi.config.ZoneOptionType.SCREEN_SHARE).enabled
-        with_pulse=self.zone_conf.get_option(padsi.config.ZoneOptionType.PULSE_AUDIO).enabled
-        with_pcscd=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11).enabled or \
-            self.zone_conf.get_option(padsi.config.ZoneOptionType.GPG_CARD).enabled
-        with_fido2=self.zone_conf.get_option(padsi.config.ZoneOptionType.FIDO2).enabled
+        bind_medias=self.zone_conf.get_option(config.ZoneOptionType.MASS_STORAGE).enabled
+        with_drm=self.zone_conf.get_option(config.ZoneOptionType.DRM).enabled
+        with_fuse=self.zone_conf.get_option(config.ZoneOptionType.FUSE).enabled
+        with_mmedia=self.zone_conf.get_option(config.ZoneOptionType.MULTIMEDIA).enabled or self.zone_conf.get_option(config.ZoneOptionType.SCREEN_SHARE).enabled
+        with_pulse=self.zone_conf.get_option(config.ZoneOptionType.PULSE_AUDIO).enabled
+        with_pcscd=self.zone_conf.get_option(config.ZoneOptionType.PKCS11).enabled or \
+            self.zone_conf.get_option(config.ZoneOptionType.GPG_CARD).enabled
+        with_fido2=self.zone_conf.get_option(config.ZoneOptionType.FIDO2).enabled
         return nsbubble.Features(bind_x11=self.with_x11, with_multimedia=with_mmedia, with_pulseaudio=with_pulse, with_syslog=True, with_host_resolv=False,
                                    extra_env=self._extra_env, bind_medias=bind_medias,
                                    with_drm=with_drm, with_fuse=with_fuse, with_pcscd=with_pcscd,
@@ -379,7 +378,7 @@ class ZoneApps(ZoneFoundations):
                                    })
 
     def _apply_policies(self, mp_set:nsbubble.MountPointSet, zuf:ZoneUserFiles):
-        factory=padsi.config.ProgramPoliciesFactory()
+        factory=config.ProgramPoliciesFactory()
 
         # extra ROOT CA certificate for browsers
         if self._extra_root_cert is not None:
@@ -392,9 +391,9 @@ class ZoneApps(ZoneFoundations):
                     except Exception as e: # noqa: BLE001
                         syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add Root CA to {progname}: {e}")
 
-        pki_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKI)
+        pki_option=self.zone_conf.get_option(config.ZoneOptionType.PKI)
         if pki_option.enabled:
-            pki_option=padsi.config.PKIOption.downcast(pki_option)
+            pki_option=config.PKIOption.downcast(pki_option)
             for progname in factory.supported_browsers:
                 policies=factory.get_program_policies(progname)
                 if policies is not None:
@@ -405,9 +404,9 @@ class ZoneApps(ZoneFoundations):
                         except Exception as e: # noqa: BLE001
                             syslog.syslog(syslog.LOG_ERR, f"{self.syslog_prefix}: failed to add trusted CA '{nickname}' to {progname}: {e}")
 
-        pkcs11_option=self.zone_conf.get_option(padsi.config.ZoneOptionType.PKCS11)
+        pkcs11_option=self.zone_conf.get_option(config.ZoneOptionType.PKCS11)
         if pkcs11_option.enabled:
-            pkcs11_option=padsi.config.PKCS11Option.downcast(pkcs11_option)
+            pkcs11_option=config.PKCS11Option.downcast(pkcs11_option)
             for progname in factory.supported_browsers:
                 syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: adding PKCS#11 driver for '{progname}'")
                 policies=factory.get_program_policies(progname)
@@ -442,9 +441,9 @@ class ZoneApps(ZoneFoundations):
         self._start_zone_dbus()
 
         router_enabled=False
-        options:list[padsi.config.ZoneOption]=[
-            self.zone_conf.get_option(padsi.config.ZoneOptionType.SCREEN_SHARE),
-            self.zone_conf.get_option(padsi.config.ZoneOptionType.DESKTOP_NOTIFICATIONS)
+        options:list[config.ZoneOption]=[
+            self.zone_conf.get_option(config.ZoneOptionType.SCREEN_SHARE),
+            self.zone_conf.get_option(config.ZoneOptionType.DESKTOP_NOTIFICATIONS)
         ]
         for option in options:
             if option.enabled:
@@ -469,7 +468,7 @@ class ZoneApps(ZoneFoundations):
         return True
 
     @classmethod
-    def prepare_dirs(cls, gconf:padsi.config.Configuration, zone_name:str, vm_dir:str|None, uid:int, gid:int):
+    def prepare_dirs(cls, gconf:config.Configuration, zone_name:str, vm_dir:str|None, uid:int, gid:int):
         # ensure the home directory for the user and the zone actually exists
         for dirname in [gconf.get_zone_user_home_dir(uid, zone_name)]:
             os.makedirs(dirname, exist_ok=True)

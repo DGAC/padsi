@@ -18,9 +18,10 @@
 #
 
 import asyncio
-import padsi.misc
+
+from padsi import misc
 from padsi.config import Configuration, VirtualMachine, VMUsage
-from padsi.run import (AdminVMFiles, VMVersion, VMVersionInfo, VMVersionType)
+from padsi.run import AdminVMFiles, VMVersion, VMVersionInfo, VMVersionType
 
 _debug=False
 
@@ -62,7 +63,7 @@ async def _format_status(uid:int, vm:VirtualMachine, vm_id:str, avmf:AdminVMFile
         if qemu_pid is None:
             qemu_ns=None
         else:
-            qemu_ns=f"{padsi.misc.get_mnt_namespace(qemu_pid)}{padsi.misc.get_net_namespace(qemu_pid)}"
+            qemu_ns=f"{misc.get_mnt_namespace(qemu_pid)}{misc.get_net_namespace(qemu_pid)}"
         if _vm_version_keep(vmversion, zone_name):
             infos[_vm_version_key(vmversion)]={
                 "dependencies": info.dependencies,

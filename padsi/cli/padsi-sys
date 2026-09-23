@@ -42,13 +42,11 @@ import requests.exceptions
 import requests_unixsocket
 
 try:
-    import padsi.config
+    from padsi import config, netmap, network
 except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
-    import padsi.config
+    from padsi import config, netmap, network
 
-import padsi.netmap
-import padsi.network
 from padsi.config import ResolvRule, TrafficShaper
 from padsi.config.adminns import AdminNS
 from padsi.config.network import FWRule
@@ -132,8 +130,8 @@ _indent = "    "
 #
 # Misc.
 #
-def load_config() -> padsi.config.Configuration:
-    conf = padsi.config.Configuration(args["config_dir"])
+def load_config() -> config.Configuration:
+    conf = config.Configuration(args["config_dir"])
     return conf
 
 
@@ -292,7 +290,7 @@ def command_dump(uid: int | None):
             uids.append(entry.pw_uid)
 
     # prepare structure for the diagram
-    nmap = padsi.netmap.NetworkMap()
+    nmap = netmap.NetworkMap()
 
     # analyse PADSI's zones to get the PID of bubblewrap processes
     data={}
@@ -349,7 +347,7 @@ def _show_traffic_shaper_info(tshaper: TrafficShaper):
                 print(Fore.RED + f"{_indent}could not determine if it is functionnal" + Fore.RESET)
 
         try:
-            ifaces = padsi.network.list_interfaces(tshaper.net_ns)
+            ifaces = network.list_interfaces(tshaper.net_ns)
             if len(ifaces) > 0:
                 print(f"{_indent}network interfaces (in namespace):")
                 for nsiface, ip in ifaces.items():
@@ -414,7 +412,7 @@ def command_network(args: dict, zdata: dict | None):
     root_required()
 
     # system's network settings
-    ifaces=padsi.network.list_interfaces()
+    ifaces=network.list_interfaces()
     if len(ifaces)>0:
         print(f"{Style.BRIGHT}Network interfaces in the 'init' namespace:{Style.RESET_ALL}")
         for (iface,addr) in ifaces.items():
@@ -453,8 +451,8 @@ def command_zone_network(args: dict, zdata: dict | None):
             if iface is None:
                 raise Exception("Lower interface is None???")
             print(f"Network interface (in host): {iface}")
-            if padsi.network.interface_exists(iface):
-                addr = padsi.network.addr_get(iface)
+            if network.interface_exists(iface):
+                addr = network.addr_get(iface)
                 print(f"{_indent}IP: {addr}")
             else:
                 print(Fore.RED + f"{_indent}Does not exist" + Fore.RESET)

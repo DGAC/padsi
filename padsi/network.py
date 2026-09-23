@@ -24,7 +24,7 @@ import re
 import subprocess
 import syslog
 
-import padsi.misc
+from padsi import misc
 
 
 class NetworkNamespaceNotFound(Exception):
@@ -125,7 +125,7 @@ def interface_exists(name: str, netns: str | None = None) -> bool:
     """Tells if a network interface exists"""
     netns_check_exists(netns)
     args = _ip_command(netns) + ["link", "show", name]
-    (status, _out, err) = padsi.misc.exec_sync(args)
+    (status, _out, err) = misc.exec_sync(args)
     if status != 0:
         if "does not exist" in err:
             return False
@@ -161,7 +161,7 @@ def interface_delete(name: str, netns: str | None = None):
     """
     if interface_exists(name, netns):
         args = _ip_command(netns) + ["link", "del", name]
-        (status, _out, err) = padsi.misc.exec_sync(args)
+        (status, _out, err) = misc.exec_sync(args)
         if status != 0:
             raise Exception(f"Could not delete network interface {_with_netns(name, netns)}: {err}")
 
@@ -185,7 +185,7 @@ def interface_set_up(name: str, up: bool, netns: str | None = None, mtu:int|None
     """Change the UP/DOWN state of an interface"""
     if interface_exists(name, netns):
         args = _ip_command(netns) + ["link", "set", "dev", name, "up" if up else "down"]
-        (status, _out, err) = padsi.misc.exec_sync(args)
+        (status, _out, err) = misc.exec_sync(args)
         if status != 0:
             raise Exception(f"Could not set state of interface {_with_netns(name, netns)} to {'up' if up else 'down'}: {err}")
         if mtu is not None:
@@ -201,7 +201,7 @@ def interface_attach_to_bridge(name: str, bridge: str, netns: str | None = None)
     interface_check_exists(name, netns)
     interface_check_exists(bridge, netns)
     args = _ip_command(netns) + ["link", "set", name, "master", bridge]
-    (status, _out, err) = padsi.misc.exec_sync(args)
+    (status, _out, err) = misc.exec_sync(args)
     if status != 0:
         raise Exception(f"Could not attach interface {_with_netns(name, netns)} to bridge {_with_netns(bridge, netns)}: {err}")
 
@@ -217,14 +217,14 @@ def interface_move_to_namespace(name: str, new_netns: str, current_netns: str | 
             raise Exception("Network interface '{name}' already exists in the 'init' namespace, we can't use the 'init' namespace as a 'staging' namespace")
         args = _ip_command(current_netns) + ["netns", "exec", current_netns, "ip", "link", "set",
             "netns", "1", "dev", name]
-        (status, _out, err) = padsi.misc.exec_sync(args)
+        (status, _out, err) = misc.exec_sync(args)
         if status != 0:
             raise Exception(f"Could not move network interface {_with_netns(name, current_netns)} to the 'init' namespace: {err} (status: {status})")
 
     if new_netns:
         # move to the new namespace
         args = _ip_command(current_netns) + ["link", "set", "netns", new_netns, "dev", name]
-        (status, _out, err) = padsi.misc.exec_sync(args)
+        (status, _out, err) = misc.exec_sync(args)
         if status != 0:
             try:
                 interface_move_to_namespace(name, new_netns=str(current_netns))
@@ -258,7 +258,7 @@ def addr_exists(addr: ipaddress.IPv4Interface | ipaddress.IPv4Address, netns: st
     """
     netns_check_exists(netns)
     args = _ip_command(netns) + ["addr", "list"]
-    (status, out, _err) = padsi.misc.exec_sync(args)
+    (status, out, _err) = misc.exec_sync(args)
     if status != 0:
         raise Exception(f"Could not list network addresses in ns {netns if netns else 'init'}")
     iface = None
@@ -286,7 +286,7 @@ def addr_add(iface: str, addr: ipaddress.IPv4Interface, netns: str | None = None
             raise Exception(f"Can't add address '{str(addr)}' to {_with_netns(iface, netns)}: it is already used by {_with_netns(eiface, netns)}")
 
     args = _ip_command(netns) + ["addr", "add", str(addr), "dev", iface]
-    (status, _out, err) = padsi.misc.exec_sync(args)
+    (status, _out, err) = misc.exec_sync(args)
     if status != 0:
         raise Exception(f"Could not add address '{str(addr)}' to {_with_netns(iface, netns)}: {err}")
 
@@ -296,7 +296,7 @@ def addr_get(iface: str, netns: str | None = None) -> ipaddress.IPv4Interface | 
     Raise an exception if there is more than one IPv4 address associated to the interface.
     """
     args = _ip_command(netns) + ["addr", "show", iface]
-    (status, out, err) = padsi.misc.exec_sync(args)
+    (status, out, err) = misc.exec_sync(args)
     if status != 0:
         raise Exception(f"Could not get the network addresses in ns {netns if netns else 'init'} of interface '{iface}': {err}")
 
@@ -336,7 +336,7 @@ def veth_add(name: str, netns: str|None, peer_name: str, peer_netns: str):
         "name",
         peer_name,
     ]
-    (status, _out, err) = padsi.misc.exec_sync(args)
+    (status, _out, err) = misc.exec_sync(args)
     if status != 0:
         raise Exception(f"Could not create veth interfaces {_with_netns(name, netns)} <-> {_with_netns(peer_name, peer_netns)}: {err}")
 
@@ -346,7 +346,7 @@ def veth_add(name: str, netns: str|None, peer_name: str, peer_netns: str):
             args = ["ip", "-n", netns, "link", "set", peer_name, "netns", peer_netns]
         else:
             args = ["ip", "link", "set", peer_name, "netns", peer_netns]
-        (status, _out, err) = padsi.misc.exec_sync(args)
+        (status, _out, err) = misc.exec_sync(args)
         if status != 0:
             raise Exception(f"Could not move veth interface {_with_netns(peer_name, netns)} to {_with_netns(peer_name, peer_netns)}: {err}")
 
@@ -363,13 +363,13 @@ def bridge_add(name: str, addr: ipaddress.IPv4Interface, netns: str | None = Non
     try:
         # create bridge
         args = _ip_command(netns) + ["link", "add", name, "type", "bridge"]
-        (status, _out, err) = padsi.misc.exec_sync(args)
+        (status, _out, err) = misc.exec_sync(args)
         if status != 0:
             raise Exception(f"Could not add network bridge {_with_netns(name, netns)}: {err}")
 
         # configure addr
         args = _ip_command(netns) + ["addr", "add", str(addr), "dev", name]
-        (status, _out, err) = padsi.misc.exec_sync(args)
+        (status, _out, err) = misc.exec_sync(args)
         if status != 0:
             raise Exception(f"Could not set cidr of bridge {_with_netns(name, netns)}: {err}")
 
@@ -392,13 +392,13 @@ def tap_add(name: str, addr: ipaddress.IPv4Interface, netns: str | None = None, 
         args = _ip_command(netns) + ["tuntap", "add", "dev", name, "mode", "tap"]
         if user is not None:
             args += ["user", user]
-        (status, _out, err) = padsi.misc.exec_sync(args)
+        (status, _out, err) = misc.exec_sync(args)
         if status != 0:
             raise Exception(f"Could not add tap interface {_with_netns(name, netns)}: {err}")
 
         # configure addr
         args = _ip_command(netns) + ["addr", "add", str(addr), "dev", name]
-        (status, _out, err) = padsi.misc.exec_sync(args)
+        (status, _out, err) = misc.exec_sync(args)
         if status != 0:
             raise Exception(f"Could not set cidr of tap {_with_netns(name, netns)}: {err}")
 
@@ -433,6 +433,6 @@ def route_add_default(iface: str, gw_addr: ipaddress.IPv4Address | None, netns: 
             iface,
         ]
 
-    (status, _out, err) = padsi.misc.exec_sync(args)
+    (status, _out, err) = misc.exec_sync(args)
     if status != 0:
         raise Exception(f"Could not add default via {_with_netns(iface, netns)}: {err}")

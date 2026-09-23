@@ -34,7 +34,7 @@ import syslog
 from aiohttp import web
 from aiohttp.web_response import json_response
 
-import padsi.config
+from padsi import config
 from padsi.run import parse_vm_version, vm_proxy
 from padsi.run.admin_infra import AdminInfra
 from padsi.simple_comm import Client, Message, MessageType
@@ -46,7 +46,7 @@ class AdminServiceException(Exception):
 
 class AdminService:
     def __init__(self, config_dir:str, run_dir:str, logs_dir:str):
-        self._gconf=padsi.config.Configuration(config_dir)
+        self._gconf=config.Configuration(config_dir)
         self._run_dir=run_dir
         self._logs_dir=logs_dir
         user=pwd.getpwnam("padsi")
@@ -123,8 +123,8 @@ class AdminService:
             return web.Response(text=f"Invalid input ({e})", status=400)
 
         try:
-            vm: padsi.config.VirtualMachine | None = None
-            for usage in padsi.config.VMUsage:
+            vm: config.VirtualMachine | None = None
+            for usage in config.VMUsage:
                 vmu = self._gconf.get_vm(usage, vm_id)
                 if vmu is not None and vmu.is_user_allowed(self._uid):
                     vm = vmu
@@ -155,7 +155,7 @@ class AdminService:
         # analyse arguments
         try:
             data = await request.json()
-            vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
+            vm_id = config.strip_vm_id(data.get("vm-id"))
 
             message = data.get("message")
             action=data.get("action")
@@ -173,7 +173,7 @@ class AdminService:
         # do the job
         match action:
             case "create-dirs":
-                await vm_proxy.create_vm_dirs(self._call_system_service, vm_id, padsi.config.VMUsage.INSTALL)
+                await vm_proxy.create_vm_dirs(self._call_system_service, vm_id, config.VMUsage.INSTALL)
                 return json_response(None)
             case"import":
                 try:
@@ -216,7 +216,7 @@ class AdminService:
             merge = action == "merge"
             zone_name = data.get("zone")
             message = data.get("message")
-            vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
+            vm_id = config.strip_vm_id(data.get("vm-id"))
         except Exception as e: # noqa: BLE001
             return web.Response(text=f"Invalid input ({e})", status=400)
 
@@ -243,7 +243,7 @@ class AdminService:
             if action not in ("discard", "clean"):
                 raise AdminServiceException(f"Unknown action '{action}'")
             cleanup = action == "clean"
-            vm_id = padsi.config.strip_vm_id(data.get("vm-id"))
+            vm_id = config.strip_vm_id(data.get("vm-id"))
             force = data.get("force", False)
             vm_version=data.get("vm-version")
             zone_name = data.get("zone")
@@ -272,7 +272,7 @@ class AdminService:
         reply = await self._client.call_server(request)
         return None if reply is None else reply.data
 
-    async def run(self): #gconf:padsi.config.Configuration, run_dir_base:str, logs_dir_base:str):
+    async def run(self): #gconf:config.Configuration, run_dir_base:str, logs_dir_base:str):
         await self._httpd_start()
         self._client_task = asyncio.create_task(self._client.run())
 

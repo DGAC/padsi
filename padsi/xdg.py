@@ -32,7 +32,7 @@ import tempfile
 
 from PIL import Image, ImageDraw
 
-import padsi.config
+from padsi import config
 
 _debug=False
 
@@ -368,7 +368,7 @@ class DesktopEntry:
         image_with_border.save(tmp.name)
         return tmp
 
-    def customize_for_zone(self, zone:padsi.config.Zone, de_install_dir:str, icons_install_dir:str, icon_color:str|None,
+    def customize_for_zone(self, zone:config.Zone, de_install_dir:str, icons_install_dir:str, icon_color:str|None,
                            nodisplay:bool, user_de:bool) -> tuple[set[str],set[str]]:
         """Customize the desktop entry for the specified zone name and color
 

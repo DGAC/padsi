@@ -29,9 +29,9 @@ import os
 from dataclasses import dataclass
 from urllib import parse
 
-import padsi.run
 import requests.exceptions
 import requests_unixsocket
+from padsi.run import VMState
 
 
 @dataclass
@@ -260,7 +260,7 @@ def print_vm_status(status:VMStatus, zone_name:str|None, verbose:bool, use_json:
                         print(f"{indent*2}{event}")
 
     if not is_admin and len(base_versions)==0:
-        if status.vm_versions.base_staged is None or status.vm_versions.base_staged!=padsi.run.VMState.STOPPED:
+        if status.vm_versions.base_staged is None or status.vm_versions.base_staged!=VMState.STOPPED:
             print("No base VM version defined yet, use 'padsi-cli vm-install' to create one")
         else:
             print("No base VM version defined yet, use 'padsi-cli vm-publish' to publish the staged version")

@@ -32,7 +32,7 @@ import shutil
 import syslog
 import uuid
 
-import padsi.misc
+from padsi import misc
 from padsi.config import MountPoint, VirtualMachine, VMScript, VMUsage, Zone, tap_ip
 from padsi.simple_comm import Client, Message, MessageType
 
@@ -201,7 +201,7 @@ class VMManagementFiles:
         # create mountpoint config files
         try:
             mountpoints:dict[str,str]={}
-            host_user_xdg_subdirectories=padsi.misc.compute_user_xdg_subdirectories(self._uid)
+            host_user_xdg_subdirectories=misc.compute_user_xdg_subdirectories(self._uid)
             if self._vm_conf.os_variant=="windows":
                 # Windows (as MacOS) does not translate XDG directories but lures the user in the UI
                 vm_user_xdg_subdirectories={
@@ -216,9 +216,9 @@ class VMManagementFiles:
                 vm_user_xdg_subdirectories=host_user_xdg_subdirectories
 
             for mp in self._vm_conf.mount_points:
-                actual_sp=padsi.misc.expand_variables_in_string(mp.source_path, host_user_xdg_subdirectories)
+                actual_sp=misc.expand_variables_in_string(mp.source_path, host_user_xdg_subdirectories)
                 fsname=actual_sp.replace("/", "_")
-                actual_mp=padsi.misc.expand_variables_in_string(mp.mount_path, vm_user_xdg_subdirectories)
+                actual_mp=misc.expand_variables_in_string(mp.mount_path, vm_user_xdg_subdirectories)
                 mountpoints[fsname]=actual_mp
 
             with open(os.path.join(etc_dir, "mountpoints.txt"), "wt") as fd:

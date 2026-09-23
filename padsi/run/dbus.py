@@ -24,7 +24,7 @@ import syslog
 import uuid
 
 import nsbubble
-import padsi.config
+from padsi import config
 
 
 class DBusException(Exception):
@@ -49,7 +49,7 @@ def _get_host_dbus_socket_path() -> str:
 class ZoneDBusRouter:
     """Object to set up the mount namespace in which a DBus router proxy will run
     for the zone"""
-    def __init__(self, zone:padsi.config.Zone, logs_dir:str, options:list[padsi.config.ZoneOption], zone_dbus_socket_path:str, dbus_router_socket_path:str, run_dir:str):
+    def __init__(self, zone:config.Zone, logs_dir:str, options:list[config.ZoneOption], zone_dbus_socket_path:str, dbus_router_socket_path:str, run_dir:str):
         """Notes:
         - the host's session DBUS socket path is determined automatically
         - the zone_dbus_socket_path is the socket of the zone in the mount namespace of the namespace of the host
@@ -136,9 +136,9 @@ class ZoneDBusRouter:
         args=["/host/dbus-router", "--logfile", "/var/log/dbus-router.log",
               "/bubble/run/dbus-host.socket", "/bubble/run/dbus-zone.socket", os.path.join("/bubble/run/router", socket_path_fname)]
         for option in self._options:
-            if option.enabled and option.option_type==padsi.config.ZoneOptionType.SCREEN_SHARE:
+            if option.enabled and option.option_type==config.ZoneOptionType.SCREEN_SHARE:
                 args+=["--screenshare"]
-            elif option.enabled and option.option_type==padsi.config.ZoneOptionType.DESKTOP_NOTIFICATIONS:
+            elif option.enabled and option.option_type==config.ZoneOptionType.DESKTOP_NOTIFICATIONS:
                 args+=["--notifications"]
         ppath=os.environ.get("PYTHONPATH")
         extra_env=None if ppath is None else {

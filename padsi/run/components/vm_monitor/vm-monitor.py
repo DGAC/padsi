@@ -25,7 +25,7 @@ import time
 
 import psutil
 
-import padsi.run
+from padsi.run import VMState, VMVersion
 
 if len(sys.argv)!=6:
     syslog.syslog(syslog.LOG_ERR, f"Error: {__file__} was called with the wrong number of arguments: {sys.argv}")
@@ -38,9 +38,9 @@ qemu_pid=int(sys.argv[4])
 viewer_pid_arg=sys.argv[5]
 viewer_pid=int(viewer_pid_arg) if viewer_pid_arg!="NODISPLAY" else None
 
-vmversion=padsi.run.VMVersion.from_files(img_file, vars_file, infos_file)
+vmversion=VMVersion.from_files(img_file, vars_file, infos_file)
 try:
-    vmversion.set_state(padsi.run.VMState.RUNNING, "VM has been started")
+    vmversion.set_state(VMState.RUNNING, "VM has been started")
 except Exception as e: # noqa: BLE001
     syslog.syslog(syslog.LOG_ERR, f"Could not change the VM state to RUNNING: {e}")
     sys.exit(1)
@@ -66,7 +66,7 @@ while True:
 if qemu_proc is None:
     msg="VM could not start"
     syslog.syslog(syslog.LOG_ERR, msg)
-    vmversion.set_state(padsi.run.VMState.STOPPED, msg)
+    vmversion.set_state(VMState.STOPPED, msg)
     if viewer_proc is not None:
         viewer_proc.kill()
     sys.exit(0)
@@ -85,7 +85,7 @@ while True:
             # user stopped the viewer => discard what has been done
             msg="VM has been discarded"
             syslog.syslog(syslog.LOG_DEBUG, msg)
-            vmversion.set_state(padsi.run.VMState.DISCARDED, msg)
+            vmversion.set_state(VMState.DISCARDED, msg)
             qemu_proc.kill()
             sys.exit(0)
         else:
@@ -96,7 +96,7 @@ while True:
     if qemu_stopped:
         msg="VM has been stopped"
         syslog.syslog(syslog.LOG_DEBUG, msg)
-        vmversion.set_state(padsi.run.VMState.STOPPED, msg)
+        vmversion.set_state(VMState.STOPPED, msg)
         if viewer_proc is not None:
             viewer_proc.kill()
         sys.exit(0)

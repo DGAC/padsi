@@ -29,9 +29,7 @@ import os
 import syslog
 
 import nsbubble
-import padsi.config
-import padsi.network
-from padsi import fwlib
+from padsi import config, fwlib, network
 from padsi.simple_comm import Message, MessageType, Server
 
 from .components import dns, fw_logger, wayland_proxy, web_infra
@@ -44,7 +42,7 @@ class ZoneInfraException(Exception):
 
 class ZoneServer(Server):
     """Server which handles requests from the zone service"""
-    def __init__(self, zone_conf: padsi.config.Zone):
+    def __init__(self, zone_conf: config.Zone):
         super().__init__()
         self.zone_conf = zone_conf
 
@@ -65,8 +63,8 @@ class ZoneInfra(ZoneFoundations):
     """
     def __init__(
         self,
-        global_conf: padsi.config.Configuration,
-        zone_conf: padsi.config.Zone,
+        global_conf: config.Configuration,
+        zone_conf: config.Zone,
         uid: int,
         run_dir: str,
         logs_dir: str,
@@ -78,15 +76,15 @@ class ZoneInfra(ZoneFoundations):
         self._br_last_addr_index = 0  # last assigned address
         self._br_ip: ipaddress.IPv4Interface = self.get_next_unused_ip()  # IP address of the bridge
 
-        self._lower_veth = padsi.network.interface_create_name("lw", f"{zone_conf.name}-{uid}")
+        self._lower_veth = network.interface_create_name("lw", f"{zone_conf.name}-{uid}")
         self._lower_net: ipaddress.IPv4Network = lower_net
 
         self._web_infra_c: web_infra.WebInfra|None=None
         self._dns_c: dns.DNSServer|None=None
         self._wayland_proxy_c: wayland_proxy.WaylandProxy|None=None
 
-        self._fw_rules: list[padsi.config.FWRule]|None = None
-        self._resolv_rules: list[padsi.config.ResolvRule]|None = None
+        self._fw_rules: list[config.FWRule]|None = None
+        self._resolv_rules: list[config.ResolvRule]|None = None
 
         self._server: ZoneServer|None = None
         self._server_task: asyncio.Task|None = None
@@ -95,8 +93,8 @@ class ZoneInfra(ZoneFoundations):
 
     def _prepare_components(self):
         if self.zone_conf.network_enabled:
-            web_redirection_option = self.zone_conf.get_option(padsi.config.ZoneOptionType.WEB_REDIRECTION)
-            log_only = self.zone_conf.get_option(padsi.config.ZoneOptionType.NET_LOG_ONLY).enabled
+            web_redirection_option = self.zone_conf.get_option(config.ZoneOptionType.WEB_REDIRECTION)
+            log_only = self.zone_conf.get_option(config.ZoneOptionType.NET_LOG_ONLY).enabled
 
             # Web infra (Web proxy or Web redirection option), must be first
             if len(self.zone_conf.web_proxies)>0 or web_redirection_option.enabled:
@@ -121,7 +119,7 @@ class ZoneInfra(ZoneFoundations):
                 self._web_infra_c=comp
 
             # DNS service
-            opt=padsi.config.BlockListOption.downcast(self.zone_conf.get_option(padsi.config.ZoneOptionType.DNS_BLOCKLIST))
+            opt=config.BlockListOption.downcast(self.zone_conf.get_option(config.ZoneOptionType.DNS_BLOCKLIST))
             fw_denied_spec=fwlib.LogSpec(self.syslog_prefix, self.global_conf.firewall_logs_group)
             if self.zone_conf.has_dns_resolution:
                 comp = dns.DNSServer(
@@ -140,7 +138,7 @@ class ZoneInfra(ZoneFoundations):
                 if self._web_infra_c is not None:
                     rules=[]
                     for name in ("wpad.", "proxy."):
-                        rule=padsi.config.ResolvRule(action="allow", descr=f"Allow to {name}",
+                        rule=config.ResolvRule(action="allow", descr=f"Allow to {name}",
                             endpoint=fwlib.Endpoint.from_repr(name), resolv=[f"A/3600/{self._br_ip.ip}"])
                         rules.append(rule)
                     comp.add_extra_rules("web-proxy", rules)
@@ -180,7 +178,7 @@ class ZoneInfra(ZoneFoundations):
         return self._lower_net
 
     @property
-    def fw_rules(self) -> list[padsi.config.FWRule] | None:
+    def fw_rules(self) -> list[config.FWRule] | None:
         """Consolidated FW rules"""
         if self._fw_rules is None:
             self._fw_rules = []
@@ -191,7 +189,7 @@ class ZoneInfra(ZoneFoundations):
         return self._fw_rules
 
     @property
-    def resolv_rules(self) -> list[padsi.config.ResolvRule] | None:
+    def resolv_rules(self) -> list[config.ResolvRule] | None:
         """Consolidated resolv. rules"""
         if self._resolv_rules is None:
             self._resolv_rules = []
@@ -233,7 +231,7 @@ class ZoneInfra(ZoneFoundations):
 
     def compute_mount_points(self) -> set[nsbubble.MountPoint]:
         mounts=super().compute_mount_points()
-        web_redirection_option = self.zone_conf.get_option(padsi.config.ZoneOptionType.WEB_REDIRECTION)
+        web_redirection_option = self.zone_conf.get_option(config.ZoneOptionType.WEB_REDIRECTION)
         if web_redirection_option.enabled:
             # add access to notifications service via its Unix socket
             mounts.add(nsbubble.MountPoint(f"/run/user/{self.uid}/padsi-notify.sock", "/bubble/run/padsi-notify.sock", readonly=False))
@@ -276,13 +274,13 @@ class ZoneInfra(ZoneFoundations):
     def get_next_unused_ip(self) -> ipaddress.IPv4Interface:
         try:
             self._br_last_addr_index += 1
-            a = padsi.config.users_br_network[self._br_last_addr_index]
-            addr = ipaddress.IPv4Interface(f"{a}/{padsi.config.users_br_network.prefixlen}")
+            a = config.users_br_network[self._br_last_addr_index]
+            addr = ipaddress.IPv4Interface(f"{a}/{config.users_br_network.prefixlen}")
             return addr
         except Exception: # noqa: BLE001
             raise ZoneInfraException(f"No more available IP in the network associated to zone '{self.zone_conf.name}'")
 
-    def add_dns_resolution_rules(self, context: str, rules: list[padsi.config.ResolvRule]):
+    def add_dns_resolution_rules(self, context: str, rules: list[config.ResolvRule]):
         """Add some context specific DNS rules"""
         if self._dns_c is not None:
             self._dns_c.add_extra_rules(context, rules)

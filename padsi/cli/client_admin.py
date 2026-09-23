@@ -28,8 +28,7 @@ from __future__ import annotations
 import os
 import pwd
 
-import padsi.config
-import padsi.run
+from padsi import config, run
 
 from client import BaseClient, VMStatus
 
@@ -73,13 +72,13 @@ class ClientAdmin(BaseClient):
         }
         return self.put("/vm", data)
 
-    def vm_save(self, conf:padsi.config.Configuration, vm_id:str, vm_name:str, ar_file:str, depend_at:str|None):
+    def vm_save(self, conf:config.Configuration, vm_id:str, vm_name:str, ar_file:str, depend_at:str|None):
         """Save a VM version and (some) of its dependencies to a TAR archive which
         file name is specified via ar_file
         """
         # get the VM configuration
-        vm_conf:padsi.config.VirtualMachine|None=None
-        for vm in conf.get_vms_for_usage(padsi.config.VMUsage.RUN):
+        vm_conf:config.VirtualMachine|None=None
+        for vm in conf.get_vms_for_usage(config.VMUsage.RUN):
             if vm.id==vm_id:
                 vm_conf=vm
                 break
@@ -87,12 +86,12 @@ class ClientAdmin(BaseClient):
             raise Exception(f"No VM with ID '{vm_id}'")
 
         # analyse passed VM name (nickname) and get the VM version
-        (_userid, vtype, vnum, staged, _nickname)=padsi.run.parse_vm_version(vm_name)
-        vmf=padsi.run.VMFiles(vm_conf.directory)
+        (_userid, vtype, vnum, staged, _nickname)=run.parse_vm_version(vm_name)
+        vmf=run.VMFiles(vm_conf.directory)
         if staged:
-            vm_version=vmf.get_staged(padsi.run.VMVersionType.BASE)
+            vm_version=vmf.get_staged(run.VMVersionType.BASE)
         else:
-            if vtype==padsi.run.VMVersionType.BASE:
+            if vtype==run.VMVersionType.BASE:
                 if vnum is None:
                     raise Exception("Could not identify VM's version number")
                 vm_version=vmf.get_base_version(vnum)
@@ -103,26 +102,26 @@ class ClientAdmin(BaseClient):
             raise Exception("Could not find specified VM version")
         if not vm_version.is_complete:
             raise Exception("Specified VM version is not compelete (some files are missing)")
-        if vm_version.state==padsi.run.VMState.RUNNING:
+        if vm_version.state==run.VMState.RUNNING:
             raise Exception("Specified VM version is currently being used")
 
         depend_at_vmv=None
         if depend_at is not None:
-            (_userid, vtype, vnum, staged, _nickname)=padsi.run.parse_vm_version(depend_at)
-            if vtype==padsi.run.VMVersionType.BASE and vnum is not None:
+            (_userid, vtype, vnum, staged, _nickname)=run.parse_vm_version(depend_at)
+            if vtype==run.VMVersionType.BASE and vnum is not None:
                 depend_at_vmv=vmf.get_base_version(vnum)
-        padsi.run.VMArchive.create(vm_conf, vm_version, ar_file, depend_at_vmv)
+        run.VMArchive.create(vm_conf, vm_version, ar_file, depend_at_vmv)
 
-    def vm_load(self, conf:padsi.config.Configuration, ar_file:str, vm_id:str|None, message:str|None):
+    def vm_load(self, conf:config.Configuration, ar_file:str, vm_id:str|None, message:str|None):
         """Integrate a VM version from its files which have been uploaded to the staged/<load_id> directory
         """
-        vm_ar=padsi.run.VMArchive(ar_file)
+        vm_ar=run.VMArchive(ar_file)
         # get the VM configuration
         if vm_id is not None:
             vm_ar.vm_id=vm_id
 
-        vm_conf:padsi.config.VirtualMachine|None=None
-        for vm in conf.get_vms_for_usage(padsi.config.VMUsage.RUN):
+        vm_conf:config.VirtualMachine|None=None
+        for vm in conf.get_vms_for_usage(config.VMUsage.RUN):
             if vm.id==vm_ar.vm_id:
                 vm_conf=vm
                 break

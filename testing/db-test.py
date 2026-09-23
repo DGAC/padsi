@@ -24,7 +24,7 @@ import os
 import tempfile
 import unittest
 
-import padsi.run.vm.db as db
+from padsi.run.vm import db
 
 _db_schema={
     1: [
@@ -83,7 +83,7 @@ class DBTest(unittest.TestCase):
             self.assertEqual(len(dbo.files), 1) # DB file only
         finally:
             testdir.cleanup()
-    
+
 
 if __name__=='__main__':
     unittest.main()

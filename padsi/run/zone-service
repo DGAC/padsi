@@ -35,7 +35,7 @@ from aiohttp import (
 )
 from aiohttp.web_response import json_response
 
-import padsi.config
+from padsi import config
 from padsi.simple_comm import Client, Message
 
 _debug=False
@@ -46,7 +46,7 @@ class ZoneServiceException(Exception):
 
 class PadsiZoneService:
     """Implementation of the zone service's REST API"""
-    def __init__(self, gconf:padsi.config.Configuration, zone_name:str, zone_infra_run_dir:str):
+    def __init__(self, gconf:config.Configuration, zone_name:str, zone_infra_run_dir:str):
         self._gconf=gconf
         self._zone_conf=self._gconf.get_zone(zone_name)
         self._zone_infra_run_dir=zone_infra_run_dir
@@ -314,7 +314,7 @@ class PadsiZoneService:
 
 async def main(config_dir:str, zone_name:str, zone_infra_run_dir:str):
     try:
-        gconf=padsi.config.Configuration(config_dir)
+        gconf=config.Configuration(config_dir)
         zoneservice=PadsiZoneService(gconf, zone_name, zone_infra_run_dir)
         await zoneservice.run()
     except Exception as e: # noqa: BLE001

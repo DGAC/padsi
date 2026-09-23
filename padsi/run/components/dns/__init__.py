@@ -31,8 +31,7 @@ import tempfile
 from itertools import groupby
 
 import nsbubble
-import padsi.config
-from padsi import fwlib
+from padsi import config, fwlib
 
 from .. import Component
 
@@ -47,8 +46,8 @@ class DNSServer(Component):
 
     def __init__(
         self,
-        resolv_rules: list[padsi.config.ResolvRule] | None,
-        resolvers: list[padsi.config.network.DNSEndpoint] | None,
+        resolv_rules: list[config.ResolvRule] | None,
+        resolvers: list[config.network.DNSEndpoint] | None,
         log_denied_spec: fwlib.LogSpec | None = None,
         log_only: bool = False,
         denied_fallback_ip: str | None = None,
@@ -61,8 +60,8 @@ class DNSServer(Component):
           if [], then the default resolvers (/etc/resolv.conf) will be used
         - log_only: log requests, don't actually block deny requests
         """
-        self._resolv_rules_conf: list[padsi.config.ResolvRule] = resolv_rules if resolv_rules is not None else []
-        self._resolv_rules_extra: dict[str, list[padsi.config.ResolvRule]] = {}  # key=a specific context, value= list of extra rules for that usage
+        self._resolv_rules_conf: list[config.ResolvRule] = resolv_rules if resolv_rules is not None else []
+        self._resolv_rules_extra: dict[str, list[config.ResolvRule]] = {}  # key=a specific context, value= list of extra rules for that usage
         self._tmpdir: tempfile.TemporaryDirectory | None = None
         self._resolv_rules_file: str | None = None
         self._dns_fw_config_file: str | None = None
@@ -150,7 +149,7 @@ class DNSServer(Component):
         with open(self._dns_fw_config_file, "wt") as fd:
             fd.write(json.dumps(data))
 
-    def add_extra_rules(self, context: str, rules: list[padsi.config.ResolvRule]):
+    def add_extra_rules(self, context: str, rules: list[config.ResolvRule]):
         self._resolv_rules_extra[context] = rules
         self._recreate_resolv_rules()
 

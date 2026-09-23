@@ -40,12 +40,11 @@ from typing import Any
 import colorama  # import Fore, Style
 
 try:
-    import padsi.config
+    from padsi import config, misc
 except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))) # pyright: ignore
-    import padsi.config
+    from padsi import config, misc
 
-import padsi.misc
 from padsi.config import ResolvRule, TrafficShaper
 from padsi.config.network import FWRule
 from padsi.fwlib import Endpoint, NetFlow
@@ -224,8 +223,8 @@ if "cmde" not in args:
 
 _indent="    "
 
-def load_config() -> padsi.config.Configuration:
-    conf=padsi.config.Configuration(args["config_dir"])
+def load_config() -> config.Configuration:
+    conf=config.Configuration(args["config_dir"])
     return conf
 
 def _get_traffic_shaper_descr(tsp: TrafficShaper|None) -> str:
@@ -240,7 +239,7 @@ def _get_traffic_shaper_descr(tsp: TrafficShaper|None) -> str:
             case _:
                 return f"VPN {tsp.name} ({tsp.ts_type})"
 
-def print_zones(conf:padsi.config.Configuration, verbose:bool, use_json:bool):
+def print_zones(conf:config.Configuration, verbose:bool, use_json:bool):
     user_zones={zone.name: None if zone.friendly_name==zone.name else zone.friendly_name for zone in conf.zones}
     if use_json:
         data={
@@ -304,9 +303,9 @@ def print_status(status:GlobalStatus, zone_name:str|None, tsp_name: str|None, ve
                             print(f"{'' if zonestatus.ready else 'not ready, '}running VM: {zonestatus.vm_snap}/{zonestatus.vm_nickname}, ({zonestatus.vm_conf})")
 
 
-def print_vms(conf:padsi.config.Configuration, verbose:bool, use_json:bool):
-    all_vms:dict[str,set[padsi.config.VirtualMachine]]={}
-    for usage in padsi.config.VMUsage:
+def print_vms(conf:config.Configuration, verbose:bool, use_json:bool):
+    all_vms:dict[str,set[config.VirtualMachine]]={}
+    for usage in config.VMUsage:
         for vm in conf.get_vms_for_usage(usage):
             if vm.id not in all_vms:
                 all_vms[vm.id]=set()
@@ -320,7 +319,7 @@ def print_vms(conf:padsi.config.Configuration, verbose:bool, use_json:bool):
         for vm in vms:
             if vm.is_user_allowed(get_user_id()):
                 vmdata["actions"].append(vm.usage.value)
-                if vm.usage==padsi.config.VMUsage.RUN:
+                if vm.usage==config.VMUsage.RUN:
                     vmdata["description"]=vm.description # pyright: ignore
                     zones:list[str]=[]
                     for zname in conf.get_zones_names():
@@ -478,13 +477,13 @@ def _compute_until_timestamp(until:str|None):
         return datetime.datetime.now(datetime.timezone.utc)
     return _parse_time_spec(until)
 
-def _get_logs_dirs(object:padsi.config.Zone|padsi.config.AdminNS|None, vms:list[str]|None) -> dict[str|None,str]:
+def _get_logs_dirs(object:config.Zone|config.AdminNS|None, vms:list[str]|None) -> dict[str|None,str]:
     """Get a list of log directories indexed by VM name (<VM ID>:<VM nickname>) or None if no VM"""
     # get top logs directory
     uid=get_user_id()
-    if isinstance(object, padsi.config.Zone):
+    if isinstance(object, config.Zone):
         logs_dir=conf.get_zone_logs_dir(object.name, uid)
-    elif isinstance(object, padsi.config.AdminNS):
+    elif isinstance(object, config.AdminNS):
         logs_dir=conf.get_admin_ns_logs_dir(object.name)
     elif object is None:
         logs_dir=conf.logs_dir
@@ -551,7 +550,7 @@ def _parse_dns_log(logs_file:str, vm: str|None, show_allowed: bool, show_blocked
     except Exception as e:
         raise Exception(f"Failed to read zone's resolution logs file {logs_file}: {str(e)}")
 
-def get_dns_usage(show_allowed: bool, show_blocked:bool, object:padsi.config.Zone|padsi.config.AdminNS|None,
+def get_dns_usage(show_allowed: bool, show_blocked:bool, object:config.Zone|config.AdminNS|None,
     since:str|None, until:str|None, vms:list[str]|None) -> list[EventsGroup]:
     if object is None:
         return []
@@ -640,7 +639,7 @@ def _parse_firewall_log(logs_dir:str, vm: str|None, show_allowed: bool, show_blo
                     raise Exception(f"Failed to read zone's firewall logs file {logs_file}: {str(e)}")
     return lgroups
 
-def get_blocked_firewall_usage(object:padsi.config.Zone|padsi.config.AdminNS|None,
+def get_blocked_firewall_usage(object:config.Zone|config.AdminNS|None,
     since:str|None, until:str|None, vms:list[str]|None) -> list[EventsGroup]:
     since_ts=_compute_since_timestamp(since)
     until_ts=_compute_until_timestamp(until)
@@ -771,7 +770,7 @@ def _parse_proxy_log(logs_dir:str, vm: str|None, show_allowed: bool, show_failed
     return ProxyEventsGroup.compact_groups(lgroups)
 
 def get_proxy_usage(show_allowed: bool, show_failed:bool, show_blocked:bool,
-    object:padsi.config.Zone|padsi.config.AdminNS|None, since:str|None, until:str|None, vms:list[str]|None) -> list[EventsGroup]:
+    object:config.Zone|config.AdminNS|None, since:str|None, until:str|None, vms:list[str]|None) -> list[EventsGroup]:
     since_ts=_compute_since_timestamp(since)
     until_ts=_compute_until_timestamp(until)
     logs_dirs=_get_logs_dirs(object, vms)
@@ -781,7 +780,7 @@ def get_proxy_usage(show_allowed: bool, show_failed:bool, show_blocked:bool,
         lgroups+=_parse_proxy_log(ldir, vm, show_allowed, show_failed, show_blocked, since_ts, until_ts)
     return lgroups
 
-def print_user_zone_infos(gconf:padsi.config.Configuration, zone:padsi.config.Zone, verbose:bool, use_json:bool):
+def print_user_zone_infos(gconf:config.Configuration, zone:config.Zone, verbose:bool, use_json:bool):
     if use_json:
         data=zone.serialize()
         print(f"{json.dumps(data, indent=4)}")
@@ -850,7 +849,7 @@ def print_user_zone_infos(gconf:padsi.config.Configuration, zone:padsi.config.Zo
                         print(f"{_indent}{_format_rule(rule)}")
 
     # runnable VMs
-    vms:list[padsi.config.VirtualMachine]=[]
+    vms:list[config.VirtualMachine]=[]
     for vmid in zone.get_virtual_machine_ids():
         vm=zone.get_virtual_machine(vmid)
         if vm is not None and vm.is_user_allowed(get_user_id()):
@@ -878,9 +877,9 @@ def print_user_zone_infos(gconf:padsi.config.Configuration, zone:padsi.config.Zo
     czones.sort()
     print(f"{_indent}copied data can be pasted into zones: {', '.join(czones)}")
 
-def print_net_access(conf:padsi.config.Configuration, endpoint:str, text_match:bool, use_json:bool):
+def print_net_access(conf:config.Configuration, endpoint:str, text_match:bool, use_json:bool):
     jdata={}
-    def _add_zone_rule(zone:padsi.config.Zone, rule:FWRule|ResolvRule, proxy:padsi.config.Proxy|None=None):
+    def _add_zone_rule(zone:config.Zone, rule:FWRule|ResolvRule, proxy:config.Proxy|None=None):
         rdata={
             "action": rule.action,
             "descr": rule.descr,
@@ -1031,13 +1030,13 @@ def prepare_extra_isos(resources:list[str]|None) -> tuple[list[str],str|None]:
         for fname in resources +  packages:
             if not os.path.isabs(fname):
                 fname=os.path.realpath(fname)
-            if padsi.misc.is_iso_image(fname):
+            if misc.is_iso_image(fname):
                 res1.append(fname)
             else:
                 files.append(fname)
         if len(files)>0:
             res2=tempfile.mkstemp(".iso")[1]
-            padsi.misc.generate_iso_image(files, "Resources", res2)
+            misc.generate_iso_image(files, "Resources", res2)
     except Exception as e:
         raise Exception(f"Error: {str(e)}")
     return (res1, res2)

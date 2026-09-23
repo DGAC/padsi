@@ -29,8 +29,7 @@ import os
 import tempfile
 
 import nsbubble
-import padsi.config
-from padsi import fwlib
+from padsi import config, fwlib
 
 from .. import Component
 
@@ -41,7 +40,7 @@ class StaticFirewallException(Exception):
 class StaticFirewall(Component):
     """Configure a bubble's netfilter firewall"""
 
-    def __init__(self, fw_rules:list[padsi.config.FWRule], log_denied_spec:fwlib.LogSpec|None=None, log_only:bool=False):
+    def __init__(self, fw_rules:list[config.FWRule], log_denied_spec:fwlib.LogSpec|None=None, log_only:bool=False):
         """program to set some pre-defined firewall rules
         """
         self._fw_rules=fw_rules

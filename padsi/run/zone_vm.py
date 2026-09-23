@@ -35,8 +35,7 @@ import tempfile
 import time
 
 import nsbubble
-import padsi.config
-from padsi import fwlib
+from padsi import config, fwlib
 from padsi.misc import compute_user_xdg_subdirectories, expand_variables_in_string
 
 from .components import dhcp, dns, fw_logger, usbredir, virtiofs, web_infra
@@ -53,7 +52,7 @@ from .zone_userfiles import ZoneUserFiles
 _debug = True
 
 class PadsiViewer(nsbubble.vm.Viewer):
-    def __init__(self, vm_conf: padsi.config.VirtualMachine, padsi_install_dir: str, nickname: str|None):
+    def __init__(self, vm_conf: config.VirtualMachine, padsi_install_dir: str, nickname: str|None):
         self._vm_conf = vm_conf
         self._nickname = nickname
         self._padsi_install_dir = padsi_install_dir
@@ -96,25 +95,25 @@ class PadsiViewer(nsbubble.vm.Viewer):
                 os_info
             ]
 
-def _create_proxy(zone_conf:padsi.config.Zone, vm_conf: padsi.config.VirtualMachine, ip_address:ipaddress.IPv4Interface|None) -> padsi.config.Proxy|None:
+def _create_proxy(zone_conf:config.Zone, vm_conf: config.VirtualMachine, ip_address:ipaddress.IPv4Interface|None) -> config.Proxy|None:
     """Create a dedicated proxy conf. for the VM which reroutes to the zone's proxy and blocks denied traffic
     """
     if vm_conf.network is None or ip_address is None:
         return None
 
     next_hop=f"{ip_address.ip}:3128"
-    fw_rules:list[padsi.config.FWRule]=[]
+    fw_rules:list[config.FWRule]=[]
     if vm_conf.network.fw_rules is not None:
         fw_rules=[rule for rule in vm_conf.network.fw_rules if rule.action!="allow"]
 
-    resolv_rules:list[padsi.config.ResolvRule]=[]
+    resolv_rules:list[config.ResolvRule]=[]
     if vm_conf.network.resolv_rules is not None:
         # only consider block rules, allow rules are controled by the zone in which the VM is running
         resolv_rules=[rule for rule in vm_conf.network.resolv_rules if rule.action!="allow"]
     # pass through, traffic will be filtered by the zone's proxy
-    resolv_rules.append(padsi.config.ResolvRule("allow", None, fwlib.Endpoint.from_repr("*")))
+    resolv_rules.append(config.ResolvRule("allow", None, fwlib.Endpoint.from_repr("*")))
 
-    return padsi.config.Proxy(next_hop, fw_rules, resolv_rules, "Proxy for zone's proxy")
+    return config.Proxy(next_hop, fw_rules, resolv_rules, "Proxy for zone's proxy")
 
 class ZoneVMException(Exception):
     pass
@@ -123,8 +122,8 @@ class ZoneVM(ZoneFoundations):
     """Object to set up and configure a zone in which a (single) VM will run
     If the VM's usage is INSTALL or UPPDATE, then only the zone's network settings are used, not the zone' mount points
     """
-    def __init__(self, global_conf: padsi.config.Configuration, zone_conf: padsi.config.Zone, uid: int, run_dir: str,
-        logs_dir: str, zone_infra: ZoneInfra|None, zuf: ZoneUserFiles, vm_conf: padsi.config.VirtualMachine,
+    def __init__(self, global_conf: config.Configuration, zone_conf: config.Zone, uid: int, run_dir: str,
+        logs_dir: str, zone_infra: ZoneInfra|None, zuf: ZoneUserFiles, vm_conf: config.VirtualMachine,
         vm_version: VMVersion, vmm: VMManagementFiles, ip_address: ipaddress.IPv4Interface|None, gid: int,
         boot_iso: str|None = None, extra_isos: list[str]|None = None, mtu: int|None = None):
         logs_vm_name=vm_version.nickname if vm_version.nickname is not None else str(vm_version).replace("/", "_")
@@ -138,7 +137,7 @@ class ZoneVM(ZoneFoundations):
         self._vm_conf = vm_conf
         self._gid = gid
         self._ip_address=ip_address
-        self._boot_iso = boot_iso if vm_conf.usage == padsi.config.VMUsage.INSTALL else None
+        self._boot_iso = boot_iso if vm_conf.usage == config.VMUsage.INSTALL else None
         self._extra_isos = extra_isos
         self._vm_v = vm_version
         self._vmm = vmm
@@ -163,7 +162,7 @@ class ZoneVM(ZoneFoundations):
         self._prepare_components()
 
     def _prepare_components(self):
-        log_only = self.zone_conf.get_option(padsi.config.ZoneOptionType.NET_LOG_ONLY).enabled
+        log_only = self.zone_conf.get_option(config.ZoneOptionType.NET_LOG_ONLY).enabled
 
         if self._vm_conf.specs.net_type is not None:
             # Web infra (Web proxy or Web redirection option)
@@ -172,7 +171,7 @@ class ZoneVM(ZoneFoundations):
                 direct_rules=self.zone_conf.fw_rules
                 if self.zone_conf.resolv_rules is not None:
                     direct_rules=direct_rules+self.zone_conf.resolv_rules if direct_rules is not None else self.zone_conf.resolv_rules
-                comp = web_infra.WebInfra(ipaddress.IPv4Interface(padsi.config.tap_ip),
+                comp = web_infra.WebInfra(ipaddress.IPv4Interface(config.tap_ip),
                     [proxy] if proxy is not None else None,
                     False, # always disable web redirection (useless feature in a VM)
                     direct_rules # pyright: ignore
@@ -191,7 +190,7 @@ class ZoneVM(ZoneFoundations):
                 else:
                     resolv_rules=self._vm_conf.network.resolv_rules.copy() if self._vm_conf.network.resolv_rules is not None else []
                     resolv_rules+=self._z_infra.resolv_rules
-                resolver = padsi.config.network.DNSEndpoint.from_spec(str(self._z_infra.bridge_ip.ip)) # the resolver is the DNS server of the associated infra
+                resolver = config.network.DNSEndpoint.from_spec(str(self._z_infra.bridge_ip.ip)) # the resolver is the DNS server of the associated infra
                 comp = dns.DNSServer(resolv_rules, [resolver], log_denied_spec=self._firewall_denied_spec, log_only=log_only)
                 self.add_component(comp)
                 self._dns_c=comp
@@ -199,19 +198,19 @@ class ZoneVM(ZoneFoundations):
                 if self._web_infra_c is not None:
                     rules=[]
                     for name in ("wpad.", "proxy."):
-                        rule=padsi.config.ResolvRule(action="allow", descr=f"Allow VM to {name}",
-                            endpoint=fwlib.Endpoint.from_repr(name), resolv=[f"A/3600/{padsi.config.tap_ip}"])
+                        rule=config.ResolvRule(action="allow", descr=f"Allow VM to {name}",
+                            endpoint=fwlib.Endpoint.from_repr(name), resolv=[f"A/3600/{config.tap_ip}"])
                         rules.append(rule)
                     comp.add_extra_rules("web-proxy", rules)
 
             # DHCP server
             comp = dhcp.DHCPServer(
                 interfaces=["tapvm"],
-                server_ip=ipaddress.IPv4Interface(f"{padsi.config.tap_ip}/24"),
-                pool_start=padsi.config.vm_ip,
-                pool_end=padsi.config.vm_ip,
-                resolver_ips=[padsi.config.tap_ip],
-                router_ips=[padsi.config.tap_ip],
+                server_ip=ipaddress.IPv4Interface(f"{config.tap_ip}/24"),
+                pool_start=config.vm_ip,
+                pool_end=config.vm_ip,
+                resolver_ips=[config.tap_ip],
+                router_ips=[config.tap_ip],
                 mtu=self.net_mtu
             )
             if _debug:
@@ -222,18 +221,18 @@ class ZoneVM(ZoneFoundations):
             # static FW
             if self._z_infra is not None: # zone has some networking capabilities
                 fw_rules=[] if self._z_infra.fw_rules is None else self._z_infra.fw_rules
-                fw_rules.append(padsi.config.FWRule(
+                fw_rules.append(config.FWRule(
                     "allow",
                     "Web proxy access",
                     fwlib.Endpoint.from_repr(f"{self._z_infra.bridge_ip.ip} ^ tcp ^ 3128"),
-                    padsi.config.FWRuleChain.OUTPUT,
+                    config.FWRuleChain.OUTPUT,
                 ))
-                if self.zone_conf.get_option(padsi.config.ZoneOptionType.INTER_VM_NET).enabled:
-                    fw_rules.append(padsi.config.FWRule(
+                if self.zone_conf.get_option(config.ZoneOptionType.INTER_VM_NET).enabled:
+                    fw_rules.append(config.FWRule(
                         "allow",
                         "Inter VM communications",
                         fwlib.Endpoint.from_repr(f"{self._z_infra.bridge_ip.network}"),
-                        padsi.config.FWRuleChain.FORWARD,
+                        config.FWRuleChain.FORWARD,
                     ))
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created static FW component for VM, {fw_rules=}")
@@ -245,7 +244,7 @@ class ZoneVM(ZoneFoundations):
                 self.add_component(comp)
 
         # virtiofs component for the VM management's shared directory
-        mp=padsi.config.MountPoint(self._vmm.management_files_dir, "padsi-agent", True,
+        mp=config.MountPoint(self._vmm.management_files_dir, "padsi-agent", True,
             require_abs_mount_path=False)
         comp = virtiofs.VirtioFSServer(mp)
         self.add_component(comp, False)
@@ -258,7 +257,7 @@ class ZoneVM(ZoneFoundations):
             for mp in self._vm_conf.mount_points:
                 actual_mp = expand_variables_in_string(mp.mount_path, user_xdg_subdirectories)
                 actual_sp = expand_variables_in_string(mp.source_path, user_xdg_subdirectories)
-                mp=padsi.config.MountPoint(actual_sp, actual_mp, mp.read_only,
+                mp=config.MountPoint(actual_sp, actual_mp, mp.read_only,
                     require_abs_mount_path=False)
                 comp = virtiofs.VirtioFSServer(mp, self._zuf.zone_home_dir)
                 self.add_component(comp, False)
@@ -366,7 +365,7 @@ class ZoneVM(ZoneFoundations):
             return False
         (host_tmp, bubble_dir) = self.api.create_shared_tempory_directory()
         pid = self.api.start_process(
-            ["ssh-keyscan", "-q", "-T", "1", str(padsi.config.vm_ip)],
+            ["ssh-keyscan", "-q", "-T", "1", str(config.vm_ip)],
             ignore_status=False,
             child_stdout_file=os.path.join(bubble_dir, "out"),
             child_stderr_file=os.path.join(bubble_dir, "err"),
@@ -538,7 +537,7 @@ class ZoneVM(ZoneFoundations):
             raise
 
     @property
-    def vm_conf(self) -> padsi.config.VirtualMachine:
+    def vm_conf(self) -> config.VirtualMachine:
         return self._vm_conf
 
     @property
@@ -574,7 +573,7 @@ class ZoneVM(ZoneFoundations):
         """Get the PID of the VM viewer in the host PID namespace"""
         return self._vm_viewer_host_pid
 
-    def add_dns_resolution_rules(self, context: str, rules: list[padsi.config.ResolvRule]):
+    def add_dns_resolution_rules(self, context: str, rules: list[config.ResolvRule]):
         """Add some context specific DNS rules"""
         if self._dns_c is not None:
             self._dns_c.add_extra_rules(context, rules)
@@ -589,12 +588,12 @@ def zone_vm_setup(net_bubble_netns: str, net_bubble_init_pid: int, log_denied_sp
         # allow programs in the zone's bubble to communicate with the VM
         fw_zone_ns.flow_set_policy(
             fwlib.FlowType.FILTER_OUTPUT,
-            fwlib.NetFlow.from_repr(f"*>>{padsi.config.vm_ip}"),
+            fwlib.NetFlow.from_repr(f"*>>{config.vm_ip}"),
             fwlib.Policy.ALLOW,
         )
 
         # allow programs in all the bubbles of the same zone to connect to the VM using DNAT
-        fw_zone_ns.add_dnat(padsi.config.vm_ip, in_iface=external_zone_iface)
+        fw_zone_ns.add_dnat(config.vm_ip, in_iface=external_zone_iface)
     finally:
         if ns_nzone is not None:
             nsbubble.named_netns_remove(net_bubble_netns)

@@ -27,10 +27,9 @@ import subprocess
 import syslog
 
 import nsbubble
-import padsi.network
-from padsi import fwlib
-from padsi.fwlib.netflow import Endpoint
+from padsi import fwlib, network
 from padsi.config.trafficshaper import TrafficShaper
+from padsi.fwlib.netflow import Endpoint
 
 from .components import Component
 
@@ -57,22 +56,22 @@ def network_infra_setup(
         ns_nzone = nsbubble.named_netns_create(net_bubble_netns, net_bubble_init_pid)
 
         # network namespace and internal bridge
-        padsi.network.bridge_add(net_bridge_name, net_bridge_ip, ns_nzone)
-        padsi.network.interface_set_up("lo", True, ns_nzone)
+        network.bridge_add(net_bridge_name, net_bridge_ip, ns_nzone)
+        network.interface_set_up("lo", True, ns_nzone)
 
         # veth to route to the host
         veth_zone = external_zone_iface
-        padsi.network.veth_add(veth_iface, lower_net_ns, veth_zone, ns_nzone)
+        network.veth_add(veth_iface, lower_net_ns, veth_zone, ns_nzone)
 
         addr_in_init_ns = ipaddress.IPv4Interface(f"{lower_net[1]}/{lower_net.prefixlen}")
         addr_in_infra_ns = ipaddress.IPv4Interface(f"{lower_net[2]}/{lower_net.prefixlen}")
 
-        padsi.network.addr_add(veth_iface, addr_in_init_ns, lower_net_ns)
-        padsi.network.interface_set_up(veth_iface, True, lower_net_ns, mtu)
+        network.addr_add(veth_iface, addr_in_init_ns, lower_net_ns)
+        network.interface_set_up(veth_iface, True, lower_net_ns, mtu)
 
-        padsi.network.addr_add(veth_zone, addr_in_infra_ns, ns_nzone)
-        padsi.network.interface_set_up(veth_zone, True, ns_nzone, mtu)
-        padsi.network.route_add_default(veth_zone, addr_in_init_ns.ip, ns_nzone)
+        network.addr_add(veth_zone, addr_in_infra_ns, ns_nzone)
+        network.interface_set_up(veth_zone, True, ns_nzone, mtu)
+        network.route_add_default(veth_zone, addr_in_init_ns.ip, ns_nzone)
 
         # FW settings
         fw_zone_ns = fwlib.Firewall(ns_nzone)
@@ -85,7 +84,7 @@ def network_infra_setup(
     except Exception as e:
         syslog.syslog(syslog.LOG_ERR, f"{syslog_prefix}: setup failed: {e}")
         try:
-            padsi.network.interface_delete(veth_iface, lower_net_ns)
+            network.interface_delete(veth_iface, lower_net_ns)
         except Exception as se: # noqa: BLE001
             syslog.syslog(syslog.LOG_ERR,f"{syslog_prefix}: setup failed, while removing veth {veth_iface}, error: {se}")
         raise
@@ -126,8 +125,8 @@ def network_infra_cleanup(
 
     try:
         lower_net_ns = traffic_shaper.net_ns if traffic_shaper is not None else None
-        padsi.network.interface_delete(veth_iface, lower_net_ns)
-    except padsi.network.NetworkNamespaceNotFound:
+        network.interface_delete(veth_iface, lower_net_ns)
+    except network.NetworkNamespaceNotFound:
         pass  # has already been removed (probably by a traffic shaper)
     except Exception as e: # noqa: BLE001
         syslog.syslog(syslog.LOG_ERR, f"{syslog_prefix}: cleanup failed to remove veth {veth_iface}, error: {e}")
@@ -153,9 +152,9 @@ def network_infra_create_attach_netns(
     """Create and attach a namespace to the ZoneInfra using a pair of veth
     """
     try:
-        if not padsi.network.netns_exists(attached_netns):
-            padsi.network.netns_add(attached_netns)
-            padsi.network.interface_set_up("lo", True, attached_netns)
+        if not network.netns_exists(attached_netns):
+            network.netns_add(attached_netns)
+            network.interface_set_up("lo", True, attached_netns)
     except Exception as e:
         syslog.syslog(syslog.LOG_ERR, f"{syslog_prefix}: could not create network namespace {attached_netns}: {e}")
         raise
@@ -163,16 +162,16 @@ def network_infra_create_attach_netns(
     ns_infra = None
     try:
         ns_infra = nsbubble.named_netns_create(infra_netns, infra_init_pid)
-        veth_infra = padsi.network.interface_create_name("ve", "admin")
+        veth_infra = network.interface_create_name("ve", "admin")
         veth_izone = external_zone_iface
-        padsi.network.veth_add(veth_izone, attached_netns, veth_infra, ns_infra)
-        padsi.network.interface_set_up(veth_infra, True, ns_infra, mtu)
+        network.veth_add(veth_izone, attached_netns, veth_infra, ns_infra)
+        network.interface_set_up(veth_infra, True, ns_infra, mtu)
 
-        padsi.network.addr_add(veth_izone, zone_addr, attached_netns)
-        padsi.network.interface_set_up(veth_izone, True, attached_netns, mtu)
-        padsi.network.route_add_default(veth_izone, infra_bridge_ip.ip, attached_netns)
+        network.addr_add(veth_izone, zone_addr, attached_netns)
+        network.interface_set_up(veth_izone, True, attached_netns, mtu)
+        network.route_add_default(veth_izone, infra_bridge_ip.ip, attached_netns)
 
-        padsi.network.interface_attach_to_bridge(veth_infra, infra_bridge_name, ns_infra)
+        network.interface_attach_to_bridge(veth_infra, infra_bridge_name, ns_infra)
 
         fw = fwlib.Firewall(attached_netns)
         fw.add_masquerade(out_iface=veth_izone)
@@ -181,7 +180,7 @@ def network_infra_create_attach_netns(
 
     except Exception as e:
         if ns_infra is not None:
-            padsi.network.netns_delete(attached_netns)
+            network.netns_delete(attached_netns)
         syslog.syslog(syslog.LOG_ERR, f"{syslog_prefix}: could not attach network namespace {attached_netns} to {ns_infra}: {e}")
         raise
 
@@ -214,7 +213,7 @@ def network_infra_dnat_incoming(
         dest_addr = ipaddress.IPv4Interface(f"{lower_net[2]}/{lower_net.prefixlen}")
         if traffic_shaper is None:
             fw_init_ns = fwlib.Firewall(traffic_shaper.net_ns if traffic_shaper is not None else None, objects_prefix="padsi" if traffic_shaper is None else None)
-            for iface in padsi.network.get_default_interfaces():
+            for iface in network.get_default_interfaces():
                 fw_init_ns.add_dnat(dest_addr=dest_addr.ip, in_iface=iface, protocol_spec=endpoint.protocols_as_string, port_spec=endpoint.ports_as_string)
         else:
             traffic_shaper.add_incoming_dnat("padsi", dest_addr=dest_addr.ip, protocol_spec=endpoint.protocols_as_string, port_spec=endpoint.ports_as_string)
@@ -232,8 +231,8 @@ def network_infra_dnat_incoming(
 
 def network_infra_delete_netns(netns: str, syslog_prefix: str):
     try:
-        if padsi.network.netns_exists(netns):
-            padsi.network.netns_delete(netns)
+        if network.netns_exists(netns):
+            network.netns_delete(netns)
     except Exception as e:
         syslog.syslog(syslog.LOG_ERR, f"{syslog_prefix}: could not delete network namespace {netns}: {e}")
         raise
@@ -258,16 +257,16 @@ def network_infra_attach_zone_apps(
         ns_zone = nsbubble.named_netns_create(zone_netns, zone_init_pid)
         ns_infra = nsbubble.named_netns_create(infra_netns, infra_init_pid)
 
-        veth_infra = padsi.network.interface_create_name("ve", zone_netns)
+        veth_infra = network.interface_create_name("ve", zone_netns)
         veth_izone = external_zone_iface
-        padsi.network.veth_add(veth_izone, ns_zone, veth_infra, ns_infra)
-        padsi.network.interface_set_up(veth_infra, True, ns_infra, mtu)
+        network.veth_add(veth_izone, ns_zone, veth_infra, ns_infra)
+        network.interface_set_up(veth_infra, True, ns_infra, mtu)
 
-        padsi.network.addr_add(veth_izone, zone_addr, ns_zone)
-        padsi.network.interface_set_up(veth_izone, True, ns_zone, mtu)
-        padsi.network.route_add_default(veth_izone, infra_bridge_ip.ip, ns_zone)
+        network.addr_add(veth_izone, zone_addr, ns_zone)
+        network.interface_set_up(veth_izone, True, ns_zone, mtu)
+        network.route_add_default(veth_izone, infra_bridge_ip.ip, ns_zone)
 
-        padsi.network.interface_attach_to_bridge(veth_infra, infra_bridge_name, ns_infra)
+        network.interface_attach_to_bridge(veth_infra, infra_bridge_name, ns_infra)
 
         fw = fwlib.Firewall(ns_zone)
         fw.add_masquerade(out_iface=veth_izone)

@@ -19,8 +19,7 @@
 
 import syslog
 
-import padsi.network
-from padsi import fwlib
+from padsi import fwlib, network
 from padsi.config import FWRule
 
 _debug = False
@@ -94,7 +93,7 @@ class NetworkInputManager:
             self._fw.clear_interface_rules(iface, fwlib.FlowType.FILTER_INPUT)
 
     async def adapt(self):
-        default_route_ifaces = padsi.network.get_default_interfaces()
+        default_route_ifaces = network.get_default_interfaces()
         for iface in default_route_ifaces:
             self.declare_default_route_interface(iface)
         clist = self._default_route_ifaces.copy()

@@ -42,8 +42,7 @@ import aiofiles
 import aionotify
 import psutil
 
-import padsi.misc
-from padsi import fwlib
+from padsi import fwlib, misc
 from padsi.config import Configuration, TrafficShaper, VirtualMachine, VMUsage
 from padsi.run import (
     AdminVMFiles,
@@ -913,7 +912,7 @@ class UserServer(Server):
             # create the directory where DE files are stored
             path=conf.get_zone_user_home_dir(uid, zone_name)
             de_path=os.path.join(path, ".local", "share", "applications")
-            padsi.misc.makedirs_with_owner(de_path, path, uid, gid)
+            misc.makedirs_with_owner(de_path, path, uid, gid)
             de_name=f"padsi-vm-viewer.{vm_id}.{nickname if nickname is not None else 'default'}.desktop"
             return os.path.join(de_path, de_name)
 
@@ -987,7 +986,7 @@ class UserServer(Server):
                 async with aiofiles.open(template, "rt") as fd:
                     with tempfile.NamedTemporaryFile("wt") as tmp:
                         for line in await fd.readlines():
-                            nline=padsi.misc.expand_variables_in_string(line, variables)
+                            nline=misc.expand_variables_in_string(line, variables)
                             _=tmp.write(nline)
                         tmp.flush()
 
@@ -1107,7 +1106,7 @@ class USBDevicesMonitor:
         self._logs_dir=logs_dir
         self._devices:dict[str,UsbDevice]={} # redirected USB devices, key=device ID
         self._reservations:dict[str,Reservation]={} # redirected USB devices, key=device ID
-        self._pcscd_start_stop=padsi.misc.LateFunction(self._update_pcscd_service_state)
+        self._pcscd_start_stop=misc.LateFunction(self._update_pcscd_service_state)
 
         self._reservation_delay=10
         self._pcsc_action_delay=0.5
@@ -1160,7 +1159,7 @@ class USBDevicesMonitor:
 
         if _debug:
             syslog.syslog(syslog.LOG_DEBUG, f"Ensuring PCSC daemon {'active' if pcscd_must_run else 'stopped'}")
-        (status, out, err)=await padsi.misc.asyncio_run(["systemctl", "start" if pcscd_must_run else "stop", "pcscd.socket", "pcscd.service"])
+        (status, out, err)=await misc.asyncio_run(["systemctl", "start" if pcscd_must_run else "stop", "pcscd.socket", "pcscd.service"])
         if status!=0:
             syslog.syslog(syslog.LOG_ERR, f"Could not {'start' if pcscd_must_run else 'stop'} PCSCD service and socket: {err if err else out}")
 
@@ -1248,7 +1247,7 @@ class USBDevicesMonitor:
         """Quick way to determine if device is a smartcard
         """
         self._check_usb_device_id_format(device_id)
-        (status, out, _err)=await padsi.misc.asyncio_run(["lsusb", "-v", "-s", device_id.replace("/", ":")])
+        (status, out, _err)=await misc.asyncio_run(["lsusb", "-v", "-s", device_id.replace("/", ":")])
         if status!=0:
             raise SystemServiceException(f"Could not get infos. about USB device {device_id}")
         for line in out.splitlines():
@@ -1266,7 +1265,7 @@ class USBDevicesMonitor:
             for fname in filenames:
                 devpath=f"{dirpath}/{fname}"
                 device_id=f"{os.path.basename(dirpath)}/{fname}"
-                (status, out, err)=await padsi.misc.asyncio_run(["lsof", "-Q", "-t", devpath])
+                (status, out, err)=await misc.asyncio_run(["lsof", "-Q", "-t", devpath])
                 if status!=0:
                     syslog.syslog(syslog.LOG_WARNING, f"Could not determine if USB device '{device_id}' is actually redirected: {err if err else out}")
                 else:
@@ -1354,7 +1353,7 @@ class UserSession:
     server: UserServer
     task: asyncio.Task # server run() task
 
-class PadsiSystemService(padsi.misc.UserSessionNotifier):
+class PadsiSystemService(misc.UserSessionNotifier):
     users_run_dir="/run/user"
 
     def __init__(self, userservice_path:str, gconf:Configuration):
@@ -1578,7 +1577,7 @@ class PadsiSystemService(padsi.misc.UserSessionNotifier):
         loop=asyncio.get_event_loop()
         await watcher.setup(loop)
 
-        late_func=padsi.misc.LateFunction(self._tsp_event.set)
+        late_func=misc.LateFunction(self._tsp_event.set)
         while True:
             try:
                 event=await watcher.get_event()
@@ -1823,7 +1822,7 @@ async def _get_process_attributes(pid:int) -> tuple[bool, int|None]: # True if i
         dproc=psutil.Process(pid)
         return (dproc.exe()=="/usr/sbin/pcscd", dproc.uids().real)
     except (psutil.NoSuchProcess, psutil.AccessDenied):
-        (_, out, _)=await padsi.misc.asyncio_run(["systemctl", "show", "--property", "MainPID", "--value", "pcscd.service"])
+        (_, out, _)=await misc.asyncio_run(["systemctl", "show", "--property", "MainPID", "--value", "pcscd.service"])
         if out=="0":
             # pcscd unit not active
             return (False, None)

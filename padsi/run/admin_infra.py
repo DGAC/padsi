@@ -28,9 +28,7 @@ import os
 import syslog
 
 import nsbubble
-import padsi.config
-import padsi.network
-from padsi import fwlib
+from padsi import config, fwlib, network
 from padsi.config.trafficshaper import TrafficShaper
 
 from .components import dns, fw_logger, web_infra
@@ -47,7 +45,7 @@ class AdminInfra(ZoneFoundations):
     ns_prefix="admns-"
 
     @classmethod
-    def get_admin_ns_name(cls, admin_conf: padsi.config.AdminNS) -> str:
+    def get_admin_ns_name(cls, admin_conf: config.AdminNS) -> str:
         if len(admin_conf.web_proxies)==0:
             return f"{AdminInfra.ns_prefix}{admin_conf.name}-p" # lower case p
         else:
@@ -55,8 +53,8 @@ class AdminInfra(ZoneFoundations):
 
     def __init__(
         self,
-        global_conf: padsi.config.Configuration,
-        admin_conf: padsi.config.AdminNS,
+        global_conf: config.Configuration,
+        admin_conf: config.AdminNS,
         uid: int,
         run_dir: str,
         logs_dir: str,
@@ -72,22 +70,22 @@ class AdminInfra(ZoneFoundations):
             self.net_mtu=tsp.net_mtu
 
         self._br_name = "br0"
-        a = padsi.config.admin_br_network[1]
-        self._br_ip = ipaddress.IPv4Interface(f"{a}/{padsi.config.admin_br_network.prefixlen}") # IP address of the bridge
-        a= padsi.config.admin_br_network[2]
-        self._admin_ip = ipaddress.IPv4Interface(f"{a}/{padsi.config.admin_br_network.prefixlen}") # IP address of the veth in the admin NS
+        a = config.admin_br_network[1]
+        self._br_ip = ipaddress.IPv4Interface(f"{a}/{config.admin_br_network.prefixlen}") # IP address of the bridge
+        a= config.admin_br_network[2]
+        self._admin_ip = ipaddress.IPv4Interface(f"{a}/{config.admin_br_network.prefixlen}") # IP address of the veth in the admin NS
 
         self._ns_name=AdminInfra.get_admin_ns_name(admin_conf)
 
-        self._lower_veth = padsi.network.interface_create_name("lw", f"{admin_conf.name}-{uid}")
+        self._lower_veth = network.interface_create_name("lw", f"{admin_conf.name}-{uid}")
         self._lower_net: ipaddress.IPv4Network = lower_net
 
         self._web_infra_c: web_infra.WebInfra|None=None
 
         self._firewall_denied_spec=fwlib.LogSpec(self.syslog_prefix, global_conf.firewall_logs_group)
 
-        self._fw_rules: list[padsi.config.FWRule]|None = None
-        self._resolv_rules: list[padsi.config.ResolvRule]|None = None
+        self._fw_rules: list[config.FWRule]|None = None
+        self._resolv_rules: list[config.ResolvRule]|None = None
 
         self._prepare_components()
 
@@ -159,7 +157,7 @@ class AdminInfra(ZoneFoundations):
         return self._lower_net
 
     @property
-    def out_fw_rules(self) -> list[padsi.config.FWRule] | None:
+    def out_fw_rules(self) -> list[config.FWRule] | None:
         """Consolidated output FW rules"""
         if self._fw_rules is None:
             self._fw_rules = []
@@ -170,7 +168,7 @@ class AdminInfra(ZoneFoundations):
         return self._fw_rules
 
     @property
-    def out_resolv_rules(self) -> list[padsi.config.ResolvRule] | None:
+    def out_resolv_rules(self) -> list[config.ResolvRule] | None:
         """Consolidated resolv. rules"""
         if self._resolv_rules is None:
             self._resolv_rules = []

@@ -32,7 +32,7 @@ import tempfile
 import uuid
 
 import nsbubble
-import padsi.config
+from padsi import config
 
 from .components import Component
 
@@ -48,8 +48,8 @@ class ZoneFoundationsException(Exception):
 class ZoneFoundations:
     """Common behaviour for all the "zones" (infra, apps, etc.)
     """
-    def __init__(self, zone_type:str, global_config:padsi.config.Configuration,
-        zone_conf:padsi.config.Zone|None, admin_conf:padsi.config.AdminNS|None,
+    def __init__(self, zone_type:str, global_config:config.Configuration,
+        zone_conf:config.Zone|None, admin_conf:config.AdminNS|None,
         uid:int, run_dir:str, logs_dir:str
     ):
         if zone_conf is not None:
@@ -86,19 +86,19 @@ class ZoneFoundations:
         self.stop()
 
     @property
-    def global_conf(self) -> padsi.config.Configuration:
+    def global_conf(self) -> config.Configuration:
         """Global configuration"""
         return self._gconf
 
     @property
-    def zone_conf(self) -> padsi.config.Zone:
+    def zone_conf(self) -> config.Zone:
         """Associated Zone configuration"""
         if self._z_conf is None:
             raise ZoneFoundationsException("CODEBUG: zone_conf should not be None in ZoneFoundations")
         return self._z_conf
 
     @property
-    def admin_conf(self) -> padsi.config.AdminNS:
+    def admin_conf(self) -> config.AdminNS:
         """Associated admin. NS configuration"""
         if self._a_ns is None:
             raise ZoneFoundationsException("CODEBUG: admin_conf should not be None in ZoneFoundations")
