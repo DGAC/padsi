@@ -24,6 +24,9 @@ import enum
 from dataclasses import dataclass
 
 
+class FirewallException(Exception):
+    pass
+
 class FlowType(str, enum.Enum):
     FILTER_INPUT = "filter.INPUT"
     FILTER_OUTPUT = "filter.OUTPUT"
@@ -50,7 +53,7 @@ class Policy(str, enum.Enum):
             return cls.ALLOW
         elif keyword.lower()=="drop":
             return cls.DENY
-        raise Exception(f"Unknown keyword '{keyword}'")
+        raise FirewallException(f"Unknown Policy keyword '{keyword}'")
 
 class Family(str, enum.Enum):
     IPv4 = "ip"
@@ -76,8 +79,8 @@ class LogSpec:
             (*pre, group)=data.split("@")
             try:
                 igroup=int(group)
-            except Exception:
-                raise Exception(f"Invalid NFLOG group '{group}'")
+            except ValueError:
+                raise FirewallException(f"Invalid NFLOG group '{group}'")
             return LogSpec("@".join(pre), igroup)
         else:
             return LogSpec(data, None)

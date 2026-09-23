@@ -158,7 +158,7 @@ except PadsiServiceNotRunning as e:
 except Exception as e:
     if False:
         print("========== DEBUG ==========")
-        raise e
+        raise
 
     try:
         import gi

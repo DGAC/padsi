@@ -26,9 +26,7 @@ import os
 import subprocess
 import syslog
 
-import padsi.misc
-import padsi.network
-import padsi.xdg
+from padsi import misc, network, xdg
 
 from .adminns import AdminNS, load_adminns_file
 from .clipboard import ClipboardRule, Policy
@@ -251,19 +249,19 @@ class Configuration:
         self._host_network_generator = self._host_network.subnets(new_prefix=30)
 
         # check zone's mounts references
-        all_vars = {item: item for item in padsi.misc.xdg_dirs}
+        all_vars = {item: item for item in misc.xdg_dirs}
         for name in self.get_zones_names():
-            for xdg_dir in padsi.misc.xdg_dirs:
+            for xdg_dir in misc.xdg_dirs:
                 key = f"{name}_{xdg_dir}"
                 all_vars[key] = "Ok"  # we don't care about the value
 
         def _check_mountpoint(mp: MountPoint, context: str):
             try:
-                padsi.misc.expand_variables_in_string(mp.mount_path, all_vars)
+                misc.expand_variables_in_string(mp.mount_path, all_vars)
             except Exception: # noqa: BLE001
                 raise ConfigurationException(f"Invalid mount point in {context}: destination path '{mp.mount_path}' uses invalid variable")
             try:
-                padsi.misc.expand_variables_in_string(mp.source_path, all_vars)
+                misc.expand_variables_in_string(mp.source_path, all_vars)
             except Exception: # noqa: BLE001
                 raise ConfigurationException(f"Invalid mount point in {context}: source path '{mp.source_path}' uses invalid variable")
 
@@ -400,9 +398,9 @@ class Configuration:
         return self._host_out_fw_rules
 
     @property
-    def xdg_resources(self) -> padsi.xdg.XDGResources:
+    def xdg_resources(self) -> xdg.XDGResources:
         if self._xdg_res is None:
-            self._xdg_res = padsi.xdg.XDGResources(self.var_dir, self.xdg_data_dirs)
+            self._xdg_res = xdg.XDGResources(self.var_dir, self.xdg_data_dirs)
         return self._xdg_res
 
     @property
@@ -512,7 +510,7 @@ class Configuration:
                     used=True
                 else:
                     for addr in net:
-                        if padsi.network.addr_exists(addr):
+                        if network.addr_exists(addr):
                             used = True
                             continue
                 if not used:
@@ -569,7 +567,7 @@ class Configuration:
             os.path.dirname(os.path.realpath(os.path.dirname(__file__)))
         )
         with open(os.path.join(padsi_source_dir, "etc", "profile.d", "zzz_padsi.sh.templ")) as fd:
-            data = padsi.misc.expand_variables_in_string(fd.read(), {"padsi_vars": padsi_vars})
+            data = misc.expand_variables_in_string(fd.read(), {"padsi_vars": padsi_vars})
             if os.path.isdir("/etc/profile.d"):
                 with open("/etc/profile.d/zzz_padsi.sh", "w") as fd:
                     fd.write(data)
@@ -600,7 +598,7 @@ class Configuration:
                 install_dir = os.path.join(self.var_dir, "xdg")
         else:
             install_dir = os.path.join(
-                padsi.misc.get_user_home_dir(os.geteuid()),
+                misc.get_user_home_dir(os.geteuid()),
                 ".local",
                 "share",
                 "applications",
@@ -630,7 +628,7 @@ class Configuration:
                 install_dir = os.path.join(self.var_dir, "icons")
         else:
             install_dir = os.path.join(
-                padsi.misc.get_user_home_dir(os.geteuid()),
+                misc.get_user_home_dir(os.geteuid()),
                 ".local",
                 "share",
                 "padsi-icons",
@@ -700,7 +698,7 @@ class Configuration:
         touched_icon_files: set[str] = set()
 
         if de_file.endswith(".desktop") and not de_file.startswith("padsi."):
-            de = padsi.xdg.DesktopEntry(de_file, xdg_res=self.xdg_resources)
+            de = xdg.DesktopEntry(de_file, xdg_res=self.xdg_resources)
             # if de.app_id not in ("org.gnome.Calculator", "org.gnome.TextEditor", "org.gnome.Terminal", "org.gnome.Nautilus", "firefox-esr"):
             #    continue
             ignore=False
@@ -806,7 +804,7 @@ class Configuration:
                             rem_file = os.path.join(de_install_dir, fname)
 
                             # remove icon if possible
-                            de = padsi.xdg.DesktopEntry(rem_file, self.xdg_resources)
+                            de = xdg.DesktopEntry(rem_file, self.xdg_resources)
                             if de.icon_file is not None and de.icon_file.startswith(
                                 icons_install_dir
                             ):

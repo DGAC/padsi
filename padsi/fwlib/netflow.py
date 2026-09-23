@@ -26,11 +26,12 @@ import ipaddress
 import re
 from collections import Counter
 
+from .common import FirewallException
+
 
 class SubNewFlowDifferencesException(Exception):
     """Raised when a NetFlow is actually made of several sub-flows and some
     have different characteristics than others"""
-    pass
 
 
 _all_protocols = ("tcp", "udp", "icmp")
@@ -38,18 +39,18 @@ _all_protocols = ("tcp", "udp", "icmp")
 
 def _validate_protocol(proto: str):
     if proto not in _all_protocols:
-        raise Exception(f"invalid protocol {proto}")
+        raise FirewallException(f"invalid protocol {proto}")
 
 
 def _validate_network_interface(iface: str):
     # NB: only a very limited check here, the real check will be done at usage
     if not isinstance(iface, str) or len(iface) > 15:
-        raise Exception(f"invalid network interface {iface}")
+        raise FirewallException(f"invalid network interface {iface}")
 
 
 def _validate_port(port: int):
     if not isinstance(port, int) or port < 1 or port > 65535:
-        raise Exception(f"invalid port {port}")
+        raise FirewallException(f"invalid port {port}")
 
 
 def _is_ipv4_element(item: str) -> bool:
@@ -57,11 +58,11 @@ def _is_ipv4_element(item: str) -> bool:
     try:
         ipaddress.IPv4Address(item)
         return True
-    except Exception:
+    except ipaddress.AddressValueError:
         try:
             ipaddress.IPv4Network(item)
             return True
-        except Exception:
+        except ipaddress.AddressValueError:
             return False
 
 
@@ -144,9 +145,7 @@ def _deep_list_equals(l1: list | None, l2: list | None) -> bool:
     - without taking care of the elements' order in the lists
     """
     if l1 is None:
-        if l2 is None:
-            return True
-        return False
+        return l2 is None
     if l2 is None:
         return False
     return Counter(l1) == Counter(l2)
@@ -180,20 +179,20 @@ def analyse_port_spec(port_spec:str|None) -> tuple[list[int]|None, list[str]|Non
                         p1 = int(p1)
                         p2 = int(p2)
                         if p1 < 1 or p1 > 65535 or p2 < 1 or p2 > 65535 or p1 > p2:
-                            raise
+                            raise FirewallException()
                         if p1 == p2:
                             ports.append(p1)
                         else:
                             port_ranges.append(item)
-                    except Exception:
-                        raise Exception(f"Invalid endpoint spec: invalid port range '{item}'")
+                    except Exception: # noqa: BLE001
+                        raise FirewallException(f"Invalid endpoint spec: invalid port range '{item}'")
                 else:
                     try:
                         port = int(item)
                         _validate_port(port)
                         ports.append(port)
-                    except Exception:
-                        raise Exception(f"invalid port number '{item}'")
+                    except Exception: # noqa: BLE001
+                        raise FirewallException(f"invalid port number '{item}'")
 
     if len(ports) == 0:
         ports = None
@@ -222,30 +221,28 @@ class Endpoint:
             for item in data.split(","):
                 item = item.strip()
                 if item=="":
-                    raise Exception("Invalid empty (\"\") endpoint spec")
+                    raise FirewallException("Invalid empty (\"\") endpoint spec")
                 elif item=="*":
                     self._zones.append(item)
                 elif item[0] == "#":
                     _validate_network_interface(item[1:])
                     if self._iface:
-                        raise Exception("Invalid endpoint spec: more than one interface specified")
+                        raise FirewallException("Invalid endpoint spec: more than one interface specified")
                     self._iface = item[1:]
                 else:
-                    if item.endswith("/32"):
-                        # we have an IP address, but ipaddress.IPv4Address won't like it, so strip the "/32"
-                        item = item[:-3]
+                    item=item.removesuffix("/32") # if we have an IP address, strip the "/32" as ipaddress.IPv4Address won't like it otherwise
                     try:
                         self._zones.append(str(ipaddress.IPv4Address(item)))
-                    except Exception:
+                    except Exception: # noqa: BLE001
                         try:
                             self._zones.append(str(ipaddress.IPv4Interface(item)))
-                        except Exception:
+                        except Exception: # noqa: BLE001
                             if _is_domain_name(item, allow_wildcards=True):
                                 self._zones.append(item)
                             else:
                                 if item[-1]==".":
-                                    raise Exception(f"Invalid endpoint spec '{item}'")
-                                raise Exception(f"Invalid endpoint spec '{item}' (missing final dot)")
+                                    raise FirewallException(f"Invalid endpoint spec '{item}'")
+                                raise FirewallException(f"Invalid endpoint spec '{item}' (missing final dot)")
         if len(self._zones)==0 and self._iface is None:
             self._zones=["*"]
 
@@ -279,7 +276,7 @@ class Endpoint:
         elif self._iface == interface:
             pass
         else:
-            raise Exception("endpoint already has a declared network interface")
+            raise FirewallException("endpoint already has a declared network interface")
 
     @property
     def zones(self) -> list[str]:
@@ -316,11 +313,11 @@ class Endpoint:
             if _is_ipv4_element(zone):
                 try:
                     res.add(ipaddress.IPv4Address(zone))
-                except Exception:
+                except ipaddress.AddressValueError:
                     try:
                         res.add(ipaddress.IPv4Network(zone))
-                    except Exception:
-                        raise Exception(f"TODO: unhandled address element '{zone}'")
+                    except ipaddress.AddressValueError:
+                        raise FirewallException(f"TODO: unhandled address element '{zone}'")
         return res
 
     @property
@@ -365,7 +362,7 @@ class Endpoint:
     @property
     def ports(self) -> list[int] | None:
         if self._ports is not None and self._protocols is None:
-            raise Exception("Invalid endpoint: ports specified without any protocol")
+            raise FirewallException("Invalid endpoint: ports specified without any protocol")
         return self._ports
 
     def add_port(self, port: int):
@@ -378,16 +375,14 @@ class Endpoint:
     @property
     def port_ranges(self) -> list[str] | None:
         if self._port_ranges is not None and self._port_ranges is None:
-            raise Exception(
-                "Invalid endpoint: ports range specified without any protocol"
-            )
+            raise FirewallException("Invalid endpoint: ports range specified without any protocol")
         return self._port_ranges
 
     def add_portrange(self, p1: int, p2: int):
         _validate_port(p1)
         _validate_port(p2)
         if p1 > p2:
-            raise Exception(f"Invalid endpoint spec: invalid port range {p1}-{p2}")
+            raise FirewallException(f"Invalid endpoint spec: invalid port range {p1}-{p2}")
         elif p1 == p2:
             self.add_port(p1)
         else:
@@ -414,11 +409,11 @@ class Endpoint:
                     _validate_port(s)
                     _validate_port(e)
                     if s > e:
-                        raise Exception()
+                        raise FirewallException()
                     for port in range(s, e + 1):
                         res.add(port)
-                except Exception:
-                    raise Exception(f"Invalid port range '{item}'")
+                except Exception: # noqa: BLE001
+                    raise FirewallException(f"Invalid port range '{item}'")
         return res
 
     @property
@@ -429,21 +424,18 @@ class Endpoint:
 
     @property
     def ports_as_string(self) -> str | None:
-        plist = []
+        plist: list[str] = []
         if self._ports is not None:
             for port in self._ports:
                 plist.append(str(port))
         if self._port_ranges is not None:
-            for pr in self._port_ranges:
-                plist.append(pr)
+            plist.extend(self._port_ranges)
         return ",".join(plist) if len(plist) > 0 else None
 
     def to_repr(self, include_protocols=True):
         parts = []
         # zones part
-        zones = []
-        for net in self._zones:
-            zones.append(net)
+        zones: list[str] = self._zones.copy()
         if self._iface is not None:
             zones.append(f"#{self._iface}")
         if len(zones) > 0:
@@ -469,10 +461,10 @@ class Endpoint:
         """Create an EndPoint instance from its textual representation"""
         txt = txt.strip()
         if txt == "":
-            raise Exception("Invalid endpoint empty spec.")
+            raise FirewallException("Invalid endpoint empty spec.")
         parts = txt.split("^")
         if len(parts) > 3:
-            raise Exception(f"Invalid endpoint spec. {txt}")
+            raise FirewallException(f"Invalid endpoint spec. {txt}")
         if protos is None:
             protocols = parts[1] if len(parts) > 1 else None
             ports = parts[2] if len(parts) > 2 else None
@@ -494,9 +486,7 @@ class Endpoint:
             not _deep_list_equals(self._ports, other._ports) or \
             not _deep_list_equals(self._port_ranges, other._port_ranges):
             return False
-        if include_protocols and not _deep_list_equals(self._protocols, other._protocols):
-            return False
-        return True
+        return not (include_protocols and not _deep_list_equals(self._protocols, other._protocols))
 
     def __eq__(self, other: object) -> bool:
         return self.is_equal_to(other)  # pyright: ignore
@@ -568,7 +558,7 @@ class Endpoint:
                         found = True
                         break
             else:
-                raise Exception(f"Unhandled ip element '{item}'")
+                raise FirewallException(f"Unhandled ip element '{item}'")
             if not found:
                 return False
 
@@ -612,11 +602,8 @@ class NetFlow:
     def _check_protocols(self):
         sps = self._src.protocols
         dps = self._dest.protocols
-        if sps is not None and dps is not None:
-            if Counter(sps) != Counter(dps):
-                raise Exception(
-                    f"Source '{','.join(sps)}' and destination '{','.join(dps)}' protocols don't match"
-                )
+        if sps is not None and dps is not None and Counter(sps) != Counter(dps):
+            raise FirewallException(f"Source '{','.join(sps)}' and destination '{','.join(dps)}' protocols don't match")
 
     def __repr__(self):
         protocols = self.protocols
@@ -649,8 +636,8 @@ class NetFlow:
         """Create a NetFlow instance from its textual representation"""
         try:
             (rsrc, protocols, rdest) = txt.split(">")
-        except Exception:
-            raise Exception("Invalid endpoint spec: no '>' separator")
+        except ValueError:
+            raise FirewallException("Invalid endpoint spec: no '>' separator")
 
         src = Endpoint.from_repr(rsrc, protos=protocols)
         dest = Endpoint.from_repr(rdest, protos=protocols)

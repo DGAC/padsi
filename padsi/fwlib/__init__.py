@@ -21,6 +21,13 @@ from .common import Family, FlowType, LogSpec, Policy
 from .firewall import Firewall
 from .netflow import Endpoint, NetFlow, SubNewFlowDifferencesException
 
-__all__=["Policy", "FlowType", "Family", "LogSpec",
-         "Firewall", "SubNewFlowDifferencesException", "Endpoint", "NetFlow"
-        ]
+__all__ = [
+    "Policy",
+    "FlowType",
+    "Family",
+    "LogSpec",
+    "Firewall",
+    "SubNewFlowDifferencesException",
+    "Endpoint",
+    "NetFlow",
+]

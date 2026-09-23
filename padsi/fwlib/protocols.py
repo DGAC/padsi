@@ -32,19 +32,19 @@ def generate_protocols():
     idtop={}
     ptoid={}
     with open("/etc/protocols", "r") as fd:
-        for line in fd.readlines():
+        for line in fd:
             if line[0]!="#":
                 try:
                     (name, id, *_)=line.split()
                     id=int(id)
                     idtop[id]=name
                     ptoid[name]=id
-                except Exception:
+                except ValueError:
                     pass
 
     with open(__file__, "r") as fd:
         data=[]
-        for line in fd.readlines():
+        for line in fd:
             if line.startswith("# PROTOCOLS BELOW"):
                 break
             data.append(line)

@@ -43,20 +43,6 @@ def get_user_home_dir(uid) -> str:
     """Returns the user's home directory associated to an UID (without a last '/')"""
     return pwd.getpwuid(uid).pw_dir
 
-def exec_sync(args:list[str]) -> tuple[int, str, str]:
-    sub=subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        (out, err)=sub.communicate(timeout=2)
-        retcode=sub.returncode
-    except subprocess.TimeoutExpired:
-        sub.kill()
-        (out, err)=sub.communicate(timeout=2)
-        retcode=250
-
-    sout=re.sub(r'[\r\n]+$', '', out.decode()) if out else ""
-    serr=re.sub(r'[\r\n]+$', '', err.decode()) if err else ""
-    return (retcode, sout, serr)
-
 def get_mnt_namespace(pid: int) -> str:
     """Get the mount namespace of a process.
     """

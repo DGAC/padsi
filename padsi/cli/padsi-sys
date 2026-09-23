@@ -37,7 +37,6 @@ import sys
 from urllib import parse
 
 import colorama  # import Fore, Style
-import psutil
 import requests.exceptions
 import requests_unixsocket
 
@@ -146,6 +145,7 @@ def get_padsi_system_service_pid() -> int:
         ["systemctl", "show", "--property", "MainPID", "--value", "padsi"],
         capture_output=True,
         text=True,
+        check=False
     )
     if proc.returncode != 0:
         raise Exception(f"Could not determine PADSI service's main process: {proc.stderr}")
@@ -153,19 +153,6 @@ def get_padsi_system_service_pid() -> int:
     if main_pid == 0:
         raise Exception("PADSI service is not running")
     return main_pid
-
-
-def get_padsi_user_service_pid(sysem_service_pid: int) -> int:
-    system_service = psutil.Process(sysem_service_pid)
-    user_service: psutil.Process | None = None
-    for child in system_service.children():
-        if child.uids()[0] == uid:
-            user_service = child
-            break
-    if user_service is None:
-        raise Exception(f"Could not find user service process for UID {uid}")
-    return user_service.pid
-
 
 #
 # execution and parsing of processes in bubbles
@@ -176,6 +163,7 @@ def execute_command_in_process_ns(pid: int, args: list[str]) -> str:
             ["nsenter", "-m", "-p", "-n", "-t", str(pid)] + args,
             capture_output=True,
             text=True,
+            check=False
         )
         if prog.returncode != 0:
             raise Exception(prog.stderr if prog.stderr else prog.stdout)
@@ -203,9 +191,9 @@ def parse_ip_list_output(data: str) -> dict[str, ipaddress.IPv4Interface]:
 
 def get_status_from_user_service(uid: int | None) -> dict | None:
     if uid is None:
-        proc = subprocess.run(["padsi-cli", "-j", "-v", "status"], capture_output=True, text=True)
+        proc = subprocess.run(["padsi-cli", "-j", "-v", "status"], capture_output=True, text=True, check=False)
     else:
-        proc = subprocess.run(["padsi-cli", "-U", str(uid), "-j", "-v", "status"], capture_output=True, text=True)
+        proc = subprocess.run(["padsi-cli", "-U", str(uid), "-j", "-v", "status"], capture_output=True, text=True, check=False)
     if proc.returncode == 2:  # PADSI service not running
         return None
     if proc.returncode != 0:
@@ -275,7 +263,7 @@ def root_required():
 def command_pstree():
     """List all PADSI's processes"""
     pid = get_padsi_system_service_pid()
-    proc = subprocess.run(["pstree", "-TpsuS", f"{pid}"])
+    proc = subprocess.run(["pstree", "-TpsuS", f"{pid}"], check=False)
     if proc.returncode != 0:
         raise Exception(f"Failed to execute 'pstree' for PADSI's main PID {pid}")
 
@@ -294,13 +282,13 @@ def command_dump(uid: int | None):
 
     # analyse PADSI's zones to get the PID of bubblewrap processes
     data={}
-    for uid in uids:
+    for tuid in uids:
         status = get_status_from_user_service(uid)
         if status is None:
             continue
 
         # enrich data with network interfaces
-        for zone, bubbles in status.get("active-zones", {}).items():
+        for bubbles in status.get("active-zones", {}).values():
             for bubble in bubbles:
                 if "processes" in bubble:
                     del bubble["processes"]
@@ -313,7 +301,7 @@ def command_dump(uid: int | None):
                                 "type": iface.iface_type.value if iface.iface_type is not None else None,
                                 "addresses": [str(ip) for ip in iface.addresses] if iface.addresses is not None else None,
                             }
-        data[uid]=status
+        data[tuid]=status
     print(f"{json.dumps(data, indent=4)}")
 
 
@@ -360,7 +348,7 @@ def _show_admin_ns_info(adminns:AdminNS):
     nsname=AdminInfra.get_admin_ns_name(adminns)
     print(f"{_indent}net namespace: {nsname}")
 
-    proc=subprocess.run(["ip", "netns", "exec", nsname, "ss", "-atupn"], capture_output=True, text=True)
+    proc=subprocess.run(["ip", "netns", "exec", nsname, "ss", "-atupn"], capture_output=True, text=True, check=False)
     if proc.returncode!=0:
         print(f"{_indent}{Fore.RED}Could not list processes in NS: {str(proc.stderr)}{Fore.RESET}")
     else:
@@ -517,7 +505,7 @@ def command_exec_interactive(pid: int, args: list[str], uid:int|None):
     os.execvp(nsargs[0], nsargs)
 
 def get_admin_ns_list() -> list[str]:
-    proc=subprocess.run(["ip", "netns"], capture_output=True, text=True)
+    proc=subprocess.run(["ip", "netns"], capture_output=True, text=True, check=False)
     if proc.returncode!=0:
         raise Exception(f"Could not execute 'ip netns': {proc.stderr}")
     res:list[str]=[]
@@ -578,10 +566,10 @@ if __name__ == "__main__":
         uid = args.get("user")
         if uid is None:
             if "SUDO_UID" in os.environ:
-                uid = int(os.environ.get("SUDO_UID", -1))
+                uid = int(os.environ.get("SUDO_UID", "-1"))
             else:
                 # use the UID of the logged user if there is only one logger
-                proc = subprocess.run(["loginctl", "list-sessions", "-j"], capture_output=True, text=True)
+                proc = subprocess.run(["loginctl", "list-sessions", "-j"], capture_output=True, text=True, check=False)
                 if proc.returncode == 0:
                     data = json.loads(proc.stdout)
                     for item in data:
@@ -618,9 +606,8 @@ if __name__ == "__main__":
             if zone_name not in status.get("zones-available"):
                 raise Exception(f"Zone '{zone_name}' is not available")
 
-            if zone_name not in status.get("active-zones", []):
-                if cmde not in ("network"):
-                    raise Exception(f"Zone '{zone_name}' is not yet started")
+            if zone_name not in status.get("active-zones", []) and cmde not in ("network"):
+                raise Exception(f"Zone '{zone_name}' is not yet started")
 
             zdata = status.get("active-zones", []).get(zone_name)
             if zdata is None:

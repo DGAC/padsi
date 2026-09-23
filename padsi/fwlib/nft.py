@@ -26,7 +26,7 @@ import time
 from typing import Any
 
 from . import netflow, protocols
-from .common import Family, FlowType, LogSpec, Policy
+from .common import Family, FirewallException, FlowType, LogSpec, Policy
 
 _log_commands=False
 _match_debug=False
@@ -43,7 +43,7 @@ def _netflow_to_nft_args(nfl:netflow.NetFlow) -> list[str]:
     protos=nfl.protocols
     if protos is not None:
         if len(protos)>1:
-            raise Exception("CODEBUG: more than one protocol!")
+            raise FirewallException("CODEBUG: more than one protocol!")
         args+=["ip", "protocol", protos[0]]
     if nfl.src.interface is not None:
         args+=["meta", "iif", nfl.src.interface]
@@ -63,7 +63,7 @@ def _netflow_to_nft_args(nfl:netflow.NetFlow) -> list[str]:
         if protos is not None:
             for p in protos:
                 if p not in ("tcp", "udp"):
-                    raise Exception("source or destination port can only be specified for TCP or UDP protocols")
+                    raise FirewallException("source or destination port can only be specified for TCP or UDP protocols")
                 args+=[p, "sport", "{"+",".join([str(p) for p in ports])+"}"]
 
     if nfl.dest.ports is not None or nfl.dest.port_ranges is not None:
@@ -75,7 +75,7 @@ def _netflow_to_nft_args(nfl:netflow.NetFlow) -> list[str]:
         if protos is not None:
             for p in protos:
                 if p not in ("tcp", "udp"):
-                    raise Exception("source or destination port can only be specified for TCP or UDP protocols")
+                    raise FirewallException("source or destination port can only be specified for TCP or UDP protocols")
                 args+=[p, "dport", "{"+",".join([str(p) for p in ports])+"}"]
     return args
 
@@ -85,9 +85,11 @@ def _find_table(data:dict, table_name:str, family:Family=Family.IPv4) -> int|Non
     """
     for item in data["nftables"]:
         data=item.get("table")
-        if data is not None:
-            if data.get("name")==table_name and data.get("family")==family.value:
-                return data["handle"]
+        if data is not None and \
+            data.get("name")==table_name and \
+            data.get("family")==family.value and \
+            data.get("handle") is not None:
+            return data["handle"]
     return None
 
 def _find_chain(data:dict, table_name:str, chain_name:str, family:Family=Family.IPv4) -> tuple[int|None, Policy|None]:
@@ -96,9 +98,13 @@ def _find_chain(data:dict, table_name:str, chain_name:str, family:Family=Family.
     """
     for item in data["nftables"]:
         data=item.get("chain")
-        if data is not None:
-            if data.get("table")==table_name and data.get("family")==family.value and data.get("name")==chain_name:
-               return (data["handle"], Policy.from_keyword(data["policy"]))
+        if data is not None and \
+            data.get("table")==table_name and \
+            data.get("family")==family.value and \
+            data.get("name")==chain_name and \
+            data.get("handle") is not None and \
+            data.get("policy") is not None:
+            return (data["handle"], Policy.from_keyword(data["policy"]))
     return (None, None)
 
 def _addr_to_object(data:Any) -> ipaddress.IPv4Interface:
@@ -112,14 +118,14 @@ def _addr_to_object(data:Any) -> ipaddress.IPv4Interface:
         addrdata=data["prefix"]
         if "addr" in addrdata and "len" in addrdata:
             return ipaddress.IPv4Interface(f"{addrdata['addr']}/{addrdata['len']}")
-    raise Exception(f"Unhandled nft json's address formatted as: {data}")
+    raise FirewallException(f"Unhandled nft json's address formatted as: {data}")
 
 def _match_netflow(nflow:netflow.NetFlow, left:dict, right:Any) -> bool:
     """
     Returns: True if spec was complemented, False otherwise
     """
     if not isinstance(left, dict):
-        raise Exception(f"Code bug: expected left argument as dict, got {left}")
+        raise FirewallException(f"Code bug: expected left argument as dict, got {left}")
 
     if "meta" in left:
         key=left["meta"].get("key")
@@ -170,8 +176,8 @@ def _match_netflow(nflow:netflow.NetFlow, left:dict, right:Any) -> bool:
                     nflow.src.add_protocol(proto)
                     nflow.dest.add_protocol(proto)
                     return True
-                except Exception:
-                    raise Exception(f"Unknown protocol ID '{right}', please update the protocols.py file")
+                except Exception: # noqa: BLE001
+                    raise FirewallException(f"Unknown protocol ID '{right}', please update the protocols.py file")
             if field=="daddr":
                 nflow.dest.add_address(_addr_to_object(right))
                 return True
@@ -205,12 +211,12 @@ def _rule_match_netflow(rule_item:dict, nflow:netflow.NetFlow) -> tuple[bool, Po
             if policy is None:
                 policy=Policy.from_keyword("drop")
             else:
-                raise Exception("Can't handle multiple statement in rule")
+                raise FirewallException("Can't handle multiple statement in rule")
         elif "accept" in expr:
             if policy is None:
                 policy=Policy.from_keyword("accept")
             else:
-                raise Exception("Can't handle multiple statement in rule")
+                raise FirewallException("Can't handle multiple statement in rule")
         elif "masquerade" in expr or "log" in expr:
             # extra information, not useful to match netflow
             pass
@@ -241,14 +247,16 @@ def _find_chain_deny_log_rule(data:dict, table_name:str, chain_name:str, log_den
     #}
     for item in data["nftables"]:
         data=item.get("rule")
-        if data is not None:
-            if data["table"]==table_name and data["family"]==family.value and \
-               data["chain"]==chain_name:
-                if len(data["expr"])==1:
-                    sitem=data["expr"][0]
-                    if "log" in sitem:
-                        if log_deny_spec is not None and sitem["log"].get("prefix")==log_deny_spec.prefix or log_deny_spec is None:
-                            return data["handle"]
+        if data is not None and \
+            data.get("table")==table_name and \
+            data.get("family")==family.value and \
+            data.get("chain")==chain_name and \
+            len(data.get("expr", []))==1:
+            sitem=data["expr"][0]
+            if "log" in sitem and \
+            (log_deny_spec is not None and sitem.get("log",{}).get("prefix")==log_deny_spec.prefix or log_deny_spec is None) and \
+            data.get("handle") is not None:
+                return data["handle"]
     return None
 
 def _find_rule(data:dict, table_name:str, chain_name:str, nflow:netflow.NetFlow) -> tuple[int|None, Policy|None]:
@@ -259,14 +267,15 @@ def _find_rule(data:dict, table_name:str, chain_name:str, nflow:netflow.NetFlow)
         syslog.syslog(syslog.LOG_DEBUG, f"table:{table_name}, chain:{chain_name}, nflow:{nflow}")
     for item in data["nftables"]:
         rdata=item.get("rule")
-        if rdata:
-            if rdata["table"]==table_name and rdata["family"]=="ip" and \
-               rdata["chain"]==chain_name:
-                if _match_debug:
-                    syslog.syslog(syslog.LOG_DEBUG, f"potential rule: {json.dumps(rdata, indent=4)}")
-                (match, policy)=_rule_match_netflow(rdata, nflow)
-                if match:
-                    return (rdata["handle"], policy)
+        if rdata is not None and \
+            data.get("table")==table_name and \
+            rdata.get("family")=="ip" and \
+            rdata.get("chain")==chain_name:
+            if _match_debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"potential rule: {json.dumps(rdata, indent=4)}")
+            (match, policy)=_rule_match_netflow(rdata, nflow)
+            if match and rdata.get("handle") is not None:
+                return (rdata["handle"], policy)
     return (None, None)
 
 xt_conntrack_match={
@@ -308,7 +317,7 @@ class FwTool:
     def _interface_exists(self, name:str) -> bool:
         """Tells if a network interface exists"""
         args=["ip", "link", "show", name]
-        p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+        p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
         if p.returncode!=0:
             if "does not exist" in p.stderr:
                 return False
@@ -329,12 +338,12 @@ class FwTool:
 
             # debug message with all the network interfaces present
             args=["ip", "link", "show"]
-            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
             if p.returncode==0:
                 msg=p.stdout
             else:
                 msg=p.stderr
-            raise Exception(f"Waited for it but network interface '{name}' does not exist (current interfaces: {msg})")
+            raise FirewallException(f"Waited for it but network interface '{name}' does not exist (current interfaces: {msg})")
 
     def _with_netns(self, name:str|None=None):
         """Display helper"""
@@ -376,9 +385,9 @@ class FwTool:
         #   ]
         # }
         args=[self._bin_path, "-j", "list", "ruleset"]
-        p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+        p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
         if p.returncode!=0:
-            raise Exception(f"Could not list nftables's tables {self._with_netns()}: {p.stderr if p.stderr else p.stdout}")
+            raise FirewallException(f"Could not list nftables's tables {self._with_netns()}: {p.stderr if p.stderr else p.stdout}")
         return json.loads(p.stdout)
 
     def _create_chain(self, table_name:str, chain_name:str, policy:Policy=Policy.ALLOW, family:Family=Family.IPv4):
@@ -403,9 +412,9 @@ class FwTool:
             prio="filter"
         args=[self._bin_path, "add", "chain", family.value, table_name, chain_name,
               "{", "type", table_type, "hook", hook_type, "priority", prio, ";", "policy", policy.keyword, ";", "}"]
-        p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+        p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
         if p.returncode!=0:
-            raise Exception(f"Could not add chain '{chain_name}' in '{table_name}' {self._with_netns()}: {p.stderr}")
+            raise FirewallException(f"Could not add chain '{chain_name}' in '{table_name}' {self._with_netns()}: {p.stderr}")
         if _log_commands:
             syslog.syslog(syslog.LOG_DEBUG, f"creating chain {chain_name} ==> {policy} / {self._log_denied_spec}")
 
@@ -419,16 +428,16 @@ class FwTool:
             if self._log_denied_spec is not None and h is None:
                 # add a catch all rule to log denied packets
                 args=[self._bin_path, "add", "rule", family.value, table_name, chain_name]+self._log_denied_spec.get_nft_args()
-                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
                 if p.returncode!=0:
-                    raise Exception(f"Could not set deny log as global chain rule: {p.stderr}")
+                    raise FirewallException(f"Could not set deny log as global chain rule: {p.stderr}")
         else:
             if h is not None:
                 assert(self._log_denied_spec is not None)
                 args=[self._bin_path, "delete", "rule", family.value, table_name, chain_name, "handle", str(h)]
-                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
                 if p.returncode!=0:
-                    raise Exception(f"Could not remove deny log as global chain rule: {p.stderr}")
+                    raise FirewallException(f"Could not remove deny log as global chain rule: {p.stderr}")
 
         current=self._get_ruleset()
         (_handle, cpolicy)=_find_chain(current, table_name, chain_name, family)
@@ -445,9 +454,9 @@ class FwTool:
             for family in (Family.IPv4, Family.IPv6):
                 if _find_table(current, table_name, family=family) is None:
                     args=[self._bin_path, "add", "table", family.value, table_name]
-                    p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+                    p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
                     if p.returncode!=0:
-                        raise Exception(f"Could not add IP table '{table_name}' for family {family} {self._with_netns()}: {p.stderr}")
+                        raise FirewallException(f"Could not add IP table '{table_name}' for family {family} {self._with_netns()}: {p.stderr}")
 
                 (handle, _policy)=_find_chain(current, table_name, chain_name, family=family)
                 if handle is None:
@@ -468,29 +477,31 @@ class FwTool:
         args=[self._bin_path, "flush", "chain", family.value, table_name, chain_name]
         if _log_commands:
             syslog.syslog(syslog.LOG_DEBUG, f"flushing {family} chain {chain_name} ==> {' '.join(args)}")
-        p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+        p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
         if p.returncode!=0:
-            raise Exception(f"Could not flush rules in table '{table_name}' and chain '{chain_name}' for family {family} {self._with_netns()}: {p.stderr}")
+            raise FirewallException(f"Could not flush rules in table '{table_name}' and chain '{chain_name}' for family {family} {self._with_netns()}: {p.stderr}")
 
     def _find_related_connections_policy(self, flowtype:FlowType, family:Family=Family.IPv4) -> tuple[int|None, Policy|None]:
         (table_name, chain_name)=_get_table_and_chain_from_flow(flowtype, self._objects_prefix)
         current=self._get_ruleset()
         for item in current["nftables"]:
             rule=item.get("rule")
-            if rule is not None:
-                if rule.get("family")==family.value and rule.get("table")==table_name and rule.get("chain")==chain_name and \
-                   rule.get("expr") is not None:
-                    handle=None
-                    policy=None
-                    for expr in rule.get("expr"):
-                        if expr.get("xt")==xt_conntrack_match or expr.get("match")==nft_conntrack_match:
-                            handle=rule["handle"]
-                        if "accept" in expr:
-                            policy=Policy.ALLOW
-                        if "deny" in expr:
-                            policy=Policy.DENY
-                    if handle is not None and policy is not None:
-                        return (handle, policy)
+            if rule is not None and \
+                rule.get("family")==family.value and \
+                rule.get("table")==table_name and \
+                rule.get("chain")==chain_name and \
+                rule.get("expr") is not None:
+                handle=None
+                policy=None
+                for expr in rule.get("expr"):
+                    if rule.get("handle") is not None and (expr.get("xt")==xt_conntrack_match or expr.get("match")==nft_conntrack_match):
+                        handle=rule["handle"]
+                    if "accept" in expr:
+                        policy=Policy.ALLOW
+                    if "deny" in expr:
+                        policy=Policy.DENY
+                if handle is not None and policy is not None:
+                    return (handle, policy)
         return (None, None)
 
     def set_related_connections_policy(self, flowtype:FlowType, policy:Policy, family:Family=Family.IPv4):
@@ -509,23 +520,23 @@ class FwTool:
                 args=[self._bin_path, "insert", "rule", family.value, table_name, chain_name, "handle", str(h)]+specargs+[policy.keyword]
             if _log_commands:
                 syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(args)}")
-            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
             if p.returncode!=0:
-                raise Exception(f"Could not set related connections policy in table '{table_name}', chain '{chain_name}' {self._with_netns()}: {p.stderr}")
+                raise FirewallException(f"Could not set related connections policy in table '{table_name}', chain '{chain_name}' {self._with_netns()}: {p.stderr}")
         else:
             args=[self._bin_path, "insert", "rule", family.value, table_name, chain_name, "handle", str(handle)]+specargs+[policy.keyword]
             if _log_commands:
                 syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(args)}")
-            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
             if p.returncode!=0:
-                raise Exception(f"Could not insert related connections policy in table '{table_name}', chain '{chain_name}' {self._with_netns()}, @ {handle}: {p.stderr}")
+                raise FirewallException(f"Could not insert related connections policy in table '{table_name}', chain '{chain_name}' {self._with_netns()}, @ {handle}: {p.stderr}")
 
             args=[self._bin_path, "delete", "rule", family.value, table_name, chain_name, "handle", str(handle)]
             if _log_commands:
                 syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(args)}")
-            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
             if p.returncode!=0:
-                raise Exception(f"Could not delete related connections policy in table '{table_name}', chain '{chain_name}' {self._with_netns()}, @ {handle}: {p.stderr}")
+                raise FirewallException(f"Could not delete related connections policy in table '{table_name}', chain '{chain_name}' {self._with_netns()}, @ {handle}: {p.stderr}")
 
     def get_related_connections_policy(self, flowtype:FlowType, family:Family=Family.IPv4) -> Policy:
         (_handle, policy)=self._find_related_connections_policy(flowtype, family)
@@ -537,7 +548,7 @@ class FwTool:
 
         # if several protocols are specified, split into as many NetFlow objects
         flows=nflow.split_by_protocol()
-        for (_protocol, pflow) in flows.items():
+        for pflow in flows.values():
             (handle, cpolicy)=_find_rule(current, table_name, chain_name, pflow)
             if cpolicy==policy:
                 return
@@ -557,9 +568,9 @@ class FwTool:
 
                 if _log_commands:
                     syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(args)}")
-                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
                 if p.returncode!=0:
-                    raise Exception(f"Could not add rule in table '{table_name}', chain '{chain_name}', spec {pflow} {self._with_netns()}: {p.stderr}")
+                    raise FirewallException(f"Could not add rule in table '{table_name}', chain '{chain_name}', spec {pflow} {self._with_netns()}: {p.stderr}")
             else:
                 args=[self._bin_path, "insert", "rule", "ip", table_name, chain_name, "handle", str(handle)]+specargs
                 if self.log_denied and policy==Policy.DENY and log_if_deny:
@@ -568,29 +579,29 @@ class FwTool:
                 args.append(policy.keyword)
                 if _log_commands:
                     syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(args)}")
-                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
                 if p.returncode!=0:
-                    raise Exception(f"Could not insert rule in table '{table_name}', chain '{chain_name}', @ {handle} spec {pflow} {self._with_netns()}: {p.stderr}")
+                    raise FirewallException(f"Could not insert rule in table '{table_name}', chain '{chain_name}', @ {handle} spec {pflow} {self._with_netns()}: {p.stderr}")
 
                 args=[self._bin_path, "delete", "rule", "ip", table_name, chain_name, "handle", str(handle)]
                 if _log_commands:
                     syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(args)}")
-                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
                 if p.returncode!=0:
-                    raise Exception(f"Could not delete rule in table '{table_name}', chain '{chain_name}', @ {handle} {self._with_netns()}: {p.stderr}")
+                    raise FirewallException(f"Could not delete rule in table '{table_name}', chain '{chain_name}', @ {handle} {self._with_netns()}: {p.stderr}")
 
     def flow_get_policy(self, flowtype:FlowType, nflow:netflow.NetFlow) -> Policy:
         (table_name, chain_name)=_get_table_and_chain_from_flow(flowtype, self._objects_prefix)
         current=self._get_ruleset()
         flows=nflow.split_by_protocol()
         p=None
-        for (_protocol, pflow) in flows.items():
+        for pflow in flows.values():
             (_handle, cpolicy)=_find_rule(current, table_name, chain_name, pflow)
             if p is not None and p!=cpolicy:
                 raise netflow.SubNewFlowDifferencesException()
             p=cpolicy
         if p is None:
-            raise Exception(f"CODEBUG: could not identify Policy of netflow {nflow}")
+            raise FirewallException(f"CODEBUG: could not identify Policy of netflow {nflow}")
         return p
 
     def flow_delete_policy(self, flowtype:FlowType, nflow:netflow.NetFlow):
@@ -598,13 +609,13 @@ class FwTool:
         current=self._get_ruleset()
 
         flows=nflow.split_by_protocol()
-        for (_protocol, pflow) in flows.items():
+        for pflow in flows.values():
             (handle, _cpolicy)=_find_rule(current, table_name, chain_name, pflow)
             if handle is not None:
                 args=[self._bin_path, "delete", "rule", "ip", table_name, chain_name, "handle", str(handle)]
-                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
                 if p.returncode!=0:
-                    raise Exception(f"Could not delete rule in table '{table_name}', chain '{chain_name}', spec {pflow} {self._with_netns()}: {p.stderr}")
+                    raise FirewallException(f"Could not delete rule in table '{table_name}', chain '{chain_name}', spec {pflow} {self._with_netns()}: {p.stderr}")
 
     def add_masquerade(self, out_iface:str|None=None, source_addr:ipaddress.IPv4Address|None=None, family:Family=Family.IPv4):
         (table_name, chain_name)=_get_table_and_chain_from_flow(FlowType.NAT_POSTROUTING, self._objects_prefix)
@@ -617,7 +628,7 @@ class FwTool:
             else:
                 args=[self._bin_path, "insert", "rule", family.value, table_name, chain_name, "handle", str(h), "meta", "oif", out_iface, "masquerade"]
         elif source_addr is None:
-            raise Exception("Can't have both unspecified out_iface and source_addr")
+            raise FirewallException("Can't have both unspecified out_iface and source_addr")
         else:
             if h is None:
                 args=[self._bin_path, "add", "rule", family.value, table_name, chain_name, "ip", "saddr", str(source_addr), "masquerade"]
@@ -625,9 +636,9 @@ class FwTool:
                 args=[self._bin_path, "insert", "rule", family.value, table_name, chain_name, "handle", str(h), "ip", "saddr", str(source_addr), "masquerade"]
         if _log_commands:
             syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(args)}")
-        p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+        p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
         if p.returncode!=0:
-            raise Exception(f"Could not add masquerading for out iface '{out_iface}' / source addr '{source_addr}' {self._with_netns()}: {p.stderr}")
+            raise FirewallException(f"Could not add masquerading for out iface '{out_iface}' / source addr '{source_addr}' {self._with_netns()}: {p.stderr}")
 
     def del_masquerade(self, out_iface:str|None=None, source_addr:ipaddress.IPv4Address|None=None, family:Family=Family.IPv4):
         (table_name, chain_name)=_get_table_and_chain_from_flow(FlowType.NAT_POSTROUTING, self._objects_prefix)
@@ -640,7 +651,7 @@ class FwTool:
             if h is not None:
                 args=[self._bin_path, "delete", "rule", family.value, table_name, chain_name, "handle", str(h)]
         elif source_addr is None:
-            raise Exception("Can't have both unspecified out_iface and source_addr")
+            raise FirewallException("Can't have both unspecified out_iface and source_addr")
         else:
             nflow=netflow.NetFlow.from_repr(f"{source_addr}>>*")
             (h, _cpolicy)=_find_rule(current, table_name, chain_name, nflow)
@@ -649,9 +660,9 @@ class FwTool:
         if args is not None:
             if _log_commands:
                 syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(args)}")
-            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
             if p.returncode!=0:
-                raise Exception(f"Could not del masquerading for out iface '{out_iface}' / source addr '{source_addr}' {self._with_netns()}: {p.stderr}")
+                raise FirewallException(f"Could not del masquerading for out iface '{out_iface}' / source addr '{source_addr}' {self._with_netns()}: {p.stderr}")
 
     def del_stale_masquerade(self, out_iface_index:int, family:Family=Family.IPv4):
         (table_name, chain_name)=_get_table_and_chain_from_flow(FlowType.NAT_POSTROUTING, self._objects_prefix)
@@ -662,9 +673,9 @@ class FwTool:
             args=[self._bin_path, "delete", "rule", family.value, table_name, chain_name, "handle", str(h)]
             if _log_commands:
                 syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(args)}")
-            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+            p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
             if p.returncode!=0:
-                raise Exception(f"Could not del masquerading for out iface index '{out_iface_index}' {self._with_netns()}: {p.stderr}")
+                raise FirewallException(f"Could not del masquerading for out iface index '{out_iface_index}' {self._with_netns()}: {p.stderr}")
 
     def add_dnat(self, dest_addr:ipaddress.IPv4Address, in_iface:str|None, protocol_spec:str|None, port_spec:str|None, family:Family=Family.IPv4):
         """Add DNAT for traffic coming from the specified interface, protocol and port to the specified IP address
@@ -674,9 +685,9 @@ class FwTool:
         """
         # checks
         if protocol_spec is None and in_iface is None:
-            raise Exception("CODEBUG: in_iface and protocol_spec can't be None at the same time")
+            raise FirewallException("CODEBUG: in_iface and protocol_spec can't be None at the same time")
         if protocol_spec is None and port_spec is not None:
-            raise Exception("CODEBUG: port_spec can't be speficied if protocol_spec is None")
+            raise FirewallException("CODEBUG: port_spec can't be speficied if protocol_spec is None")
         if in_iface is not None:
             self._ensure_interface_present(in_iface)
 
@@ -718,15 +729,15 @@ class FwTool:
 
             if _log_commands:
                 syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(allargs)}")
-            p=subprocess.run(self._args_with_nets(allargs), capture_output=True, text=True)
+            p=subprocess.run(self._args_with_nets(allargs), capture_output=True, text=True, check=False)
             if p.returncode!=0:
                 if in_iface is None:
-                    raise Exception(f"Could not add DNAT '{protocol_spec}' and '{port_spec}' / desr addr '{dest_addr}' {self._with_netns()}: {p.stderr}")
+                    raise FirewallException(f"Could not add DNAT '{protocol_spec}' and '{port_spec}' / desr addr '{dest_addr}' {self._with_netns()}: {p.stderr}")
                 else:
-                    raise Exception(f"Could not add DNAT from iface '{in_iface}' / desr addr '{dest_addr}' {self._with_netns()}: {p.stderr}")
+                    raise FirewallException(f"Could not add DNAT from iface '{in_iface}' / desr addr '{dest_addr}' {self._with_netns()}: {p.stderr}")
 
         # allow forwarding
-        self.flow_set_policy(FlowType.FILTER_FORWARD, netflow.NetFlow.from_repr(f"*>>{str(dest_addr)}"),
+        self.flow_set_policy(FlowType.FILTER_FORWARD, netflow.NetFlow.from_repr(f"*>>{dest_addr}"),
             Policy.ALLOW, family=family)
 
     def clear_interface_rules(self, iface:str|None, flowtype:FlowType, family:Family=Family.IPv4):
@@ -751,7 +762,7 @@ class FwTool:
                         if iface is None:
                             try:
                                 _=int(right)
-                            except Exception:
+                            except ValueError:
                                 continue
                         elif right!=iface:
                             continue
@@ -765,8 +776,8 @@ class FwTool:
                                 args=[self._bin_path, "delete", "rule", family.value, table_name, chain_name, "handle", str(h)]
                                 if _log_commands:
                                     syslog.syslog(syslog.LOG_DEBUG, f"==> {' '.join(args)}")
-                                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True)
+                                p=subprocess.run(self._args_with_nets(args), capture_output=True, text=True, check=False)
                                 if p.returncode!=0:
                                     syslog.syslog(syslog.LOG_ERR, f"Could not clear usage of interface '{iface}' {self._with_netns()}: {p.stderr}")
-                    except Exception:
+                    except Exception: # noqa: BLE001,S112
                         continue

@@ -604,7 +604,7 @@ right = [
 def get_random_name(sep='_') -> str: # pyright: ignore
     r = random.SystemRandom()
     while 1:
-        name = '%s%s%s' % (r.choice(left), sep, r.choice(right))
+        name = f"{r.choice(left)}{sep}{r.choice(right)}"
         if name == 'boring' + sep + 'wozniak': # Steve Wozniak is not boring
             continue
         return name

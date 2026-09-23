@@ -25,16 +25,16 @@ import subprocess
 import time
 
 from . import nft
-from .common import Family, FlowType, LogSpec, Policy
+from .common import Family, FirewallException, FlowType, LogSpec, Policy
 from .netflow import NetFlow
 
 
 def netns_exists(name:str) -> bool:
     """Tells if a network namespace exists"""
     try:
-        p=subprocess.run(["ip", "netns", "list"], capture_output=True, text=True)
-    except Exception as e:
-        raise Exception(f"Could not list network namespaces: {e}")
+        p=subprocess.run(["ip", "netns", "list"], capture_output=True, text=True, check=True)
+    except Exception as e: # noqa: BLE001
+        raise FirewallException(f"Could not list network namespaces: {e}")
     for line in p.stdout.splitlines():
         if line==name or line.startswith(name+" "):
             return True
@@ -50,36 +50,36 @@ class ProcessExclusiveLock:
         elif os.path.isfile(where):
             self._lock_file=where
         else:
-            raise Exception(f"Inexistant or unreachable path '{where}'")
+            raise FirewallException(f"Inexistant or unreachable path '{where}'")
 
     def lock(self):
         counter=0
         while True:
             try:
                 if self._lock_fp is not None:
-                    raise Exception (f"File '{self._lock_file}' is already locked")
+                    raise FirewallException(f"File '{self._lock_file}' is already locked")
                 try:
-                    fp=open(self._lock_file, "w")
+                    fp=open(self._lock_file, "w") # noqa: SIM115 (we need the fp to be kept open)
                     self._lock_fp=fp
                     fcntl.lockf(self._lock_fp, fcntl.LOCK_EX)
                     return
-                except Exception as e:
+                except Exception as e: # noqa: BLE001
                     self._lock_fp=None
-                    raise Exception (f"Could not lock '{self._lock_file}': {str(e)}")
-            except Exception as e:
+                    raise FirewallException (f"Could not lock '{self._lock_file}': {e}")
+            except Exception:
                 if counter==100:
-                    raise e
+                    raise
                 counter+=1
                 time.sleep(0.05)
 
     def unlock(self):
         if self._lock_fp is None:
-            raise Exception (f"File '{self._lock_file}' is not locked")
+            raise FirewallException(f"File '{self._lock_file}' is not locked")
         try:
             fcntl.lockf(self._lock_fp, fcntl.LOCK_UN)
             self._lock_fp=None
-        except Exception as e:
-            raise Exception (f"Could not unlock '{self._lock_file}': {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise FirewallException(f"Could not unlock '{self._lock_file}': {e}")
 
     def __del__(self):
         if self._lock_fp is not None:
@@ -93,17 +93,17 @@ class Firewall:
         The objects_prefix argument allows to create objects with a distinguishable name
         """
         if netns is not None and not netns_exists(netns):
-            raise Exception(f"Network namespace {netns} does not exist")
+            raise FirewallException(f"Network namespace {netns} does not exist")
         self._netns=netns
 
         nft_path=None
 
         # check if the nft tool is installed
         try:
-            subprocess.run(["/sbin/nft", "-V"], capture_output=True)
+            subprocess.run(["/sbin/nft", "-V"], capture_output=True, check=True)
             nft_path="/sbin/nft"
-        except Exception:
-            raise Exception("Could not find the 'nft' tool used to configure the netfilter firewall")
+        except Exception: # noqa: BLE001
+            raise FirewallException("Could not find the 'nft' tool used to configure the netfilter firewall")
         self._fwtool=nft.FwTool(nft_path, self._netns, log_denied_spec, objects_prefix)
 
         # prepare lock file to prevent multiple processes from modifying netfilter's rules at the same time

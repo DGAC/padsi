@@ -36,6 +36,9 @@ from typing import Any
 
 _debug=False
 
+class SimpleCommException(Exception):
+    pass
+
 class MessageType(int, enum.Enum):
     REQUEST= 0
     REPLY= 1
@@ -74,9 +77,9 @@ class Message:
         """Transform the object into a string, specifying a request ID if necessary
         """
         if req_id is not None and self._req_id is not None:
-            raise Exception(f"Message already has request ID {self._req_id}")
+            raise SimpleCommException(f"Message already has request ID {self._req_id}")
         elif req_id is None and self._req_id is None:
-            raise Exception("Message does not have a request ID")
+            raise SimpleCommException("Message does not have a request ID")
         data={
             "type": self._type.value,
             "req-id": req_id if req_id is not None else self._req_id,
@@ -123,8 +126,8 @@ class Client:
         try:
             s2c_r=int(os.environ["S2C_R"])
             c2s_w=int(os.environ["C2S_W"])
-        except Exception as e:
-            raise Exception(f"Client process was not run with the expected environment (S2C_R and C2S_W): {str(e)}")
+        except Exception as e: # noqa: BLE001
+            raise SimpleCommException(f"Client process was not run with the expected environment (S2C_R and C2S_W): {e}")
         (self._reader, self._writer)=await _pipes_to_streams(s2c_r, c2s_w)
 
     @property
@@ -143,7 +146,7 @@ class Client:
         """Run the background task which handles replies from the server
         """
         if self._is_running:
-            raise Exception("Client is already being run")
+            raise SimpleCommException("Client is already being run")
 
         async with self._lock:
             if self._reader is None:
@@ -153,7 +156,7 @@ class Client:
         while True:
             try:
                 if self._reader is None:
-                    raise Exception("CODEBUG: self._reader should not be None")
+                    raise SimpleCommException("CODEBUG: self._reader should not be None")
                 data=await self._reader.readline()
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, f"CLIENT RECV: {data}")
@@ -172,11 +175,11 @@ class Client:
                         res=Message.from_str(data[7:])
                         req_id=res.req_id
                     else:
-                        raise Exception("CODEBUG: reply should start with 'RESULT:' or 'EXCEPTION:'")
+                        raise SimpleCommException("CODEBUG: reply should start with 'RESULT:' or 'EXCEPTION:'")
                     try:
                         req_id=int(req_id if req_id is not None else "dummy")
                     except ValueError:
-                        raise Exception("Invalid 'req_id': should be an integer")
+                        raise SimpleCommException("Invalid 'req_id': should be an integer")
 
                     # transmit reply object to task
                     queue=self._requests_queues.get(req_id)
@@ -185,7 +188,7 @@ class Client:
                     else:
                         queue.put_nowait(res)
                         del self._requests_queues[req_id]
-                except Exception:
+                except Exception: # noqa: BLE001
                     syslog.syslog(syslog.LOG_ERR, f"Invalid reply '{data}'")
             except asyncio.exceptions.CancelledError:
                 if _debug:
@@ -207,7 +210,7 @@ class Client:
             # let self.run() start
             await asyncio.sleep(0.1)
             if not self._is_running:
-                raise Exception("Cient's run() task has not yet been started or has been stopped")
+                raise SimpleCommException("Cient's run() task has not yet been started or has been stopped")
 
         self._requests_counter+=1
         req_id=self._requests_counter
@@ -220,7 +223,7 @@ class Client:
             if _debug:
                 syslog.syslog(syslog.LOG_DEBUG, f"CLIENT SEND: {raw}")
             if self._writer is None:
-                raise Exception("CODEBUG: self._writer should not be None")
+                raise SimpleCommException("CODEBUG: self._writer should not be None")
             self._writer.write((raw+"\n").encode())
 
             res=await queue.get()
@@ -254,12 +257,10 @@ class Server:
     def pre_client_spawn(self):
         """Function called before spawning the process, can be subclassed to do anything actually usefull
         """
-        pass
 
     def post_client_spawn(self):
         """Function called after spawning the process, can be subclassed to do anything actually usefull
         """
-        pass
 
     async def _implement_job(self, line:str, writer:asyncio.StreamWriter):
         """Async function to handle a request and send the reply when done"""
@@ -269,8 +270,8 @@ class Server:
             res=await self._handle_request(req)
             res.req_id=req.req_id # pyright: ignore
             ser="RESULT:"+res.to_str()
-        except Exception as e:
-            syslog.syslog(syslog.LOG_ERR, f"Could not handle the request '{line}': {str(e)}")
+        except Exception as e: # noqa: BLE001
+            syslog.syslog(syslog.LOG_ERR, f"Could not handle the request '{line}': {e}")
             if req is not None:
                 data={
                     "req-id": req.req_id,
@@ -336,7 +337,7 @@ class Server:
         """Spawns a client and serve its requests up to when the client terminates
         """
         if self._process is not None:
-            raise Exception("Client process is already running")
+            raise SimpleCommException("Client process is already running")
 
         # spawn the client process
         async with self._lock:
@@ -357,8 +358,8 @@ class Server:
                 self.post_client_spawn()
                 if _debug:
                     syslog.syslog(syslog.LOG_DEBUG, "serve_client() done")
-            except Exception as e:
-                raise Exception(f"Failed to start client process: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                raise SimpleCommException(f"Failed to start client process: {e}")
 
         # preparations (close unused FDs and wrap pipe fds in asyncio streams)
         os.close(s2c_r)
@@ -390,8 +391,8 @@ class Server:
                     syslog.syslog(syslog.LOG_DEBUG, f"Shutdown: terminated, retcode from terminated client {res}")
             except ProcessLookupError:
                 pass
-            except Exception as e:
-                syslog.syslog(syslog.LOG_ERR, f"Error in serve_client()'s shutdown: {str(e)}")
+            except Exception as e: # noqa: BLE001
+                syslog.syslog(syslog.LOG_ERR, f"Error in serve_client()'s shutdown: {e}")
             finally:
                 self._process=None
 
@@ -411,4 +412,4 @@ class Server:
         """Function called when the client process sent a request
         Must return a Message with the same request ID as the request.
         """
-        raise Exception("handle_request() needs to be implemented but the class inheriting Server")
+        raise SimpleCommException("handle_request() needs to be implemented but the class inheriting Server")
