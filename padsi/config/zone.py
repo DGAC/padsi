@@ -80,7 +80,7 @@ class Zone:
         color: str | None,
         options: dict[ZoneOptionType, ZoneOption],
         net: network.NetworkSpec | None,
-        mounts: list[MountPoint] | None,
+        mounts: set[MountPoint] | None,
         apps: list[str],
         vms: dict[str, vm.VirtualMachine],
         proxies: list[Proxy] | None,
@@ -227,9 +227,9 @@ class Zone:
         return self._color_str
 
     @property
-    def mount_points(self) -> list[MountPoint]:
+    def mount_points(self) -> set[MountPoint]:
         """Get the list of mount points configured in the zone"""
-        return self._mounts if self._mounts is not None else []
+        return self._mounts if self._mounts is not None else set()
 
     @property
     def network_spec(self) -> network.NetworkSpec | None:
