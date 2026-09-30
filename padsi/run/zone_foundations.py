@@ -70,8 +70,7 @@ class ZoneFoundations:
         os.chmod(self._logs_dir, 0o700)
         self._uid=uid
 
-        znid = str(uuid.uuid4())  # to differentiate a zone's run directories in the host
-        self._run_dir = os.path.join(run_dir, f"{zone_type}-{znid}")
+        self._run_dir = os.path.join(run_dir, self._syslog_prefix)
         os.makedirs(self._run_dir, exist_ok=True)
         os.chmod(self._run_dir, 0o700)
 
