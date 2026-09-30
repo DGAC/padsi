@@ -513,7 +513,7 @@ class Configuration:
         to route network traffic from a zone to the outside world (in the "init" net namespace or in a WireGuard
         dedicated net namespace)
 
-        Example: 10.202.0.1/30
+        Example: 10.202.0.8/30
         """
         try:
             while True:

@@ -278,7 +278,8 @@ def addr_exists(addr: ipaddress.IPv4Interface | ipaddress.IPv4Address, netns: st
 
 
 def addr_add(iface: str, addr: ipaddress.IPv4Interface, netns: str | None = None):
-    """Add an IP address to a network interface, does nothing if address is already present"""
+    """Add an IP address to a network interface, does nothing if address is already present for the specified network interface
+    """
     eiface = addr_exists(addr, netns)
     if eiface is not None:
         if eiface == iface:

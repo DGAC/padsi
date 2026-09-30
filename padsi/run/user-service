@@ -713,8 +713,23 @@ class PadsiUserService:
         if zdata and zdata.infra is not None:
             return zdata.infra
 
-        # preparations
-        lower_net = self._gconf.get_unused_low_network()
+        # reserve a lower net address
+        resv=await self._call_system_service(
+            {
+                "cmde": "reserve-net"
+            }
+        )
+        if resv is None:
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, "CODEBUG: the reserve-net call returned None")
+            raise UserServiceException("CODEBUG: the reserve-net call returned None")
+        try:
+            lower_net=ipaddress.IPv4Network(resv.get("net"))
+        except ValueError:
+            n=resv.get("net")
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"CODEBUG: the reserve-net call returned an invalid network '{n}'")
+            raise UserServiceException(f"CODEBUG: the reserve-net call returned an invalid network '{n}'")
 
         # check request already being handled
         task = Task(f"zone infra:{zone_conf.name}", f"Creating infra for zone {zone_conf.name}")

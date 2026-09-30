@@ -162,6 +162,8 @@ class UserServer(Server):
                 await self._infra_delete_ns(request.data)
             case "network-status":
                 return await self._network_status(request.data)
+            case "reserve-net":
+                return await self._reserve_net()
             case "zone-apps-prepare-dirs":
                 await self._zone_apps_prepare_dirs(request.data)
             case "vm-zone-setup":
@@ -562,6 +564,12 @@ class UserServer(Server):
                 syslog.syslog(syslog.LOG_ERR, f"Could not get information about traffic shaper '{tsp.name}': {e}")
         res={
             "traffic-shapers": t_shappers
+        }
+        return Message(MessageType.REPLY, res)
+
+    async def _reserve_net(self) -> Message:
+        res={
+            "net": str(self._gconf.get_unused_low_network())
         }
         return Message(MessageType.REPLY, res)
 
