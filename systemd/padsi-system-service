@@ -74,7 +74,8 @@ class SystemServiceException(Exception):
 class UserServer(Server):
     """User service for a specific user
     """
-    def __init__(self, gconf:Configuration, net_in_manager:NetworkInputManager, traffic_shapers:dict[str, TrafficShaper], host_fw: fwlib.Firewall, lock:asyncio.Lock, usb_devices_watcher:USBDevicesMonitor|None, uid: int, gid:int):
+    def __init__(self, gconf:Configuration, net_in_manager:NetworkInputManager|None, traffic_shapers:dict[str, TrafficShaper],
+        host_fw: fwlib.Firewall, lock:asyncio.Lock, usb_devices_watcher:USBDevicesMonitor|None, uid: int, gid:int):
         super().__init__(lock)
         self._gconf=gconf
         self._net_in_manager=net_in_manager
@@ -1372,10 +1373,11 @@ class PadsiSystemService(misc.UserSessionNotifier):
         self._usb_watcher=USBDevicesMonitor(gconf.logs_dir)
         self._usb_watcher_task:asyncio.Task|None=None
 
+        # host firewall usage
         self._host_fw=fwlib.Firewall(netns=None,
             log_denied_spec=fwlib.LogSpec(_init_log_prefix, self._gconf.firewall_logs_group),
             objects_prefix="padsi")
-        self._net_in_manager=NetworkInputManager(self._host_fw)
+        self._net_in_manager=NetworkInputManager(self._host_fw) if gconf.host_access_managed else None
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -1386,7 +1388,7 @@ class PadsiSystemService(misc.UserSessionNotifier):
         return self._host_fw
 
     @property
-    def net_input_manager(self) -> NetworkInputManager:
+    def net_input_manager(self) -> NetworkInputManager|None:
         return self._net_in_manager
 
     @property
@@ -1495,10 +1497,13 @@ class PadsiSystemService(misc.UserSessionNotifier):
                 await self._tsp_event.wait()
                 self._tsp_event.clear()
 
-                try:
-                    await self._net_in_manager.adapt()
-                except Exception as e: # noqa: BLE001
-                    syslog.syslog(syslog.LOG_ERR, f"Failed to adapt inbound network rules: {e}")
+                if self._net_in_manager is None:
+                    syslog.syslog(syslog.LOG_INFO, "PADSI does not handle host firewall, no adaptations made for traffic shapers")
+                else:
+                    try:
+                        await self._net_in_manager.adapt()
+                    except Exception as e: # noqa: BLE001
+                        syslog.syslog(syslog.LOG_ERR, f"Failed to adapt inbound network rules: {e}")
 
                 if _debug:
                     syslog.syslog(syslog.LOG_INFO, "Adapting traffic shapers: updating list of DNS resolvers")
@@ -1604,6 +1609,8 @@ class PadsiSystemService(misc.UserSessionNotifier):
     def _setup_fw_rules(self):
         """Set PADSI's rules using objects which name is prefixed by "padsi_" in the netfilter firewall
         """
+        if not self._gconf.host_access_managed:
+            return
         fw=self._host_fw
 
         # deny input and output by default except related connections
@@ -1632,8 +1639,11 @@ class PadsiSystemService(misc.UserSessionNotifier):
 
         # apply rules defined in the configuration
         if self._gconf.host_inbound_fw_rules is not None:
-            for rule in self._gconf.host_inbound_fw_rules:
-                self._net_in_manager.add_rule(rule)
+            if self._net_in_manager is None:
+                syslog.syslog(syslog.LOG_ERR, "CODEBUG: self._net_in_manager should not be None")
+            else:
+                for rule in self._gconf.host_inbound_fw_rules:
+                    self._net_in_manager.add_rule(rule)
 
         if self._gconf.host_outbound_fw_rules is not None:
             for rule in self._gconf.host_outbound_fw_rules:

@@ -10528,6 +10528,20 @@ nolink "false"
 "host-access"
 \family default
 .
+ If set to 
+\family typewriter
+null
+\family default
+,
+ then PADSI will not modify the firewall in the 
+\begin_inset Quotes eld
+\end_inset
+
+init
+\begin_inset Quotes erd
+\end_inset
+
+ namespace (use with care only if this firewall is properly managed elsewhere).
 \end_layout
 
 \end_deeper
@@ -12561,8 +12575,20 @@ null to allow all users.
 "network"
 \family default
 :
- a network configuration,
- using the same syntax as for the zones' configuration (refer to section 
+ a network configuration which can contain a 
+\family typewriter
+
+\begin_inset Quotes eld
+\end_inset
+
+out-rules
+\begin_inset Quotes erd
+\end_inset
+
+
+\family default
+ section (using the same syntax as for the zones' configuration,
+ refer to section 
 \begin_inset CommandInset ref
 LatexCommand ref
 reference "zones-configuration"
@@ -12573,18 +12599,8 @@ nolink "false"
 
 \end_inset
 
-) but with only the rules taken into account (refer to section 
-\begin_inset CommandInset ref
-LatexCommand ref
-reference "network-rules"
-plural "false"
-caps "false"
-noprefix "false"
-nolink "false"
-
-\end_inset
-
-)
+) except that only the deny rules are actually taken into account (a VM can't have more network access than the zone in which it is executed,
+ only a more restricted network access);
 \end_layout
 
 \begin_layout Itemize

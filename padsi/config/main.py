@@ -70,8 +70,8 @@ class Configuration:
         self._clipboard_rules:list[ClipboardRule]=[] # by default, allow copy/paste!
 
         fname: str|None = None
-        host_in_rules_data = []
-        host_out_rules_data = []
+        host_in_rules_data = None
+        host_out_rules_data = None
         try:
             # load the global configuration file
             fname = "padsi.conf"
@@ -92,7 +92,8 @@ class Configuration:
                         raise ConfigurationException("invalid 'scripts' section")
                     self._need_restart_check=scripts.get("need-restart-check")
                     if self._need_restart_check is not None and not os.path.exists(self._need_restart_check):
-                        syslog.syslog(syslog.LOG_ERR, f"The 'need-restart-check' attribute points to a non existant file '{self._need_restart_check}'")
+                        syslog.syslog(syslog.LOG_WARNING, f"The 'need-restart-check' attribute points to a non existant file '{self._need_restart_check}', ignored")
+                        self._need_restart_check=None
 
                 # global network settings
                 netdata = data.get("networking")
@@ -107,7 +108,12 @@ class Configuration:
                 host_access = netdata.get("host-access")
                 if host_access is not None:
                     host_in_rules_data = host_access.get("in-rules")
+                    if host_in_rules_data is None:
+                        host_in_rules_data=[]
                     host_out_rules_data = host_access.get("out-rules")
+                    if host_out_rules_data is None:
+                        host_out_rules_data=[]
+                self._host_access_managed=host_access is not None
 
                 # XDG data dirs
                 datadirs = data.get("xdg-data-dirs", [])
@@ -209,14 +215,18 @@ class Configuration:
             raise ConfigurationException(f"Failed to load configuration in '{config_directory}' (file '{fname}'): {e}")
 
         # load host in and out rules
-        (fw_rules, resolv_rules) = load_rules_from_data(host_in_rules_data, self._named_netres)
-        if resolv_rules:
-            raise ConfigurationException(f"Host network access for inbound connections does not allow non CIDR based rules {resolv_rules}")
-        self._host_in_fw_rules = fw_rules
-        (fw_rules, resolv_rules) = load_rules_from_data(host_out_rules_data, self._named_netres)
-        if resolv_rules:
-            raise ConfigurationException(f"Host network access for outbound connections does not allow non CIDR based rules {resolv_rules}")
-        self._host_out_fw_rules = fw_rules
+        self._host_in_fw_rules:list[FWRule]|None=None
+        if host_in_rules_data is not None:
+            (fw_rules, resolv_rules) = load_rules_from_data(host_in_rules_data, self._named_netres)
+            if resolv_rules:
+                raise ConfigurationException(f"Host network access for inbound connections does not allow non CIDR based rules {resolv_rules}")
+            self._host_in_fw_rules = fw_rules
+        self._host_out_fw_rules:list[FWRule]|None=None
+        if host_out_rules_data is not None:
+            (fw_rules, resolv_rules) = load_rules_from_data(host_out_rules_data, self._named_netres)
+            if resolv_rules:
+                raise ConfigurationException(f"Host network access for outbound connections does not allow non CIDR based rules {resolv_rules}")
+            self._host_out_fw_rules = fw_rules
 
         # global coherence checks
         if self._xdg_default_zone is not None and self._xdg_default_zone not in self._zones:
@@ -384,16 +394,22 @@ class Configuration:
         return os.path.join(self.logs_dir, "padsi", f"admns-{adminns_name}")
 
     @property
+    def host_access_managed(self) -> bool:
+        """Tell if PADSI has to manage the host inbound and outbound access via the Firewall
+        """
+        return self._host_access_managed
+
+    @property
     def host_inbound_fw_rules(self) -> list[FWRule] | None:
-        """List of rules for the host' inbound connections
-        (the "init network namespace)
+        """List of rules for the host' inbound connections (in the "init network namespace),
+        or None if PADSI does not manage that
         """
         return self._host_in_fw_rules
 
     @property
     def host_outbound_fw_rules(self) -> list[FWRule] | None:
-        """List of rules for the host' outbound connections
-        (the "init network namespace)
+        """List of rules for the host' outbound connections (in the "init network namespace),
+        or None if PADSI does not manage that
         """
         return self._host_out_fw_rules
 
