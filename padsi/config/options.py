@@ -46,6 +46,7 @@ class ZoneOptionType(str, enum.Enum):
     MOUNT_POINTS = "MOUNT-POINTS" # specify extra mount points
     VM_ONLY = "VM-ONLY" # force the use of VMs (if enabled, users can't execute applications, only VMs)
     INTER_VM_NET = "INTER-VM-NET" # let virtual machines of the same zone communicate
+    PRINT = "PRINT" # let access to CUPS config (/etc/cups) for printing (access to server must also be declared in the zone's allowed network traffic)
 
 
 @dataclass
@@ -70,6 +71,7 @@ class ZoneOption:
                     | ZoneOptionType.GPG_CARD
                     | ZoneOptionType.FUSE
                     | ZoneOptionType.INTER_VM_NET
+                    | ZoneOptionType.PRINT
                 ):
                     if not isinstance(data, bool):
                         raise TypeError("expected a boolean")
@@ -152,7 +154,7 @@ class ZoneOption:
                 case ZoneOptionType.VM_ONLY:
                     if not isinstance(data, str):
                         raise TypeError("Expected a file path")
-                    return VMOnlyOption(option_type, True, data)
+                    return StringOption(option_type, True, data)
 
                 case _:
                     raise ZoneOptionsConfException(f"CODEBUG: unhandled ZoneOptionType '{option_type}'")
@@ -236,14 +238,14 @@ class StrStrDictOption(ZoneOption):
         return self # type: ignore[return-value]
 
 @dataclass
-class VMOnlyOption(ZoneOption):
-    default_vm: str|None
+class StringOption(ZoneOption):
+    str_value: str|None
 
     def __repr__(self) -> str:
         if self.enabled:
-            assert(self.default_vm is not None)
-            return self.default_vm
+            assert(self.str_value is not None)
+            return self.str_value
         return "disabled"
 
-    def downcast(self:ZoneOption) -> VMOnlyOption:
+    def downcast(self:ZoneOption) -> StringOption:
         return self # type: ignore[return-value]

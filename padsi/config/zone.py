@@ -34,7 +34,7 @@ from .options import (
     PKCS11Option,
     PKIOption,
     StrStrDictOption,
-    VMOnlyOption,
+    StringOption,
     WebRedirectionOption,
     ZoneOption,
     ZoneOptionType,
@@ -188,9 +188,9 @@ class Zone:
         # checks
         opt=options.get(ZoneOptionType.VM_ONLY)
         if opt is not None and opt.enabled:
-            opt=VMOnlyOption.downcast(opt)
-            if opt.default_vm not in vms:
-                raise ZoneConfException(f"VM-ONLY's default VM '{opt.default_vm}' is not available in zone")
+            opt=StringOption.downcast(opt)
+            if opt.str_value not in vms:
+                raise ZoneConfException(f"VM-ONLY's default VM '{opt.str_value}' is not available in zone")
             if start_mode==StartMode.ALWAYS:
                 start_mode=StartMode.ALWAYS_INFRA
 
@@ -327,8 +327,9 @@ class Zone:
             ZoneOptionType.FIDO2: FIDO2Option(ZoneOptionType.FIDO2, False),
             ZoneOptionType.DNS_BLOCKLIST: BlockListOption(ZoneOptionType.DNS_BLOCKLIST, False, None),
             ZoneOptionType.MOUNT_POINTS: StrStrDictOption(ZoneOptionType.MOUNT_POINTS, False, {}),
-            ZoneOptionType.VM_ONLY: VMOnlyOption(ZoneOptionType.VM_ONLY, False, None),
+            ZoneOptionType.VM_ONLY: StringOption(ZoneOptionType.VM_ONLY, False, None),
             ZoneOptionType.INTER_VM_NET: BoolOption(ZoneOptionType.INTER_VM_NET, False),
+            ZoneOptionType.PRINT: StringOption(ZoneOptionType.PRINT, False, None),
         }
         if option not in _default:
             raise ZoneConfException(f"CODEBUG: option '{option}' does not have any default value")

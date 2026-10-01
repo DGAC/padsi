@@ -10952,6 +10952,16 @@ Note
 \begin_layout Itemize
 
 \family typewriter
+"FUSE"
+\family default
+:
+ if true,
+ programs will be able to mount filesystems using FUSE;
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
 "GPG-CARD"
 \family default
 :
@@ -10969,16 +10979,6 @@ manually
 $HOME/.gnupg
 \family default
  directory);
-\end_layout
-
-\begin_layout Itemize
-
-\family typewriter
-"FUSE"
-\family default
-:
- if true,
- programs will be able to mount filesystems using FUSE;
 \end_layout
 
 \begin_layout Itemize
@@ -11059,6 +11059,25 @@ Note
 \begin_layout Itemize
 
 \family typewriter
+"MULTIMEDIA"
+\family default
+:
+ if true,
+ allow access to 
+\begin_inset CommandInset href
+LatexCommand href
+name "PipeWire"
+target "https://pipewire.org/"
+literal "false"
+
+\end_inset
+
+ for sound and video features;
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
 "NET_LOG_ONLY"
 \family default
 :
@@ -11099,30 +11118,20 @@ Note
 \begin_layout Itemize
 
 \family typewriter
-"MULTIMEDIA"
-\family default
-:
- if true,
- allow access to 
-\begin_inset CommandInset href
-LatexCommand href
-name "PipeWire"
-target "https://pipewire.org/"
-literal "false"
-
-\end_inset
-
- for sound and video features;
-\end_layout
-
-\begin_layout Itemize
-
-\family typewriter
 "PKI"
 \family default
 :
  allows to declare certification authorities' certificates as trust anchors.
  Must be specified as a dictionary where keys are the user friendly name for a CA and associated values are paths to the associated PEM encoded certificate;
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+"PRINT"
+\family default
+:
+ allow applications in the zone to use a CUPS printing infrastructure (note that the network communications to the CUPS server should also be allowed by the zone's configuration);
 \end_layout
 
 \begin_layout Itemize

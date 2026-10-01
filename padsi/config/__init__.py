@@ -27,8 +27,8 @@ from .options import (
     FIDO2Option,
     PKCS11Option,
     PKIOption,
+    StringOption,
     StrStrDictOption,
-    VMOnlyOption,
     WebRedirectionOption,
     ZoneOption,
     ZoneOptionType,
@@ -71,5 +71,5 @@ __all__ = [
     "FIDO2Option",
     "BlockListOption",
     "StrStrDictOption",
-    "VMOnlyOption",
+    "StringOption",
 ]

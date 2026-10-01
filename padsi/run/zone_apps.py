@@ -342,6 +342,11 @@ class ZoneApps(ZoneFoundations):
                 fd.write(f"{shim_lib}\n")
             mounts.add(nsbubble.MountPoint(preload_file, "/etc/ld.so.preload"))
 
+        # printing
+        print_option=self.zone_conf.get_option(config.ZoneOptionType.PRINT)
+        if print_option.enabled:
+            mounts.add(nsbubble.MountPoint("/etc/cups", "/etc/cups"))
+
         # policies directories for the programs for which policies can be defined
         factory=config.ProgramPoliciesFactory()
         for progname in factory.supported_programs:
