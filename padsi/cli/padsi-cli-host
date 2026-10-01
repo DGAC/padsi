@@ -727,7 +727,8 @@ def _parse_proxy_log(logs_dir:str, vm: str|None, show_allowed: bool, show_failed
                                         if egr is not None:
                                             if show_failed:
                                                 msg=data.get("message")
-                                                msg=re.sub(' .os error [0-9]+.', '', msg)
+                                                msg=re.sub(' .os error [0-9]+.', '', msg) # remove part of the error message
+                                                msg=re.sub('[\r\n]', ", ", msg) # convert newlines to CSV
                                                 extra=(
                                                     f"{Fore.RED}blocked{Fore.RESET} by proxy ({msg})" if up_proxy is not None else
                                                     f"{Fore.RED}blocked{Fore.RESET} by network ({msg})")
