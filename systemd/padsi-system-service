@@ -42,7 +42,7 @@ import aiofiles
 import aionotify
 import psutil
 
-from padsi import fwlib, misc
+from padsi import fwlib, misc, usersession
 from padsi.config import Configuration, TrafficShaper, VirtualMachine, VMUsage
 from padsi.run import (
     AdminVMFiles,
@@ -1362,7 +1362,7 @@ class UserSession:
     server: UserServer
     task: asyncio.Task # server run() task
 
-class PadsiSystemService(misc.UserSessionNotifier):
+class PadsiSystemService(usersession.UserSessionNotifier):
     users_run_dir="/run/user"
 
     def __init__(self, userservice_path:str, gconf:Configuration):
@@ -1701,10 +1701,11 @@ class PadsiSystemService(misc.UserSessionNotifier):
             self.declare_session(uid, UserSession(server=server, task=task))
 
     def user_logged_out_cb(self, uid:int):
-        """Function called when a user has logged in
+        """Function called when a user has logged out
         """
         syslog.syslog(syslog.LOG_DEBUG, f"User {uid=} logged out")
         session=self._user_sessions.get(uid)
+        syslog.syslog(syslog.LOG_DEBUG, f"User {uid=} logged out, found open session {session}")
         if session is not None:
             if _debug:
                 syslog.syslog(syslog.LOG_DEBUG, f"Stopping user service for user {uid}")

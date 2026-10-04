@@ -409,6 +409,8 @@ class PadsiUserService:
             self._vm_versions = {}
 
             # destroy all the ZoneData objects
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, "PadsiUserService: killed by signal, handling ZoneData objects")
             try:
                 for zdata in self._zones.values():
                     await zdata.destroy()
@@ -417,19 +419,14 @@ class PadsiUserService:
                 syslog.syslog(syslog.LOG_ERR, f"Zone data destroy error: {e}")
 
             # clear user's runtime dir
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, "PadsiUserService: killed by signal, handling user's runtime dir")
             try:
                 await self._call_system_service({"cmde": "clean-user-runtime-dir"})
             except ServerProcessDied:
                 pass
             except Exception as e: # noqa: BLE001
                 syslog.syslog(syslog.LOG_WARNING, f"Failed to clean user's runtime directory: {e}")
-
-            # stop the client task
-            if _debug:
-                syslog.syslog(syslog.LOG_DEBUG, "Stopping simple comm' client with system service")
-            if self._client_task is not None:
-                self._client_task.cancel()
-                self._client_task = None
 
             # Unix socket cleanup
             try:
@@ -443,9 +440,17 @@ class PadsiUserService:
             await self._update_zone_infos_files()
         except Exception as e: # noqa: BLE001
             syslog.syslog(syslog.LOG_WARNING, f"Failed to update PadsiUserService's zone_infos_files: {e}")
-        if _debug:
-            syslog.syslog(syslog.LOG_DEBUG, "PadsiUserService: finished shutdown")
-        self._kill_event.set()
+
+        # stop the client task
+        async with self._lock:
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, "PadsiUserService: stopping simple comm' client with system service")
+            if self._client_task is not None:
+                self._client_task.cancel()
+                self._client_task = None
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, "PadsiUserService: finished shutdown, setting kill_event to terminate run()")
+            self._kill_event.set()
 
     async def _call_system_service(self, data):
         """Send a request to the system service
