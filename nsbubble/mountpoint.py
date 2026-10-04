@@ -56,7 +56,7 @@ def _prefixed_mount_path(mpoint:MountPoint, prefix:str|None) -> str:
         return os.path.join(prefix, mpoint.mount_path[1:])
     return mpoint.mount_path
 
-def _existing_source_path(mpoint:MountPoint, tmp_dir:str) -> str:
+def _actual_source_path(mpoint:MountPoint, tmp_dir:str) -> str:
     if not os.path.isabs(mpoint._source_path):
         raise MountPointException(f"source path {mpoint._source_path} is not absoltue")
     if os.path.exists(mpoint.source_path):
@@ -68,12 +68,7 @@ def _existing_source_path(mpoint:MountPoint, tmp_dir:str) -> str:
             syslog.syslog(syslog.LOG_DEBUG, f"Created dir for inexisting mount point '{mpoint.source_path}' => {dir}")
         return dir
     else:
-        dir=os.path.join(tmp_dir, "_nmount_", os.path.dirname(mpoint.source_path)[1:])
-        os.makedirs(dir, exist_ok=True)
-        path=os.path.join(dir, os.path.basename(mpoint.source_path))
-        if _debug:
-            syslog.syslog(syslog.LOG_DEBUG, f"Created file for inexisting mount point'{mpoint.source_path}' => {path}")
-        return path
+        raise MountPointException(f"File path '{mpoint.source_path}' as source for mountpoint does not exist")
 
 class MountPoint:
     """Mount point to mount a directory or a file from the "host" (the source_path argument) to a path in a bubble (the mount_path argument)
@@ -217,85 +212,94 @@ class MountPointGroup:
         args:list[str]=[]
         if len(self.mount_points)==1:
             mpoint=self.mount_points[0]
-            esp=_existing_source_path(mpoint, run_dir)
-            if mpoint.read_only:
-                args+=["--ro-bind", esp, mpoint.mount_path]
-            elif os.access(esp, os.W_OK):
-                # directly bind file if we have write permission
-                args+=["--bind", esp, mpoint.mount_path]
-            elif mpoint.is_dir:
-                # add an overlay to allow write to directory
-                ovl_dir=_prefixed_mount_path(mpoint, run_dir)
-                if _debug:
-                    syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR for RW {ovl_dir}")
-                os.makedirs(ovl_dir)
-                args+=[
-                    "--overlay-src", esp,
-                    "--overlay-src", ovl_dir,
-                    "--tmp-overlay", mpoint.mount_path
-                ]
-            else:
-                raise MountPointException(f"Can't allow RW acces to file '{mpoint.source_path} (as {esp})' which is read-only (use a directory instead)")
+            try:
+                esp=_actual_source_path(mpoint, run_dir)
+                if mpoint.read_only:
+                    args+=["--ro-bind", esp, mpoint.mount_path]
+                elif os.access(esp, os.W_OK):
+                    # directly bind file if we have write permission
+                    args+=["--bind", esp, mpoint.mount_path]
+                elif mpoint.is_dir:
+                    # add an overlay to allow write to directory
+                    ovl_dir=_prefixed_mount_path(mpoint, run_dir)
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR for RW {ovl_dir}")
+                    os.makedirs(ovl_dir)
+                    args+=[
+                        "--overlay-src", esp,
+                        "--overlay-src", ovl_dir,
+                        "--tmp-overlay", mpoint.mount_path
+                    ]
+                else:
+                    raise MountPointException(f"Can't allow RW acces to file '{mpoint.source_path} (as {esp})' which is read-only (use a directory instead)")
+            except MountPointException as e:
+                syslog.syslog(syslog.LOG_DEBUG, f"Ignoring mount point {mpoint.source_path} => {mpoint.mount_path}: {e}")
         else:
             # use the 1st mpoint as the base of the overlay
             f_mpoint=self.mount_points[0]
-            args+=["--overlay-src", _existing_source_path(f_mpoint, run_dir)]
+            try:
+                args+=["--overlay-src", _actual_source_path(f_mpoint, run_dir)]
 
-            ref_dir=_prefixed_mount_path(f_mpoint, run_dir) # writable layer
-            if _debug:
-                syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR REF_DIR {ref_dir}")
-            os.makedirs(ref_dir)
-            args+=["--overlay-src", ref_dir]
+                ref_dir=_prefixed_mount_path(f_mpoint, run_dir) # writable layer
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR REF_DIR {ref_dir}")
+                os.makedirs(ref_dir)
+                args+=["--overlay-src", ref_dir]
 
-            # copy the contents of all the other mount points (using bind mount would be better but would require root privs.)
-            for mpoint in self.mount_points[1:]:
-                if not mpoint.mount_path.startswith(self.mount_path):
-                    raise MountPointException(f"CODEBUG: mount point {mpoint.mount_path} not a sub dir. of group's {self.mount_path}")
-                esp=_existing_source_path(mpoint, run_dir)
+                # copy the contents of all the other mount points (using bind mount would be better but would require root privs.)
+                for mpoint in self.mount_points[1:]:
+                    if not mpoint.mount_path.startswith(self.mount_path):
+                        raise MountPointException(f"CODEBUG: mount point {mpoint.mount_path} not a sub dir. of group's {self.mount_path}")
+                    try:
+                        esp=_actual_source_path(mpoint, run_dir)
 
-                delta_path=mpoint.mount_path[len(self.mount_path):]
-                if delta_path[0]=="/":
-                    delta_path=delta_path[1:]
-                dest_path=os.path.join(ref_dir, delta_path)
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                if os.path.isdir(esp):
-                    if os.path.exists(dest_path):
-                        if _debug:
-                            syslog.syslog(syslog.LOG_DEBUG, f"COPY recurs. contents of {mpoint.source_path} (as {esp}) to {dest_path}")
-                        for fname in os.listdir(esp):
-                            fpath=os.path.join(esp, fname)
-                            if os.path.isdir(fpath):
+                        delta_path=mpoint.mount_path[len(self.mount_path):]
+                        if delta_path[0]=="/":
+                            delta_path=delta_path[1:]
+                        dest_path=os.path.join(ref_dir, delta_path)
+                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                        if os.path.isdir(esp):
+                            if os.path.exists(dest_path):
                                 if _debug:
-                                    syslog.syslog(syslog.LOG_DEBUG, f"COPY tree {fpath} to {dest_path}/{fname}")
-                                shutil.copytree(fpath, os.path.join(dest_path, fname))
+                                    syslog.syslog(syslog.LOG_DEBUG, f"COPY recurs. contents of {mpoint.source_path} (as {esp}) to {dest_path}")
+                                for fname in os.listdir(esp):
+                                    fpath=os.path.join(esp, fname)
+                                    if os.path.isdir(fpath):
+                                        if _debug:
+                                            syslog.syslog(syslog.LOG_DEBUG, f"COPY tree {fpath} to {dest_path}/{fname}")
+                                        shutil.copytree(fpath, os.path.join(dest_path, fname))
+                                    else:
+                                        if _debug:
+                                            syslog.syslog(syslog.LOG_DEBUG, f"COPY file {fpath} to {dest_path}/{fname}")
+                                        shutil.copy2(fpath, os.path.join(dest_path, fname), follow_symlinks=False)
                             else:
                                 if _debug:
-                                    syslog.syslog(syslog.LOG_DEBUG, f"COPY file {fpath} to {dest_path}/{fname}")
-                                shutil.copy2(fpath, os.path.join(dest_path, fname), follow_symlinks=False)
-                    else:
-                        if _debug:
-                            syslog.syslog(syslog.LOG_DEBUG, f"COPY tree {mpoint.source_path} (as {esp}) to {dest_path}")
-                        shutil.copytree(esp, dest_path)
-                elif os.path.exists(esp):
-                    if _debug:
-                        syslog.syslog(syslog.LOG_DEBUG, f"COPY file {mpoint.source_path} (as {esp}) to {dest_path}")
-                    shutil.copy2(esp, dest_path, follow_symlinks=False)
-                else:
-                    syslog.syslog(syslog.LOG_ERR, f"Can't copy mount point {mpoint.source_path} (as {esp}) to '{dest_path}': does not exist")
+                                    syslog.syslog(syslog.LOG_DEBUG, f"COPY tree {mpoint.source_path} (as {esp}) to {dest_path}")
+                                shutil.copytree(esp, dest_path)
+                        elif os.path.exists(esp):
+                            if _debug:
+                                syslog.syslog(syslog.LOG_DEBUG, f"COPY file {mpoint.source_path} (as {esp}) to {dest_path}")
+                            shutil.copy2(esp, dest_path, follow_symlinks=False)
+                        else:
+                            syslog.syslog(syslog.LOG_ERR, f"Can't copy mount point {mpoint.source_path} (as {esp}) to '{dest_path}': does not exist")
+                    except MountPointException as e:
+                        syslog.syslog(syslog.LOG_DEBUG, f"Ignoring mount point {mpoint.source_path} => {mpoint.mount_path}: {e}")
 
-            if f_mpoint.read_only:
-                rw_dir=_prefixed_mount_path(f_mpoint, tmp_dir)+"_._rw" # overlay's RW layer (with RO permissions)
-                if _debug:
-                    syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR OVL RW_DIR {rw_dir}")
-                os.makedirs(rw_dir)
-                os.chmod(rw_dir, 0o555)
-                work_dir=_prefixed_mount_path(f_mpoint, tmp_dir)+"_._wo" # working layer
-                if _debug:
-                    syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR OVL WORK_DIR {work_dir}")
-                os.makedirs(work_dir)
-                args+=["--overlay", rw_dir, work_dir, self.mount_path]
-            else:
-                args+=["--tmp-overlay", self.mount_path]
+                if f_mpoint.read_only:
+                    rw_dir=_prefixed_mount_path(f_mpoint, tmp_dir)+"_._rw" # overlay's RW layer (with RO permissions)
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR OVL RW_DIR {rw_dir}")
+                    os.makedirs(rw_dir)
+                    os.chmod(rw_dir, 0o555)
+                    work_dir=_prefixed_mount_path(f_mpoint, tmp_dir)+"_._wo" # working layer
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"MAKEDIR OVL WORK_DIR {work_dir}")
+                    os.makedirs(work_dir)
+                    args+=["--overlay", rw_dir, work_dir, self.mount_path]
+                else:
+                    args+=["--tmp-overlay", self.mount_path]
+            except MountPointException as e:
+                syslog.syslog(syslog.LOG_DEBUG, f"Ignoring mount point group for {f_mpoint.source_path} => {f_mpoint.mount_path}: {e}")
         return args
 
     def file_source_path(self, filename:str, to_write:bool, run_dir:str) -> str|None:
@@ -429,6 +433,6 @@ class MountPointSet:
 
             if _debug:
                 for mpgrp in groups.values():
-                    syslog.syslog(syslog.LOG_DEBUG, f"MountpointGroup={mpgrp}")
+                    syslog.syslog(syslog.LOG_DEBUG, f"MountPointGroup={mpgrp}")
 
         return cls(list(groups.values()), run_dir)

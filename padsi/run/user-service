@@ -2136,19 +2136,26 @@ async def main(user_session_dir: str, config_dir: str):
                 break
         if notif_server_required:
             try:
-                prog_dir = os.path.join(
-                    os.path.dirname(script_dir),
-                    "padsi",
-                    "run",
-                    "components",
-                    "web_infra",
-                )
+                prog_dir = os.path.join(os.path.dirname(script_dir), "padsi", "run", "components", "web_infra")
                 script_file = os.path.join(prog_dir, "notif-server.py")
                 proc = subprocess.Popen([script_file, user_session_dir, config_dir]) # noqa: ASYNC220
-                task = asyncio.create_task(
-                    monitor_process(proc, "Notifications server")
-                )
-                extra["NOTIF"] = [proc, task]
+                task = asyncio.create_task(monitor_process(proc, "Notifications server"))
+
+                # wait for the notification service socket to be present, otherwise zones' infra will try to mount a missing file
+                socket_file=os.path.join(user_session_dir, "padsi-notify.sock")
+                counter=0
+                while True:
+                    if os.path.exists(socket_file):
+                        extra["NOTIF"] = [proc, task]
+                        break
+                    counter+=1
+                    await asyncio.sleep(0.2)
+                    if counter==10:
+                        syslog.syslog(syslog.LOG_ERR, f"Waited too long for Web infra notification server to start (socket '{socket_file}' not present)")
+                        task.cancel()
+                        proc.kill()
+                        proc.wait()
+
             except FileNotFoundError:
                 raise UserServiceException(f"Notifications server program '{script_file}' is missing")
 
@@ -2156,10 +2163,7 @@ async def main(user_session_dir: str, config_dir: str):
         netlink_shim_required = False
         for name in gconf.get_zones_names():
             zone_conf = gconf.get_zone(name)
-            if (
-                zone_conf.has_virtual_machines
-                or zone_conf.get_option(config.ZoneOptionType.FIDO2).enabled
-            ):
+            if zone_conf.has_virtual_machines or zone_conf.get_option(config.ZoneOptionType.FIDO2).enabled:
                 netlink_shim_required = True
                 break
         if netlink_shim_required:
