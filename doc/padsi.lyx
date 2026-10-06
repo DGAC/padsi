@@ -5295,6 +5295,7 @@ site blocked notice
 depending on the settings and if the blocked can be opened using a Web browser in another zone,
  then a notification will be presented in the GNOME desktop along with an action button to actually open the Web site in the other zone(s).
  The user then only has to click a button to open the requested Web page in the same browser but in a suitable zone.
+ The notification is removed when the user asks the Web page to be opened in another zone or after a few minutes.
 \end_layout
 
 \begin_layout Paragraph
@@ -5315,7 +5316,11 @@ the feature is enabled only if:
 
 \begin_deeper
 \begin_layout Itemize
-the path and query of the requested resource is less than 100 bytes (to avoid potential data exfiltration);
+the request is served from a browser (loose test based on the headers);
+\end_layout
+
+\begin_layout Itemize
+the path and query of the requested resource is less than 512 bytes (to avoid potential data exfiltration or block the system with large amounts of data);
 \end_layout
 
 \begin_layout Itemize
@@ -5326,19 +5331,7 @@ the connection port is among a common list (80,
 \end_layout
 
 \begin_layout Itemize
-the requested page has a 
-\begin_inset Quotes eld
-\end_inset
-
-referer
-\begin_inset Quotes erd
-\end_inset
-
- header (to filter out non user initiated requests);
-\end_layout
-
-\begin_layout Itemize
-the requested web site is not among the AdBlocked list.
+the request was made by the user.
 \end_layout
 
 \end_deeper
@@ -5356,7 +5349,7 @@ site blocked notice
 \end_inset
 
  for any Web site,
- and without any Web browser security warning for those accessed via HTTPS requires:
+ and without any Web browser security warning for Web sites accessed via HTTPS requires:
 \end_layout
 
 \begin_layout Itemize

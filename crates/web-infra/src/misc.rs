@@ -21,11 +21,11 @@ use crate::config::GlobalConfig;
 use anyhow::{Result, anyhow, bail};
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::HeaderMap;
-use hyper::header::{CONTENT_TYPE, HeaderValue};
+use hyper::header::{ACCEPT, CONTENT_TYPE, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode, Uri, body::Bytes};
 use padsi::net::EndPoint;
 use padsi::notifications::WebRedirNotification;
-use padsi::trace::{error, info, warn};
+use padsi::trace::{error, info, warn, debug};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use tokio::net::UnixStream;
@@ -232,8 +232,54 @@ fn detect_browser(headers: &HeaderMap) -> Option<&'static str> {
     None
 }
 
+fn should_be_notified(req: &Request<hyper::body::Incoming>, port: u16) -> bool {
+    if ! (port==80 || port==8080 || port==443 || port==8443) {
+        return false
+    }
+
+    // check the Accept header
+    match req.headers().get(ACCEPT) {
+        Some(hv) => {
+            match hv.to_str() {
+                Ok(hv) => {
+                    if hv.split(",").filter(|v| *v=="text/html" || *v=="*/*").count()==0 {
+                        debug!("should_be_notified(): no text.html or */* in Accept header");
+                        return false
+                    }
+                }
+                Err(_) => return false
+            }
+        }
+        None => return false
+    }
+
+    // use the Sec-Fetch-User header to determine if user action
+    debug!("should_be_notified(sec-fetch-user) {:?}", req.headers().get("sec-Fetch-User"));
+    match req.headers().get("sec-fetch-user") {
+        Some(hv) => {
+            match hv.to_str() {
+                Ok(hv) => {
+                    if hv!="?1" {
+                        return false
+                    }
+                }
+                Err(_) => return false
+            }
+        }
+        None => return false
+    }
+
+    // use the Sec-Fetch-Dest header if present
+    debug!("should_be_notified(sec-fetch-dest) {:?}", req.headers().get("sec-fetch-dest"));
+    if let Some(hv)=req.headers().get("sec-fetch-dest") && let Ok(hv)=hv.to_str() && hv!="document" {
+        return false
+    }
+
+    true
+}
+
 ///
-/// Provides access to web redirection's resources in the /padsi-redi directory
+/// Provides access to web redirection's resources in the /padsi-redir directory
 ///
 pub async fn response_for_web_redir_resource(
     req: &Request<hyper::body::Incoming>,
@@ -259,13 +305,9 @@ pub async fn response_for_web_redir_resource(
             )
             .await;
 
-            // send a notification if browser can be detected and if request comes from a user and not the browser itself
-            if req.headers().get("referer").is_some()
-                && let Some(browser) = detect_browser(req.headers())
-            {
-                if let Some(host) = get_host_from_headers(req)
-                    && req.uri().path().len() < 100
-                {
+            // send a notification if needed to help the user
+            if should_be_notified(req, port) && let Some(browser) = detect_browser(req.headers()) {
+                if let Some(host) = get_host_from_headers(req) && req.uri().path().len() < 512 {
                     let path = if req.uri().path().starts_with("/") {
                         String::from(req.uri().path())
                     } else {

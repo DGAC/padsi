@@ -1925,19 +1925,25 @@ class PadsiUserService:
                             zdata.infra.bubble.is_host_pid_beneath_bubble(pid):
                                 zone_conf = zdata.infra.zone_conf
                                 if _debug:
-                                    syslog.syslog(syslog.LOG_DEBUG, f"Zone for PID {pid} is {zone_conf.name}")
+                                    syslog.syslog(syslog.LOG_DEBUG, f"get_web_redir: zone for calling process with PID {pid} is '{zone_conf.name}'")
                                 break
                     except Exception as e: # noqa: BLE001
-                        syslog.syslog(syslog.LOG_WARNING, f"Failed to check if PID {pid} is in a bubble: {e}")
+                        syslog.syslog(syslog.LOG_WARNING, f"get_web_redir: failed to get the zone for process with PID {pid}: {e}")
 
             # get the list of zones to which a web redirection can be done
             allowed_zones: list[str] | None = None
             if zone_conf is not None:
-                web_redirection_option = zone_conf.get_option(config.ZoneOptionType.WEB_REDIRECTION)
                 if _debug:
-                    syslog.syslog(syslog.LOG_DEBUG, f"Web redirection allowed zones for zone {zone_conf.name}: {web_redirection_option.allowed_zones}")  # pyright: ignore
+                    syslog.syslog(syslog.LOG_DEBUG, f"get_web_redir: calling process is in zone '{zone_conf.name}'")
+                web_redirection_option = zone_conf.get_option(config.ZoneOptionType.WEB_REDIRECTION)
                 if web_redirection_option.enabled:
-                    allowed_zones = web_redirection_option.allowed_zones # pyright: ignore
+                    allowed_zones=config.WebRedirectionOption.downcast(web_redirection_option).allowed_zones
+                    if _debug:
+                        syslog.syslog(syslog.LOG_DEBUG, f"Web redirection allowed zones for zone {zone_conf.name}: {allowed_zones}")
+                elif _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"Web redirection is not allowed for zone {zone_conf.name}")
+            elif _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"get_web_redir: calling process is not in any zone")
 
             # get the list of zones which can connect to the requested host and port, filtered by
             # the previous list
@@ -1951,20 +1957,14 @@ class PadsiUserService:
                         syslog.syslog(syslog.LOG_WARNING, f"Zone '{zone_name}' is listed as possible Web redirections zone but does not exist")
                         zone_conf = None
 
-                    if (
-                        zone_conf is not None
-                        and zone_conf.network_spec is not None
-                        and zone_conf.network_spec.resolv_rules is not None
-                    ):
+                    if zone_conf is not None and zone_conf.network_spec is not None and zone_conf.network_spec.resolv_rules is not None:
                         added = False
                         for rule in zone_conf.network_spec.resolv_rules:
-                            if _debug:
-                                syslog.syslog(syslog.LOG_DEBUG, f"Testing {endpoint=} vs main network {rule=}",)
                             if rule.action == "allow" and endpoint.is_part_of(rule.endpoint):
                                 res.append(zone_name)
                                 added = True
                                 if _debug:
-                                    syslog.syslog(syslog.LOG_DEBUG, f"rule {endpoint} is a subset of {rule.endpoint}")
+                                    syslog.syslog(syslog.LOG_DEBUG, f"get_web_redir: added via rule {endpoint}, a subset of {rule.endpoint}")
                                 break
                         if not added and len(zone_conf.web_proxies)>0:
                             for proxy in zone_conf.web_proxies:
@@ -1972,15 +1972,15 @@ class PadsiUserService:
                                     break
                                 if proxy.resolv_rules is not None:
                                     for rule in proxy.resolv_rules:
-                                        if _debug:
-                                            syslog.syslog(syslog.LOG_DEBUG, f"Testing {endpoint=} vs proxy network {rule=}")
                                         if rule.action == "allow" and endpoint.is_part_of(rule.endpoint):
                                             res.append(zone_name)
                                             if _debug:
-                                                syslog.syslog(syslog.LOG_DEBUG, f"rule {endpoint} is a subset of {rule.endpoint}")
+                                                syslog.syslog(syslog.LOG_DEBUG, f"get_web_redir: added via rule {endpoint}, a subset of {rule.endpoint}")
                                             added=True
                                             break
 
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"get_web_redir: user request can be opened in zones: {res}")
             return json_response({"zones": res})
         except Exception as e: # noqa: BLE001
             return web.Response(text=f"Error: ({e})", status=400)
@@ -2138,7 +2138,7 @@ async def main(user_session_dir: str, config_dir: str):
             try:
                 prog_dir = os.path.join(os.path.dirname(script_dir), "padsi", "run", "components", "web_infra")
                 script_file = os.path.join(prog_dir, "notif-server.py")
-                proc = subprocess.Popen([script_file, user_session_dir, config_dir]) # noqa: ASYNC220
+                proc = subprocess.Popen([script_file, user_session_dir]) # noqa: ASYNC220
                 task = asyncio.create_task(monitor_process(proc, "Notifications server"))
 
                 # wait for the notification service socket to be present, otherwise zones' infra will try to mount a missing file

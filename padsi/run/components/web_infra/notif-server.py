@@ -19,15 +19,17 @@
 # along with this software.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-
+#
 # Server which gets "Web site blocked" events via a Unix socket (/run/user/<UID>/padsi-notify.sock) and displays a UI notification
-# optionaly allowing the user to open the Web site in a zone wher it is allowed
-# incoming events are JSON strings like:
+# optionaly allowing the user to open the Web site in a zone wher it is allowed incoming events are JSON strings like:
 # {
 #    "url": "https://www.example.com/",
 #    "browser": "firefox",
 # }
+# Note: this is not a web server, just a raw Unix socket
+#
 
+import datetime
 import json
 import os
 import socket
@@ -45,6 +47,10 @@ from gi.repository import GLib  # pyright: ignore
 
 from padsi import config
 
+_debug=False
+
+def _now() -> int:
+    return int(datetime.datetime.now(datetime.UTC).timestamp())
 
 class ProgException(Exception):
     pass
@@ -53,12 +59,14 @@ class ProgException(Exception):
 class Notification:
     nid: int        # notification ID
     url: str        # URL of the blocked site
+    hostname: str   # hostname part of the URL
     browser: str    # brower to use
     zones: list[str]# list of zones which can be used
+    expiration: int # timestamp when notification "expires"
 
 class NotificationsServer:
-    def __init__(self, gconf:config.Configuration, user_session_dir:str):
-        self._gconf=gconf
+    # Refer to https://specifications.freedesktop.org/notification/latest/protocol.html
+    def __init__(self, user_session_dir:str):
         self._notifs:dict[int,Notification]={} # key=notification ID
         self._buffers:dict[int,bytes]={} # data buffer per FD
 
@@ -99,12 +107,26 @@ class NotificationsServer:
                     syslog.syslog(syslog.LOG_INFO, f"asking to open '{notif.url}' with {notif.browser} in zone '{zone}'")
                     self._open_url_in_zone(zone, notif.url, notif.browser)
 
-    def _on_notif_closed(self, nid:dbus.UInt32, reason:dbus.UInt32):
+    def _on_notif_closed(self, nid:dbus.UInt32, _reason:dbus.UInt32):
         nid=int(nid)
         if nid in self._notifs:
             self._notifs.pop(nid)
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"got notif_closed({nid=})")
 
-    def _on_new_connection(self, source, condition):
+    def _clean_notifications(self):
+        now=_now()
+        notifs=self._notifs.copy()
+        for (nid, notif) in notifs.items():
+            if notif.expiration<now:
+                # notification has expired, it needs to be removed
+                if self._notify_iface is None:
+                    raise ProgException("CODEBUG: self._notify_iface should not be None")
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"removed notification for: {notif.hostname}")
+                self._notify_iface.CloseNotification(nid) # emits the NotificationClosed signel
+
+    def _on_new_connection(self, _source, _condition):
         # accept the connection
         (conn, _)=self._socket.accept() # pyright: ignore
         conn.setblocking(False)
@@ -116,7 +138,9 @@ class NotificationsServer:
         return True
 
     # Handle incoming data from client (return False to remove the GLib watch)
-    def _on_data_received(self, conn, condition):
+    def _on_data_received(self, conn, _condition):
+        self._clean_notifications()
+
         fd=conn.fileno()
         try:
             # get available data
@@ -142,39 +166,62 @@ class NotificationsServer:
                 if port is None:
                     port=80 if purl.scheme=="http" else 443
 
-                # get the PID and the zone of the connected process
-                ucred=conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
-                (pid, _, _)=struct.unpack("3i", ucred)
-                zones=self._get_usable_zones(pid, purl.hostname, port)
-
-                furl=purl.netloc.replace(".", "\u200B.") # insert invisible spaces so GNOME Shell does not make it clickable
-
-                fscheme="\U0001f512 " if purl.scheme=="https" else f"{purl.scheme}://"
-
-                actions:list[str]=[]
-                for zone in zones:
-                    actions+=[f"R-{zone}", f"Open in the '{zone}' zone"]
-                # actions+=["other", "..."] for later to open a menu with more options
-
-                if len(actions)>0:
-                    # display notification
-                    # refer to https://specifications.freedesktop.org/notification-spec/1.3/protocol.html
-                    if self._notify_iface is None:
-                        raise ProgException("CODEBUG: self._notify_iface should not be None")
-                    nid=self._notify_iface.Notify(
-                        "PADSI", # app_name
-                        0, # replaces_id
-                        "", # icon
-                        "Web site blocked", # summary
-                        f"Acess to <b>{fscheme}{furl}</b> is blocked", # body
-                        actions, # actions
-                        {"image-path": os.path.join(os.path.realpath(os.path.dirname(__file__)), "webroot", "padsi.png")}, # hints
-                        10 # expiration timeout (-1 = default)
-                    )
-                    nid=int(nid)
-                    self._notifs[nid]=Notification(nid, url, browser, zones)
+                # ignore some URLs
+                ign=False
+                hostname=purl.hostname
+                if hostname is None:
+                    ign=True
                 else:
-                    syslog.syslog(syslog.LOG_DEBUG, f"{fscheme}{furl} is not allowed to be opened in any zone")
+                    hostname=str(hostname)
+                    if hostname in ("firefox-portal-detection.com", "clients2.google.com") or \
+                        hostname.endswith((".services.mozilla.com", ".telemetry.mozilla.com", ".mozaws.net",
+                            ".googleapis.com", ".gstatic.com", ".gvt2.com", ".gvt3.com",
+                            ".notify.windows.com", ".mp.microsoft.com", ".cdp.microsoft.com",
+                            ".edge.skype.com", ".edge.microsoft.com", ".smartscreen.microsoft.com",
+                            ".push.apple.com")):
+                        ign=True
+
+                now=_now()
+                exists=None
+                if not ign:
+                    exists=len([nid for (nid,notif) in self._notifs.items() if notif.hostname==hostname])!=0
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"handling {url}: {ign=}, {exists=}")
+
+                if not exists and not ign:
+                    # get the PID and the zone of the connected process
+                    ucred=conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+                    (pid, _, _)=struct.unpack("3i", ucred)
+                    zones=self._get_usable_zones(pid, purl.hostname, port)
+
+                    furl=purl.netloc.replace(".", "\u200B.") # insert invisible spaces so GNOME Shell does not make it clickable
+
+                    fscheme="\U0001f512 " if purl.scheme=="https" else f"{purl.scheme}://"
+
+                    actions:list[str]=[]
+                    for zone in zones:
+                        actions+=[f"R-{zone}", f"Open in the '{zone}' zone"]
+                    # actions+=["other", "..."] for later to open a menu with more options
+
+                    if len(actions)>0:
+                        # display notification
+                        # refer to https://specifications.freedesktop.org/notification-spec/1.3/protocol.html
+                        if self._notify_iface is None:
+                            raise ProgException("CODEBUG: self._notify_iface should not be None")
+                        nid=self._notify_iface.Notify(
+                            "PADSI", # app_name
+                            0, # replaces_id
+                            "", # icon
+                            "Web site access denied", # summary
+                            f"Access to <b>{fscheme}{furl}</b> is blocked", # body
+                            actions, # actions
+                            {"image-path": os.path.join(os.path.realpath(os.path.dirname(__file__)), "webroot", "padsi.png")}, # hints
+                            -1 # expiration timeout (-1 = default)
+                        )
+                        nid=int(nid)
+                        self._notifs[nid]=Notification(nid, url, str(hostname), browser, zones, now+10)
+                    else:
+                        syslog.syslog(syslog.LOG_DEBUG, f"{fscheme}{furl} is not allowed to be opened in any zone")
 
                 conn.sendall(b"OK")
                 conn.close()
@@ -228,8 +275,8 @@ class NotificationsServer:
                 "url": url,
                 "browser": browser
             }
-            resp=session.post(f"http+unix://{q_socket}/web-redir", data=json.dumps(data), headers={"Content-Type": "application/json"},
-                              timeout=5)
+            resp=session.post(f"http+unix://{q_socket}/web-redir", data=json.dumps(data),
+                headers={"Content-Type": "application/json"}, timeout=5)
             if resp.ok:
                 data=resp.json()
                 exp=data.get("exception")
@@ -257,18 +304,18 @@ class NotificationsServer:
 
 if __name__=="__main__":
     try:
-        if len(sys.argv)!=3:
-            raise ProgException(f"Usage: {sys.argv[0]} <user session directory> <configuration directory>")
+        if len(sys.argv)!=2:
+            raise ProgException(f"Usage: {sys.argv[0]} <user session directory>")
         user_session_dir=sys.argv[1]
-        config_dir=sys.argv[2]
-
-        gconf=config.Configuration(config_dir)
 
         uid=os.geteuid()
         os.environ["DBUS_SESSION_BUS_ADDRESS"]=f"unix:path=/run/user/{os.geteuid()}/bus" # needed to connect to the DBus session bus
-        server=NotificationsServer(gconf, user_session_dir)
+        server=NotificationsServer(user_session_dir)
         server.setup()
         server.run()
+    except KeyboardInterrupt:
+        syslog.syslog(syslog.LOG_INFO, "Interrupted (CTRL-C)")
+        sys.exit(0)
     except Exception as e: # noqa: BLE001
         syslog.syslog(syslog.LOG_ERR, f"Error: {e}")
         print(str(e), file=sys.stderr)

@@ -1153,10 +1153,9 @@ class Bubble:
         """
         if self._state!=BubbleState.RUNNING:
             raise BubbleException(f"Bubble is {self._state.value}")
-        init_pid=self.init_pid
         proc=psutil.Process(pid)
         while proc is not None and proc.pid!=1:
-            if proc.pid==init_pid:
+            if proc.pid==self.init_pid:
                 return True
             proc=proc.parent()
         return False

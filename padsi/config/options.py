@@ -177,6 +177,9 @@ class WebRedirectionOption(ZoneOption):
             return ", ".join(self.allowed_zones)
         return "disabled"
 
+    def downcast(self:ZoneOption) -> WebRedirectionOption:
+        return self # type: ignore[return-value]
+
 
 @dataclass
 class PKIOption(ZoneOption):
