@@ -36,6 +36,7 @@ from .components import dns, fw_logger, wayland_proxy, web_infra
 from .components import static_firewall as stfw
 from .zone_foundations import ZoneFoundations
 
+_debug=False
 
 class ZoneInfraException(Exception):
     pass
@@ -107,10 +108,11 @@ class ZoneInfra(ZoneFoundations):
                     direct_rules # pyright: ignore
                 )
 
-                if len(self.zone_conf.web_proxies)>0:
-                    syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created web infra with with proxy '{self.zone_conf.web_proxies}'")
-                if web_redirection_option.enabled:
-                    syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created web infra with static Web redirection {web_redirection_option=}")
+                if _debug:
+                    if len(self.zone_conf.web_proxies)>0:
+                        syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created web infra with with proxy '{self.zone_conf.web_proxies}'")
+                    if web_redirection_option.enabled:
+                        syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created web infra with static Web redirection {web_redirection_option=}")
 
                 self.add_component(comp)
 
@@ -131,7 +133,8 @@ class ZoneInfra(ZoneFoundations):
                     has_web_proxy=len(self.zone_conf.web_proxies)>0,
                     dns_block_list=opt.blocklist_file if opt.enabled else None
                 )
-                syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created DNS server component, log_only: {log_only}")
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created DNS server component, log_only: {log_only}")
                 self.add_component(comp)
                 self._dns_c=comp
 
@@ -146,22 +149,27 @@ class ZoneInfra(ZoneFoundations):
             # static FW
             fw_rules=self.fw_rules
             if fw_rules is not None and len(fw_rules) > 0:
-                syslog.syslog(syslog.LOG_DEBUG,f"{self.syslog_prefix}: created static FW component, log_only: {log_only}")
+                if _debug:
+                    syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created static FW component, log_only: {log_only}")
                 comp = stfw.StaticFirewall(fw_rules, log_denied_spec=fw_denied_spec, log_only=log_only)
                 self.add_component(comp)
 
             # FW log
             if self.logs_group is not None:
-                syslog.syslog(syslog.LOG_DEBUG,f"{self.syslog_prefix}: created FW log (for group {self.logs_group})")
+                syslog.syslog(syslog.LOG_DEBUG, f"{self.syslog_prefix}: created FW log (for group {self.logs_group})")
                 comp=fw_logger.FWLogger(self.logs_group)
                 self.add_component(comp)
 
         # Wayland Proxy
         if self.global_conf.zone_needs_wayland_proxy(self.zone_conf.name):
             allowed_zones=self.global_conf.get_clipboard_allowed_zones(self.zone_conf.name)
+            if _debug:
+                syslog.syslog(syslog.LOG_DEBUG, f"Zone {self.zone_conf.name} needs Wayland proxy for zones {allowed_zones}")
             comp=wayland_proxy.WaylandProxy(self.tmp_dir, self.zone_conf.name, allowed_zones)
             self.add_component(comp)
             self._wayland_proxy_c=comp
+        elif _debug:
+            syslog.syslog(syslog.LOG_DEBUG, f"Zone {self.zone_conf.name} does not need any Wayland proxy")
 
     @property
     def lower_iface(self) -> str:

@@ -47,10 +47,10 @@ fn get_args() -> (String, String, String, String, bool, bool) {
         String::from("")
     };
 
-    let allow_nozone = if args.len() == 6 {
+    let allow_nozone = if args.len() >= 6 {
         args[5] == "allow"
     } else {
-        true
+        false
     };
 
     let enforce = if args.len() == 7 {
@@ -58,6 +58,7 @@ fn get_args() -> (String, String, String, String, bool, bool) {
     } else {
         true
     };
+
     return (
         server_path,
         proxy_service_path,

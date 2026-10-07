@@ -72,7 +72,7 @@ class WaylandProxy(Component):
                 os.path.join("/bubble/run/wl-proxy", "wayland-proxy.sock"), # proxy's socket
                 self._zone_name, # this zone's name
                 ",".join(self._allowed_zones), # zones from which copy is allowed
-                "allow", # allow copy from the "init" zone
+                "deny", # deny copy if no zone tag is present
                 "enforce" # enforce policies
             ]
             if _debug:
