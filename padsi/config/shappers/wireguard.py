@@ -223,7 +223,7 @@ class WireGuardTrafficShaper(TrafficShaper):
                     raise TrafficShaperConfException(f"Could not create WireGuard interface '{self._wg_iface_name}': {proc.stderr}")
 
                 proc = subprocess.run(
-                    [self._wg_iface_name, "setconf", self._wg_iface_name, tmp.name],
+                    ["/usr/bin/wg", "setconf", self._wg_iface_name, tmp.name],
                     capture_output=True, text=True, timeout=1, check=False)
                 if proc.returncode != 0:
                     raise TrafficShaperConfException(f"Could not configure WireGuard interface '{self._wg_iface_name}' with config derived from '{self._config_file}': {proc.stderr}")
