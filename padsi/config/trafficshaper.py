@@ -54,10 +54,15 @@ class TrafficShaper:
     allow communications outside of that network namespace must be done by the traffic shaper's implementation
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, config_dir:str, config_file:str):
         self._netns_name: str = self.__class__.__name__
         self._ts_type: str = self.__class__.__name__
         self._name = name
+        self._config_dir=config_dir
+        if not os.path.basename(config_file):
+            raise TrafficShaperConfException(f"invalid traffic shaper '{name}' config file '{config_file}'")
+        self._config_file=config_file # may be a full path or not
+        self._config_file_found:bool|None=None
         self._need_setup: bool=True
         self._init_veth_iface:str|None=None
 
@@ -68,6 +73,28 @@ class TrafficShaper:
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def config_file(self) -> str:
+        """Locate the full path of the config file, raise an exception if not found
+        Uses systemd's credentials directory if available, or the configuration's directory otherwise
+        """
+        if not self._config_file_found:
+            if not os.path.isabs(self._config_file):
+                systemd_creds_dir=os.environ.get("CREDENTIALS_DIRECTORY")
+                t_file=None
+                if systemd_creds_dir is not None:
+                    t_file = os.path.join(systemd_creds_dir, self._config_file)
+                    if not os.path.exists(t_file):
+                        t_file=None
+                if t_file is None:
+                    t_file = os.path.join(self._config_dir, self._config_file)
+                if not os.path.exists(t_file):
+                    raise TrafficShaperConfException(f"WireGuard configuration file '{self._config_file}' does not exist")
+                self._config_file=t_file
+            self._config_file_found=True
+            syslog.syslog(syslog.LOG_INFO, f"Configuration file for WireGuard tshaper {self._name}: {self._config_file}")
+        return self._config_file
 
     @property
     def ts_type(self) -> str:
@@ -248,6 +275,7 @@ class TrafficShaper:
         """Function called whenever the /etc/resolv.conf file changes or the traffic shaper is not functional
         """
         # to be overridden by actual implementation
+
 
 def load_from_file(path: str) -> TrafficShaper:
     """Load the contents of a .tsp file"""

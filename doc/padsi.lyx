@@ -11744,6 +11744,43 @@ wireguard
  as a JSON object.
 \end_layout
 
+\begin_layout Standard
+
+\bar under
+Notes
+\bar default
+:
+\end_layout
+
+\begin_layout Itemize
+if not specified as an absolute path,
+ the configuration file is first searched in systemd's credentials directory for the PADSI service,
+ otherwise in the configuration directory which contains all of PADSI's configuration (
+\family typewriter
+/etc/padsi
+\family default
+ by default);
+\end_layout
+
+\begin_layout Itemize
+
+\color red
+the VPN's configuration file must be protected to prevent any read or write operations by end users
+\color inherit
+;
+\end_layout
+
+\begin_layout Itemize
+to further limit risks,
+ the configuration files should be protected using the TPM chip of the device and the systemd-creds program;
+ in this case,
+ the 
+\family typewriter
+"file"
+\family default
+ must point to the secret name which is used by systemd.
+\end_layout
+
 \begin_layout Paragraph
 WireGuard traffic shaper
 \end_layout
@@ -11758,31 +11795,9 @@ The WireGuard traffic shaper accepts a the following configuration keys:
 "file"
 \family default
 :
- points to the actual WireGuard configuration file (an INI style textual file) which:
+ points to the actual WireGuard configuration file (an INI style textual file) or OpenVPN configuration file;
 \end_layout
 
-\begin_deeper
-\begin_layout Itemize
-
-\color red
-must be protected to prevent any read or write by end users
-\color inherit
-;
-\end_layout
-
-\begin_layout Itemize
-can be in any directory in the system if the specified path is absolute;
-\end_layout
-
-\begin_layout Itemize
-is searched below PADSI's configuration directory (
-\family typewriter
-/etc/padsi
-\family default
- by default) if its path is relative.
-\end_layout
-
-\end_deeper
 \begin_layout Itemize
 
 \family typewriter
@@ -11807,6 +11822,32 @@ wg
 \end_inset
 
  if unspecified or null).
+\end_layout
+
+\begin_layout Paragraph
+OpenVPN traffic shaper
+\end_layout
+
+\begin_layout Standard
+The OpenVPN traffic shaper accepts a the following configuration keys:
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+"file"
+\family default
+:
+ points to the actual WireGuard configuration file (an INI style textual file) or OpenVPN configuration file;
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+"ping-test"
+\family default
+:
+ optional IP address to ping to actually determine if the VPN link is actually working as expected (testing will not be possible if absent or null).
 \end_layout
 
 \begin_layout Subsubsection

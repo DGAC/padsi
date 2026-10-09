@@ -35,11 +35,10 @@ from ..trafficshaper import TrafficShaper, TrafficShaperConfException
 class OpenVPNTrafficShaper(TrafficShaper):
     """Traffic shaper which routes all the traffic through an OpenVPN connection
     """
-    def __init__(self, name: str, config_file: str, ping_test_ip: str | None):
-        super().__init__(name)
+    def __init__(self, name: str, config_dir: str, config_file: str, ping_test_ip: str | None):
+        super().__init__(name, config_dir, config_file)
         self.net_ns = f"ovpnns-{self.name}"
         self._ts_type = "OpenVPN"
-        self._config_file = config_file
 
         self._ping_test: ipaddress.IPv4Address | None = None
         if ping_test_ip is not None:
@@ -61,7 +60,7 @@ class OpenVPNTrafficShaper(TrafficShaper):
 
 
     def __str__(self) -> str:
-        return f"OpenVPN({self._config_file})"
+        return f"OpenVPN({self.config_file})"
 
     @property
     def net_iface(self) -> str:
@@ -79,8 +78,10 @@ class OpenVPNTrafficShaper(TrafficShaper):
                     res=proc.returncode == 0
             except subprocess.TimeoutExpired:
                 res=False
-        if not res:
-            syslog.syslog(syslog.LOG_INFO, f"OpenVPN tshaper {self.name} is {'functional' if res else 'NOT functionnal'}")
+            if not res:
+                syslog.syslog(syslog.LOG_INFO, f"OpenVPN tshaper {self.name} is {'functional' if res else 'NOT functionnal'}")
+        else:
+            syslog.syslog(syslog.LOG_INFO, f"OpenVPN tshaper {self.name}: no ping test specified")
         return res
 
     @property
@@ -104,12 +105,9 @@ class OpenVPNTrafficShaper(TrafficShaper):
         if self._vpn_server_name is not None:
             return
 
-        if not os.path.exists(self._config_file):
-            raise TrafficShaperConfException(f"OpenVPN configuration file '{self._config_file}' does not exist")
-
         try:
             proto:str|None=None
-            with open(self._config_file, "rt") as fd:
+            with open(self.config_file, "rt") as fd:
                 for line in fd:
                     if line.startswith("remote "):
                         (_, srv, port, proto)=line.split()
@@ -130,7 +128,7 @@ class OpenVPNTrafficShaper(TrafficShaper):
                         raise TrafficShaperConfException(f"unknown protocol'{proto}'")
 
         except Exception as e: # noqa: BLE001
-            raise TrafficShaperConfException(f"Invalid OpenVPN config file '{self._config_file}': {e}")
+            raise TrafficShaperConfException(f"Invalid OpenVPN config file '{self.config_file}': {e}")
 
     def setup(self, fw_init_ns:fwlib.Firewall, lower_net:ipaddress.IPv4Network|None):
         super().setup(fw_init_ns, lower_net)
@@ -254,7 +252,7 @@ class OpenVPNTrafficShaper(TrafficShaper):
 
         # launch the OpenVPN server
         try:
-            self._proc=await asyncio.create_subprocess_exec("ip", "netns", "exec", self.net_ns, "openvpn", "--config", self._config_file)
+            self._proc=await asyncio.create_subprocess_exec("ip", "netns", "exec", self.net_ns, "openvpn", "--config", self.config_file)
             self._monit_task=asyncio.create_task(self._monit())
         except Exception as e:
             syslog.syslog(syslog.LOG_ERR, f"Could not start the OpenVPN server: {e}")
@@ -281,6 +279,4 @@ class OpenVPNTrafficShaper(TrafficShaper):
         if conf is None or conf.get("file") is None:
             raise TrafficShaperConfException("Invalid traffic shaper configuration")
         conf_file = conf.get("file")
-        if not os.path.isabs(conf_file):
-            conf_file = os.path.join(config_dir, conf_file)
-        return OpenVPNTrafficShaper(name, conf_file, conf.get("ping-test"))
+        return OpenVPNTrafficShaper(name, config_dir, conf_file, conf.get("ping-test"))
