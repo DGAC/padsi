@@ -11130,6 +11130,25 @@ literal "false"
 \begin_layout Itemize
 
 \family typewriter
+"PROFILE"
+\family default
+:
+ allow some files in the host 
+\family typewriter
+/etc/profile.d
+\family default
+ directory to be available to programs running in a zone,
+ must be specified as a list of individual files (if non empty,
+ then the 
+\family typewriter
+/etc/profile
+\family default
+ file is also shared);
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
 "PULSE-AUDIO"
 \family default
 :

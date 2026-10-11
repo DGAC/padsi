@@ -362,6 +362,31 @@ class ZoneApps(ZoneFoundations):
 
         # for the man program
         mounts.add(nsbubble.MountPoint("/etc/manpath.config", "/etc/manpath.config"))
+
+        # share /etc/profile.d
+        profile_option=self.zone_conf.get_option(config.ZoneOptionType.PROFILE)
+        if profile_option.enabled:
+            nmounts:set[nsbubble.MountPoint]=set()
+            profile_option=config.StrSetOption.downcast(profile_option)
+            for fname in profile_option.values:
+                fpath=os.path.join("/etc/profile.d", fname)
+                if os.path.exists(fpath):
+                    nmounts.add(nsbubble.MountPoint(fpath, fpath))
+                else:
+                    syslog.syslog(syslog.LOG_WARNING, f"File '{fpath}' does not exist, ignored")
+            if len(nmounts)>0:
+                prof_dir=os.path.join(self.tmp_dir, "profile")
+                os.makedirs(prof_dir)
+                mounts.add(nsbubble.MountPoint("/etc/profile", "/etc/profile"))
+                mounts.add(nsbubble.MountPoint(prof_dir, "/etc/profile.d"))
+                mounts.update(nmounts)
+
+        # give acces to java's configuration if it exists, like /etc/java-21-openjdk
+        for fname in os.listdir("/etc"):
+            if fname.startswith("java"):
+                fpath=os.path.join("/etc", fname)
+                mounts.add(nsbubble.MountPoint(fpath, fpath))
+
         return mounts
 
     @property

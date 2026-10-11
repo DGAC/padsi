@@ -33,8 +33,9 @@ from .options import (
     FIDO2Option,
     PKCS11Option,
     PKIOption,
-    StrStrDictOption,
+    StrSetOption,
     StringOption,
+    StrStrDictOption,
     WebRedirectionOption,
     ZoneOption,
     ZoneOptionType,
@@ -330,6 +331,7 @@ class Zone:
             ZoneOptionType.VM_ONLY: StringOption(ZoneOptionType.VM_ONLY, False, None),
             ZoneOptionType.INTER_VM_NET: BoolOption(ZoneOptionType.INTER_VM_NET, False),
             ZoneOptionType.PRINT: StringOption(ZoneOptionType.PRINT, False, None),
+            ZoneOptionType.PROFILE: StrSetOption(ZoneOptionType.PROFILE, False, set())
         }
         if option not in _default:
             raise ZoneConfException(f"CODEBUG: option '{option}' does not have any default value")

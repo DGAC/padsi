@@ -28,6 +28,7 @@ from .options import (
     PKCS11Option,
     PKIOption,
     StringOption,
+    StrSetOption,
     StrStrDictOption,
     WebRedirectionOption,
     ZoneOption,
