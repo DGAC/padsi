@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import shutil
 import subprocess
 import syslog
@@ -191,7 +192,9 @@ class MountPointGroup:
         self._dirs_created=False
 
     def add(self, mpoint:MountPoint):
-        if self.mount_path.startswith(mpoint.mount_path):
+        smp=pathlib.Path(self.mount_path)
+        amp=pathlib.Path(mpoint.mount_path)
+        if smp.is_relative_to(amp):
             self.mount_path=mpoint.mount_path
             self.mount_points=[mpoint]+self.mount_points
         else:
@@ -248,7 +251,9 @@ class MountPointGroup:
 
                 # copy the contents of all the other mount points (using bind mount would be better but would require root privs.)
                 for mpoint in self.mount_points[1:]:
-                    if not mpoint.mount_path.startswith(self.mount_path):
+                    smp=pathlib.Path(self.mount_path)
+                    mmp=pathlib.Path(mpoint.mount_path)
+                    if not mmp.is_relative_to(smp):
                         raise MountPointException(f"CODEBUG: mount point {mpoint.mount_path} not a sub dir. of group's {self.mount_path}")
                     try:
                         esp=_actual_source_path(mpoint, run_dir)
@@ -308,13 +313,16 @@ class MountPointGroup:
         If to_write is False, then the file is actually checked for existance, and None is returned if it does not exist.
         If to_write is True, then the returned path may be in the run_dir directory and pointing to a maybe not yet existing file
         """
-        if not filename.startswith(self.mount_path):
+        smp=pathlib.Path(self.mount_path)
+        fmp=pathlib.Path(filename)
+        if not fmp.is_relative_to(smp):
             return None
 
         # take the mount point which has the bigger common path with the filename
         best_mp=None
         for mpoint in self.mount_points:
-            if filename.startswith(mpoint.mount_path):
+            mmp=pathlib.Path(mpoint.mount_path)
+            if fmp.is_relative_to(mmp):
                 if best_mp is None:
                     best_mp=mpoint
                 else:
@@ -378,13 +386,15 @@ class MountPointSet:
                 found=False
                 for path in list(groups.keys()).copy():
                     mpgrp=groups[path]
+                    gmp=pathlib.Path(mpgrp.mount_path)
+                    mmp=pathlib.Path(mpoint.mount_path)
                     if mpoint.mount_path==mpgrp.mount_path:
                         pass
-                    elif mpoint.mount_path.startswith(mpgrp.mount_path): # mpoint is a sub directory or mpgrp
+                    elif mmp.is_relative_to(gmp): # mpoint is a sub directory or mpgrp
                         mpgrp.add(mpoint)
                         found=True
                         break
-                    elif mpgrp.mount_path.startswith(mpoint.mount_path): # mpoint is a parent directory of grp
+                    elif gmp.is_relative_to(mmp): # mpoint is a parent directory of grp
                         ngrp=MountPointGroup([mpoint]+mpgrp.mount_points, mpoint.mount_path)
                         groups[ngrp.mount_path]=ngrp
                         del groups[mpgrp.mount_path]
@@ -398,14 +408,16 @@ class MountPointSet:
             # merge groups which have the same mount path
             top_paths:set[str]=set()
             for path in sorted(groups.keys()):
+                pmp=pathlib.Path(path)
                 handled=False
                 for edir in top_paths.copy():
-                    if edir.startswith(path):
+                    emp=pathlib.Path(edir)
+                    if emp.is_relative_to(pmp):
                         top_paths.remove(edir)
                         top_paths.add(path)
                         handled=True
                         break
-                    elif path.startswith(edir):
+                    elif pmp.is_relative_to(emp):
                         handled=True
                         break
                 if not handled:
