@@ -1655,7 +1655,7 @@ class PadsiSystemService(usersession.UserSessionNotifier):
 
         if self._gconf.host_outbound_fw_rules is not None:
             for rule in self._gconf.host_outbound_fw_rules:
-                flow=fwlib.NetFlow(rule.endpoint, None)
+                flow=fwlib.NetFlow(None, rule.endpoint)
                 fw.flow_set_policy(fwlib.FlowType.FILTER_OUTPUT, flow, fwlib.Policy.ALLOW if rule.action=="allow" else fwlib.Policy.DENY)
 
     def _cleanup_fw_rules(self):
