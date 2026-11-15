@@ -618,10 +618,18 @@ if __name__ == "__main__":
         match cmde:
             case "config-test":
                 conf=load_config()
+
+                # check for applications being masked
+                nozone_apps=conf.apps_outside_zones
+                if nozone_apps is not None:
+                    for zone in conf.zones:
+                        for app in zone.apps:
+                            if app in nozone_apps:
+                                print(f"WARNING: application '{app}' in zone '{zone.name}' is masked by global configuration")
+
                 # TODO:
                     # check that VM's RUN network requirements are met by the zone in which they are supposed to run
                     # check that there is a zone meeting the VM's INSTALL and UPDATE network requirements
-                    # check that no zone and adminns have the same name (bad practice and breaks the "network-usage" command)
 
             case "pstree":
                 command_pstree()

@@ -10715,6 +10715,24 @@ init
  then all applications will be considered to run outside of any zone.
 \end_layout
 
+\begin_deeper
+\begin_layout Standard
+
+\bar under
+\color red
+WARNING
+\bar default
+\color inherit
+:
+ if an application is declared here,
+ then it will mask any same application declared in the 
+\family typewriter
+"apps"
+\family default
+ section of any zone (thus ignoring the entry in the zone)
+\end_layout
+
+\end_deeper
 \begin_layout Subsubsection
 Zones configuration
 \begin_inset CommandInset label
@@ -11645,6 +11663,24 @@ org.gnome.Terminal
  Other applications can still be used but there will be no launcher icon and the GNOME shell will not be able to associate the correct icon's outline.
 \end_layout
 
+\begin_deeper
+\begin_layout Standard
+
+\bar under
+\color red
+WARNING
+\bar default
+\color inherit
+:
+ if an application is declared here but also in the global configuration's 
+\family typewriter
+"nozone-apps"
+\family default
+ section,
+ then its declaration here is masked and will be ignored.
+\end_layout
+
+\end_deeper
 \begin_layout Itemize
 
 \family typewriter
@@ -11791,7 +11827,30 @@ the VPN's configuration file must be protected to prevent any read or write oper
 
 \begin_layout Itemize
 to further limit risks,
- the configuration files should be protected using the TPM chip of the device and the systemd-creds program;
+ the configuration files should be protected using the TPM chip of the device and the systemd-creds program
+\begin_inset Foot
+status open
+
+\begin_layout Plain Layout
+The 
+\family typewriter
+systemd-creds encrypt
+\family default
+ command will encrypt the configuration files,
+ and an override of the PADSI service in 
+\family typewriter
+/etc/systemd/system/padsi.service.d/override.conf
+\family default
+ containing a 
+\family typewriter
+LoadCredentialEncrypted=
+\family default
+ configuration directive will ensure PADSI can actually access the decrypted credentials.
+\end_layout
+
+\end_inset
+
+;
  in this case,
  the 
 \family typewriter
@@ -11814,7 +11873,7 @@ The WireGuard traffic shaper accepts a the following configuration keys:
 "file"
 \family default
 :
- points to the actual WireGuard configuration file (an INI style textual file) or OpenVPN configuration file;
+ points to the actual WireGuard configuration file (an INI style textual file);
 \end_layout
 
 \begin_layout Itemize
@@ -11857,7 +11916,7 @@ The OpenVPN traffic shaper accepts a the following configuration keys:
 "file"
 \family default
 :
- points to the actual WireGuard configuration file (an INI style textual file) or OpenVPN configuration file;
+ points to the actual OpenVPN configuration file;
 \end_layout
 
 \begin_layout Itemize

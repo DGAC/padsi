@@ -349,12 +349,17 @@ class Configuration:
 
     @property
     def firewall_logs_group(self) -> int|None:
-        """Returns a number >=0 if firewall logs should be sent through a netlink socket to the specified group """
+        """Returns a number >=0 if firewall logs should be sent through a netlink socket to the specified group"""
         return self._firewall_logs_group
 
     @property
     def zones_infos_dir(self) -> str:
         return "/run/padsi/zones-infos"
+
+    @property
+    def apps_outside_zones(self) -> list[str]|None:
+        """List of applications executed outside of any zone"""
+        return self._nozone_apps
 
     @property
     def all_users_zone_home_dir(self) -> str:

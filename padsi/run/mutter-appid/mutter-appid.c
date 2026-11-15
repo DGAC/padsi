@@ -28,7 +28,6 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
-#include <stdint.h>
 #include <dlfcn.h>
 #include <stdlib.h>
 #include <syslog.h>

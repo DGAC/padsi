@@ -29,7 +29,6 @@ import os
 import shutil
 import syslog
 import tempfile
-import uuid
 
 import nsbubble
 from padsi import config
@@ -50,7 +49,7 @@ class ZoneFoundations:
     """
     def __init__(self, zone_type:str, global_config:config.Configuration,
         zone_conf:config.Zone|None, admin_conf:config.AdminNS|None,
-        uid:int, run_dir:str, logs_dir:str
+        uid:int, run_dir:str, logs_dir:str, extra:str|None=None
     ):
         if zone_conf is not None:
             if admin_conf is not None:
@@ -60,6 +59,8 @@ class ZoneFoundations:
             self._syslog_prefix=f"{zone_type}_{uid}_{admin_conf.name}"
         else:
             raise ZoneFoundationsException("CODEBUG: zone_conf and admin_ns should not be both None")
+        if extra is not None:
+            self._syslog_prefix+=f"_{extra}"
 
         self._z_type=zone_type
         self._gconf=global_config
