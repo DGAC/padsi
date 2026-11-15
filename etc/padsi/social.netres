@@ -1,0 +1,16 @@
+{
+    "social": {
+        "endpoints": [
+	    "**.instagram.com. ^ tcp ^ 443",
+	    "**.x.com. , x.com. ^ tcp ^ 443",
+	    "**.facebook.com., facebook.com. ^ tcp ^ 443"
+	],
+        "descr": "Private resources"
+    },
+    "other": {
+	"endpoints": [
+            "**.wikipedia.fr. ^ tcp ^ 443"
+        ],
+        "descr": "Other examples"
+    }
+}

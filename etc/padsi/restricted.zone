@@ -1,22 +1,31 @@
 
 {
-    "friendly-name": "Private",
+    "friendly-name": "Private usage",
     "start-mode": "on-demand",
     "color": "#000000",
     "options": {
         "X11": true,
-        "DRM": true
+        "DRM": true,
+	"MASS-STORAGE": true
     },
     "web-proxy": null,
     "network": {
         "traffic-shaper": null,
         "dns-resolvers": [
-            "86.54.11.213@853", "86.54.11.13@853"
+            "86.54.11.201@853", "86.54.11.1@853"
         ],
         "out-rules": [
             {
                 "action": "allow",
-                "netres": "private"
+                "netres": "social"
+            },
+	    {
+                "action": "allow",
+                "netres": "banking"
+            },
+	    {
+                "action": "allow",
+                "netres": "other"
             }
         ]
     },

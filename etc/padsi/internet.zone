@@ -17,23 +17,26 @@
     "network": {
         "traffic-shaper": null,
         "dns-resolvers": [
-            "86.54.11.213@853",
-            "86.54.11.13@853"
+            "86.54.11.201@853",
+            "86.54.11.1@853"
         ],
         "out-rules": [
             {
                 "action": "deny",
-                "netres": "private"
+                "netres": "social"
+            },
+	    {
+                "action": "deny",
+                "netres": "banking"
+            },
+	    {
+                "action": "deny",
+                "netres": "other"
             },
             {
                 "action": "allow",
-                "endpoint": "0.0.0.0/0 ^ tcp ^ 443,8443,80,8080",
+                "endpoint": "**., 0.0.0.0/0 ^ tcp ^ 443,8443,80,8080",
                 "descr": "Internet access"
-            },
-            {
-                "descr": "NTP sync.",
-                "endpoint": "**.pool.ntp.org. ^ udp ^ 123",
-                "action": "allow"
             }
         ]
     },

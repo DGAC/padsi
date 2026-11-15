@@ -5,7 +5,8 @@
     "color": "#8e10ad",
     "options": {
         "NET-LOG-ONLY": false,
-        "X11": true
+        "X11": true,
+	"INTER-VM-NET": true
     },
     "web-proxy": null,
     "network": {
@@ -16,7 +17,7 @@
         "out-rules": [
             {
                 "action": "deny",
-                "netres": "private"
+                "netres": "social"
             },
             {
                 "action": "allow",
@@ -60,24 +61,17 @@
         "chromium",
         "com.jgraph.drawio",
         "firefox-esr",
-        "gimp.desktop",
+        "gimp",
         "org.gnome.Terminal",
         "org.gnome.TextEditor",
         "org.gnome.Nautilus",
         "org.keepassxc.KeePassXC"
     ],
     "virtual-machines": {
-        "debian": {
-            "specs": {
-                "read-only": true,
-                "show-ui": true
-            },
-            "network": {}
-        },
         "debian-noui": {
             "specs": {
                 "read-only": false,
-                "show-ui": true
+                "show-ui": false
             },
             "network": {
                 "out-rules": []

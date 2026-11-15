@@ -1,10 +1,10 @@
 {
     "specs": {
         "secure-boot": true,
-        "descr": "Debian 12 via SSH",
+        "descr": "Debian 13 without UI",
         "nb-cpu": 2,
         "mem-mb": 512,
-        "variant": "linux/debian/12",
+        "variant": "linux/debian/13",
         "disk-size-mb": 10000
     },
     "admin": {
@@ -32,8 +32,8 @@
     "run": {
         "show-ui": false,
         "mounts": {
-            "Dev": {
-                "source": "Dev"
+            "Documents": {
+                "source": "Documents"
             }
         },
         "with-net": true,
